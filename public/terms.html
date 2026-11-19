@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terms of Service — StoryTape</title>
+    <meta
+      name="description"
+      content="Terms of Service for StoryTape, the offline-first audiobook recorder and player PWA."
+    />
+    <meta name="theme-color" content="#161311" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #161311;
+        --surface: #211c18;
+        --border: rgba(245, 239, 230, 0.12);
+        --text: #f5efe6;
+        --muted: #b8aea2;
+        --accent: #e08b4f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+        line-height: 1.65;
+        padding: 32px 20px 64px;
+      }
+      .container {
+        max-width: 720px;
+        margin: 0 auto;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding-bottom: 24px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 32px;
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--text);
+        text-decoration: none;
+        font-family: 'Fraunces', Georgia, serif;
+        font-size: 1.25rem;
+        font-weight: 600;
+      }
+      .brand img {
+        width: 28px;
+        height: 28px;
+        border-radius: 7px;
+      }
+      nav {
+        display: flex;
+        gap: 16px;
+        font-size: 0.9rem;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      h1 {
+        font-family: 'Fraunces', Georgia, serif;
+        font-size: 2rem;
+        line-height: 1.2;
+        margin: 0 0 8px;
+      }
+      .updated {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin: 0 0 28px;
+      }
+      section {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 20px 24px;
+        margin-bottom: 18px;
+      }
+      h2 {
+        font-family: 'Fraunces', Georgia, serif;
+        font-size: 1.2rem;
+        margin: 0 0 10px;
+      }
+      p {
+        margin: 0 0 12px;
+        color: var(--muted);
+      }
+      p:last-child {
+        margin-bottom: 0;
+      }
+      strong {
+        color: var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <a class="brand" href="./">
+          <img src="./icons/favicon-32.png" alt="StoryTape icon" />
+          <span>StoryTape</span>
+        </a>
+        <nav>
+          <a href="./">Open App</a>
+          <a href="./privacy.html">Privacy Policy</a>
+        </nav>
+      </header>
+
+      <h1>Terms of Service</h1>
+      <p class="updated">Last updated: November 19, 2026</p>
+
+      <section>
+        <h2>1. Acceptance of Terms</h2>
+        <p>
+          By using <strong>StoryTape</strong>, you agree to these Terms of Service and our
+          <a href="./privacy.html">Privacy Policy</a>.
+        </p>
+      </section>
+
+      <section>
+        <h2>2. Description of Service</h2>
+        <p>
+          StoryTape is a free, client-side Progressive Web App that lets you record, edit, organize,
+          and play back audiobooks locally in your browser, with optional synchronization to your own
+          Google Drive account.
+        </p>
+      </section>
+
+      <section>
+        <h2>3. Your Content</h2>
+        <p>
+          You retain full ownership and responsibility for all audio recordings, cover images, and
+          metadata you create or upload using StoryTape. Do not use the app to record or distribute
+          content that violates applicable laws or third-party rights.
+        </p>
+      </section>
+
+      <section>
+        <h2>4. Backups &amp; Availability</h2>
+        <p>
+          Because StoryTape stores data locally in your browser unless synced to Google Drive, you
+          are responsible for maintaining backups of important recordings (for example, by syncing to
+          Google Drive or exporting files).
+        </p>
+      </section>
+
+      <section>
+        <h2>5. Disclaimer &amp; Limitation of Liability</h2>
+        <p>
+          StoryTape is provided on an <strong>"as is"</strong> and <strong>"as available"</strong>
+          basis without warranties of any kind, express or implied. To the fullest extent permitted
+          by law, the project maintainers are not liable for any data loss, service interruption, or
+          damages arising from your use of the app.
+        </p>
+      </section>
+
+      <section>
+        <h2>6. Contact</h2>
+        <p>
+          For questions about these terms, please open an issue at
+          <a
+            href="https://github.com/bogdan00/pwa_recorder/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            >github.com/bogdan00/pwa_recorder</a
+          >.
+        </p>
+      </section>
+    </div>
+  </body>
+</html>
