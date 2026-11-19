@@ -1,0 +1,186 @@
+export type SyncStatus =
+  | 'local_only'
+  | 'pending_upload'
+  | 'uploading'
+  | 'synced'
+  | 'cloud_only'
+  | 'error';
+
+export type AudioFormatOption = 'auto' | 'm4a' | 'webm' | 'wav';
+export type AudioExtension = 'm4a' | 'webm' | 'wav';
+export type SampleRateOption = 16000 | 24000 | 44100 | 48000 | 96000;
+export type BitrateKbpsOption =
+  | 32
+  | 48
+  | 64
+  | 96
+  | 128
+  | 160
+  | 192
+  | 256
+  | 320
+  | 384
+  | 510;
+export type BitrateModeOption = 'variable' | 'constant';
+export type ChannelCountOption = 1 | 2;
+export type WavBitDepthOption = 16 | 24 | 32;
+export type QualityPresetId =
+  | 'compact'
+  | 'standard'
+  | 'studio'
+  | 'master'
+  | 'custom';
+
+export interface AudioQualitySettings {
+  preset: QualityPresetId;
+  format: AudioFormatOption;
+  sampleRate: SampleRateOption;
+  bitrateKbps: BitrateKbpsOption;
+  bitrateMode: BitrateModeOption;
+  channels: ChannelCountOption;
+  wavBitDepth: WavBitDepthOption;
+  inputGain: number; // 0.5 to 2.5
+  highPassFilter: boolean; // 80 Hz voice rumble filter
+  softLimiter: boolean; // anti-clip safety limiter
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+  echoCancellation: boolean;
+}
+
+export interface AudioDeviceSettings {
+  deviceId: string; // 'default' or MediaDeviceInfo.deviceId
+  deviceLabel: string;
+}
+
+export type ThemePreference = 'dark' | 'light' | 'system';
+
+export interface AppSettings {
+  googleClientId: string;
+  driveRootFolderName: string;
+  driveRootFolderId?: string;
+  defaultNarrator: string;
+  theme: ThemePreference;
+  keepScreenAwake: boolean;
+  audioQuality: AudioQualitySettings;
+  audioDevice: AudioDeviceSettings;
+}
+
+export interface BookProject {
+  id: string;
+  title: string;
+  author: string;
+  narrator: string;
+  dedicatedTo: string;
+  description: string;
+  language: string;
+  tags: string[];
+  coverColor: string;
+  hasCover: boolean;
+  coverMimeType?: string;
+  coverUpdatedAt?: number;
+  driveFolderId?: string;
+  driveMetadataFileId?: string;
+  driveCoverFileId?: string;
+  syncStatus: SyncStatus;
+  syncError?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface Recording {
+  id: string;
+  projectId: string;
+  name: string;
+  notes: string;
+  orderIndex: number;
+  durationMs: number;
+  mimeType: string;
+  extension: AudioExtension;
+  sampleRate: number;
+  bitrateKbps?: number;
+  bitDepth?: number;
+  channels: ChannelCountOption;
+  deviceLabel?: string;
+  fileSizeBytes: number;
+  peaks: number[]; // normalized 0..1 overview peaks (max ~160 bars for compact UI preview)
+  driveFileId?: string;
+  driveFileName?: string;
+  syncStatus: SyncStatus;
+  syncError?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlaybackProgress {
+  projectId: string;
+  recordingId: string;
+  positionSec: number;
+  durationSec: number;
+  completedRecordingIds: string[];
+  updatedAt: number;
+}
+
+export interface ActiveDraft {
+  id: string;
+  projectId: string;
+  sampleRate: number;
+  channels: ChannelCountOption;
+  totalFrames: number;
+  chunkCount: number;
+  peaks: number[];
+  updatedAt: number;
+}
+
+export interface DraftChunkRecord {
+  key: string; // `${draftId}:${chunkIndex}`
+  draftId: string;
+  chunkIndex: number;
+  data: Float32Array;
+}
+
+export interface DriveProjectMetadataFile {
+  schemaVersion: 1;
+  id: string;
+  title: string;
+  author: string;
+  narrator: string;
+  dedicatedTo: string;
+  description: string;
+  language: string;
+  tags: string[];
+  coverColor: string;
+  coverFileName?: string;
+  coverMimeType?: string;
+  coverUpdatedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+  recordings: Array<{
+    id: string;
+    name: string;
+    notes: string;
+    orderIndex: number;
+    durationMs: number;
+    mimeType: string;
+    extension: AudioExtension;
+    sampleRate: number;
+    bitrateKbps?: number;
+    bitDepth?: number;
+    channels: ChannelCountOption;
+    deviceLabel?: string;
+    fileSizeBytes: number;
+    peaks: number[];
+    driveFileId?: string;
+    driveFileName: string;
+    createdAt: number;
+    updatedAt: number;
+  }>;
+}
+
+export const BOOK_COVER_PALETTE = [
+  { id: 'terracotta', label: 'Terracotta', hex: '#9E4736' },
+  { id: 'forest', label: 'Forest Sage', hex: '#3D6352' },
+  { id: 'midnight', label: 'Midnight Ink', hex: '#2F4562' },
+  { id: 'ochre', label: 'Warm Ochre', hex: '#A6722E' },
+  { id: 'plum', label: 'Mulberry Fig', hex: '#683B54' },
+  { id: 'espresso', label: 'Walnut Bark', hex: '#543D32' },
+] as const;
