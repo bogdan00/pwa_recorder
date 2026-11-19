@@ -34,10 +34,18 @@ npm run dev
 Run checks & tests:
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+npm run typecheck   # TypeScript strict check
+npm test            # Vitest unit & component tests
+npm run build       # Production PWA build (dist/)
+npm run test:e2e    # Parallel Playwright CUJ E2E tests against production build
+npm run precheck    # Full pre-submit gate (all four steps above)
 ```
+
+### Customer User Journeys (CUJ) & Pre-Submit Hook
+
+- Every core user journey is documented under [`cuj/`](./cuj/README.md) (`CUJ-01` through `CUJ-08`) and covered by parallel Playwright E2E specs under `e2e/`.
+- A versioned Git pre-push hook (`.githooks/pre-push`) is automatically enabled during `npm install` (via `prepare` → `git config core.hooksPath .githooks`). Every `git push` runs `npm run precheck` and blocks pushing if typecheck, unit tests, production build, or any CUJ E2E test fails.
+- To activate the hook manually without reinstalling: `git config core.hooksPath .githooks`.
 
 ---
 
@@ -50,7 +58,7 @@ This repository includes an automated workflow at `.github/workflows/deploy.yml`
 3. *(Optional)* To pre-configure your Google OAuth Client ID at build time, add a repository variable under **Settings → Secrets and variables → Actions → Variables**:
    - Name: `VITE_GOOGLE_CLIENT_ID`
    - Value: your Google Cloud OAuth 2.0 Web Client ID
-4. Every push to `main` automatically runs typecheck + tests + production PWA build and deploys to GitHub Pages.
+4. Every push to `main` automatically runs typecheck + unit tests + production PWA build + parallel Playwright CUJ E2E tests before deploying to GitHub Pages.
 
 ---
 

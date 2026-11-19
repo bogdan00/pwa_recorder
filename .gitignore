@@ -16,3 +16,5 @@ Thumbs.db
 .idea/
 *.log
 coverage/
+playwright-report/
+test-results/

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+echo ""
+echo "================================================================="
+echo "  StoryTape pre-push verification"
+echo "  Running: typecheck -> unit tests -> build -> parallel CUJ E2E"
+echo "================================================================="
+echo ""
+
+npm run precheck
+
+echo ""
+echo "All StoryTape checks and CUJ E2E tests passed. Proceeding with push."
+echo ""

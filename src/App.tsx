@@ -493,13 +493,11 @@ const StoryTapeShell: React.FC<AppProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download =
-        recording.driveFileName ||
-        buildChapterDriveFileName(
-          recording.orderIndex,
-          recording.name,
-          recording.extension,
-        );
+      a.download = buildChapterDriveFileName(
+        recording.orderIndex,
+        recording.name,
+        recording.extension,
+      );
       document.body.appendChild(a);
       a.click();
       a.remove();

@@ -50,6 +50,7 @@ export const BookEditorSheet: React.FC<BookEditorSheetProps> = ({
   const [coverBlob, setCoverBlob] = useState<Blob | undefined>(undefined);
   const [coverMimeType, setCoverMimeType] = useState<string | undefined>(undefined);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [processingCover, setProcessingCover] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -71,6 +72,7 @@ export const BookEditorSheet: React.FC<BookEditorSheetProps> = ({
 
     setConfirmDelete(false);
     setSaving(false);
+    setProcessingCover(false);
     setCoverChange('keep');
     setCoverBlob(undefined);
     setCoverMimeType(undefined);
@@ -126,11 +128,16 @@ export const BookEditorSheet: React.FC<BookEditorSheetProps> = ({
     e.target.value = '';
     if (!file) return;
 
-    const resized = await resizeCoverImage(file);
-    setCoverBlob(resized.blob);
-    setCoverMimeType(resized.mimeType);
-    setCoverChange('replace');
-    setSafePreview(URL.createObjectURL(resized.blob));
+    setProcessingCover(true);
+    try {
+      const resized = await resizeCoverImage(file);
+      setCoverBlob(resized.blob);
+      setCoverMimeType(resized.mimeType);
+      setCoverChange('replace');
+      setSafePreview(URL.createObjectURL(resized.blob));
+    } finally {
+      setProcessingCover(false);
+    }
   };
 
   const handleRemoveCover = () => {
@@ -142,7 +149,7 @@ export const BookEditorSheet: React.FC<BookEditorSheetProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || saving) return;
+    if (!title.trim() || saving || processingCover) return;
     setSaving(true);
     try {
       const tags = tagsText
@@ -440,14 +447,16 @@ export const BookEditorSheet: React.FC<BookEditorSheetProps> = ({
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={saving || !title.trim()}
+            disabled={saving || processingCover || !title.trim()}
             id="save-book-btn"
           >
-            {saving
-              ? 'Saving…'
-              : initialProject
-                ? 'Save Changes'
-                : 'Create Book'}
+            {processingCover
+              ? 'Processing cover…'
+              : saving
+                ? 'Saving…'
+                : initialProject
+                  ? 'Save Changes'
+                  : 'Create Book'}
           </button>
         </div>
       </form>
