@@ -76,6 +76,16 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
       };
     });
 
+    // Prevent the real Google Identity Services script (index.html) from loading over
+    // the network and overwriting our mocked window.google token client in CI / online runs.
+    await page.route('https://accounts.google.com/**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: '// mocked GSI in E2E',
+      }),
+    );
+
     const remoteWav = createSilentWavBuffer(2);
     const uploadedNames: string[] = [];
 
