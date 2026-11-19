@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createBook, parseTimerSeconds } from './helpers';
+import { createBook, parseTimerSeconds, waitForStudioTimer } from './helpers';
 
 test.describe('CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In & Undo', () => {
   test('drags waveform canvas to scrub, plays preview, performs punch-in re-recording with undo, and verifies unsaved exit/discard guards', async ({
@@ -8,11 +8,15 @@ test.describe('CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In
     await page.goto('./');
     await createBook(page, { title: 'Where the Wild Things Are' });
 
-    // Record ~2.4 seconds so we have plenty of waveform to drag-scrub
+    // Record until timer reaches >= 1.8s so we have plenty of waveform to drag-scrub
     await page.locator('#record-chapter-btn').click();
     await page.locator('#big-record-pause-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('REC');
-    await page.waitForTimeout(2400);
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= 1.8,
+      'initial take should reach at least 1.8s before scrubbing',
+    );
 
     await page.locator('#big-record-pause-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
@@ -20,7 +24,7 @@ test.describe('CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In
     const totalBeforeScrub = parseTimerSeconds(
       (await page.getByTestId('studio-timer').textContent()) || '00:00.0',
     );
-    expect(totalBeforeScrub).toBeGreaterThan(1.6);
+    expect(totalBeforeScrub).toBeGreaterThanOrEqual(1.8);
 
     // 1. Toggle waveform zoom 1× -> 2×
     const zoomBtn = page.getByRole('button', { name: /Waveform zoom/i });
@@ -40,13 +44,13 @@ test.describe('CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In
     await page.mouse.down();
     await page.mouse.move(endX, midY, { steps: 10 });
     await page.mouse.up();
-    await page.waitForTimeout(250);
 
-    const scrubbedSec = parseTimerSeconds(
-      (await page.getByTestId('studio-timer').textContent()) || '00:00.0',
-    );
-    expect(scrubbedSec).toBeLessThan(totalBeforeScrub - 0.35);
     await expect(page.locator('.studio-timer-sub')).toContainText('Scrubbed');
+    await waitForStudioTimer(
+      page,
+      (sec) => sec < totalBeforeScrub - 0.35,
+      'waveform drag should scrub playhead earlier than end',
+    );
 
     // Safe default label + contextual punch-in button appear when scrubbed back
     await expect(page.getByText('Continue at end')).toBeVisible();
@@ -54,21 +58,32 @@ test.describe('CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In
     await expect(punchInBtn).toBeVisible();
     await expect(punchInBtn).toContainText('Re-record from');
 
-    // 3. Play preview from scrubbed position
+    // 3. Play preview from scrubbed position and verify playhead actively advances
     await page.locator('#studio-preview-play-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('PLAYING');
-    await page.waitForTimeout(450);
+    const playStartSec = parseTimerSeconds(
+      (await page.getByTestId('studio-timer').textContent()) || '00:00.0',
+    );
+    await waitForStudioTimer(
+      page,
+      (sec) => sec > playStartSec + 0.15,
+      'preview playback should advance playhead beyond start position',
+    );
     await page.locator('#studio-preview-play-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
 
-    // Re-scrub back with -5s so we know playhead is at 00:00.0 (or before end)
+    // Re-scrub back with -5s so playhead is cleanly before the end
     await page.getByLabel('Skip back 5 seconds').click();
     await expect(page.locator('#punch-in-btn')).toBeVisible();
 
     // 4. Perform Punch-In Re-Recording -> Pause -> Verify Undo Trim restores length!
     await page.locator('#punch-in-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('REC');
-    await page.waitForTimeout(600);
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= 0.4,
+      'punch-in re-recording should advance to >= 0.4s',
+    );
     await page.locator('#big-record-pause-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
 
@@ -77,10 +92,11 @@ test.describe('CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In
     await undoBtn.click();
     await expect(undoBtn).toBeHidden();
 
-    const restoredSec = parseTimerSeconds(
-      (await page.getByTestId('studio-timer').textContent()) || '00:00.0',
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= totalBeforeScrub - 0.15,
+      'undo trim should restore original recording length',
     );
-    expect(restoredSec).toBeGreaterThanOrEqual(totalBeforeScrub - 0.15);
 
     // 5. Unsaved exit guard (Stay) + Discard Take confirmation
     await page.getByLabel('Leave recording studio').click();

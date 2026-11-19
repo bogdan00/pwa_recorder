@@ -12,8 +12,8 @@ test.describe('CUJ-05: Minimalistic Audiobook Player, Mini-Player, Speed, Sleep 
       narrator: 'Dad',
     });
 
-    await recordAndSaveChapter(page, { name: 'Into the Deep Dark Wood', recordMs: 1100 });
-    await recordAndSaveChapter(page, { name: 'The Owl & The Snake', recordMs: 1100 });
+    await recordAndSaveChapter(page, { name: 'Into the Deep Dark Wood', minDurationSec: 1.8 });
+    await recordAndSaveChapter(page, { name: 'The Owl & The Snake', minDurationSec: 0.8 });
 
     // 1. Tap Chapter 1 to play -> floating MiniPlayerBar appears
     await page

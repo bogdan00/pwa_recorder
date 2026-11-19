@@ -13,7 +13,7 @@ test.describe('CUJ-06: Audiobook Library Browsing (Search, Tags, Sort) & Themes'
       author: 'Julia Donaldson',
       tags: 'Dragons, Bedtime',
     });
-    await recordAndSaveChapter(page, { name: 'Madame Dragon’s School', recordMs: 800 });
+    await recordAndSaveChapter(page, { name: 'Madame Dragon’s School', minDurationSec: 0.6 });
 
     await page.getByLabel('Back to library').click();
     await createBook(page, {

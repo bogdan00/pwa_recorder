@@ -67,6 +67,12 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
 
   useEffect(() => stopMomentum, [stopMomentum]);
 
+  useEffect(() => {
+    if (phase !== 'paused') {
+      stopMomentum();
+    }
+  }, [phase, stopMomentum]);
+
   // Draw crisp retina waveform whenever peaks, playhead, phase, liveLevel, or resize changes
   const draw = useCallback(() => {
     const canvas = canvasRef.current;

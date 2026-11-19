@@ -8,8 +8,8 @@ test.describe('CUJ-04: Chapter Management — Rename, Reorder, Download Audio & 
     await page.goto('./');
     await createBook(page, { title: 'Charlotte’s Web', author: 'E. B. White' });
 
-    await recordAndSaveChapter(page, { name: 'Before Breakfast', recordMs: 900 });
-    await recordAndSaveChapter(page, { name: 'Wilbur', recordMs: 900 });
+    await recordAndSaveChapter(page, { name: 'Before Breakfast', minDurationSec: 0.6 });
+    await recordAndSaveChapter(page, { name: 'Wilbur', minDurationSec: 0.6 });
 
     // Verify initial order
     const titles = page.locator('.rec-card__title');

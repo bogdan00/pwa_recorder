@@ -26,13 +26,7 @@ export interface CreateBookInput {
 }
 
 export async function createBook(page: Page, input: CreateBookInput): Promise<void> {
-  const emptyBtn = page.locator('#empty-new-book-btn');
-  const fabBtn = page.locator('#new-book-fab');
-  if (await emptyBtn.isVisible()) {
-    await emptyBtn.click();
-  } else {
-    await fabBtn.click();
-  }
+  await page.locator('#empty-new-book-btn, #new-book-fab').first().click();
 
   await expect(page.locator('#book-title-input')).toBeVisible();
 
@@ -67,9 +61,28 @@ export async function createBook(page: Page, input: CreateBookInput): Promise<vo
   await expect(page.getByRole('heading', { name: input.title })).toBeVisible();
 }
 
+export async function waitForStudioTimer(
+  page: Page,
+  predicate: (seconds: number) => boolean,
+  message = 'studio timer condition',
+): Promise<number> {
+  let latest = 0;
+  await expect
+    .poll(
+      async () => {
+        const text = (await page.getByTestId('studio-timer').textContent()) || '00:00.0';
+        latest = parseTimerSeconds(text);
+        return predicate(latest);
+      },
+      { message },
+    )
+    .toBe(true);
+  return latest;
+}
+
 export async function recordAndSaveChapter(
   page: Page,
-  options: { name: string; notes?: string; recordMs?: number },
+  options: { name: string; notes?: string; minDurationSec?: number },
 ): Promise<void> {
   await page.locator('#record-chapter-btn').click();
   await expect(page.getByTestId('recording-studio-view')).toBeVisible();
@@ -77,11 +90,12 @@ export async function recordAndSaveChapter(
   await page.locator('#big-record-pause-btn').click();
   await expect(page.locator('.studio-status-pill')).toHaveText('REC');
 
-  await page.waitForTimeout(options.recordMs ?? 1200);
-  const recordedSec = parseTimerSeconds(
-    (await page.getByTestId('studio-timer').textContent()) || '00:00.0',
+  const minDurationSec = options.minDurationSec ?? 0.6;
+  await waitForStudioTimer(
+    page,
+    (sec) => sec >= minDurationSec,
+    `studio timer should reach at least ${minDurationSec}s`,
   );
-  expect(recordedSec).toBeGreaterThan(0.5);
 
   await page.locator('#small-stop-btn').click();
   const nameInput = page.locator('#recording-name-input');
@@ -92,7 +106,7 @@ export async function recordAndSaveChapter(
   }
   await page.locator('#confirm-save-recording-btn').click();
 
-  await expect(page.getByText(options.name, { exact: true })).toBeVisible();
+  await expect(page.locator('.rec-card__title', { hasText: options.name })).toBeVisible();
 }
 
 /**

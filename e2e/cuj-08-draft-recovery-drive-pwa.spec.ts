@@ -3,8 +3,8 @@ import {
   createBook,
   createSilentWavBuffer,
   createTinyPngBuffer,
-  parseTimerSeconds,
   recordAndSaveChapter,
+  waitForStudioTimer,
 } from './helpers';
 
 test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA Integrity', () => {
@@ -14,11 +14,34 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     await page.goto('./');
     await createBook(page, { title: 'The Snowman' });
 
-    // Record > 2.3s so crash-safe 2s IndexedDB draft chunk flushes
+    // Record until live timer advances AND the automatic crash-safe draft chunk flushes to IndexedDB
     await page.locator('#record-chapter-btn').click();
     await page.locator('#big-record-pause-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('REC');
-    await page.waitForTimeout(2400);
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= 1.6,
+      'recording should advance past 1.6s before checking draft flush',
+    );
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(async () => {
+            const db = await new Promise<IDBDatabase>((resolve, reject) => {
+              const req = indexedDB.open('storytape-db', 1);
+              req.onsuccess = () => resolve(req.result);
+              req.onerror = () => reject(req.error);
+            });
+            const tx = db.transaction('draftChunks', 'readonly');
+            return new Promise<number>((resolve, reject) => {
+              const req = tx.objectStore('draftChunks').count();
+              req.onsuccess = () => resolve(req.result);
+              req.onerror = () => reject(req.error);
+            });
+          }),
+        { message: 'automatic crash-safe draft chunk should flush to IndexedDB' },
+      )
+      .toBeGreaterThanOrEqual(1);
 
     // Tap Back -> Keep Draft & Leave
     await page.getByLabel('Leave recording studio').click();
@@ -37,10 +60,11 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     await banner.getByRole('button', { name: 'Resume' }).click();
     await expect(page.getByTestId('recording-studio-view')).toBeVisible();
     await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
-    const recoveredSec = parseTimerSeconds(
-      (await page.getByTestId('studio-timer').textContent()) || '00:00.0',
+    await waitForStudioTimer(
+      page,
+      (sec) => sec > 1.5,
+      'recovered draft should restore > 1.5s of audio',
     );
-    expect(recoveredSec).toBeGreaterThan(1.5);
 
     // Stop & save the recovered draft cleanly
     await page.locator('#small-stop-btn').click();
@@ -268,7 +292,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
         buffer: createTinyPngBuffer(),
       },
     });
-    await recordAndSaveChapter(page, { name: 'Chapter One', recordMs: 900 });
+    await recordAndSaveChapter(page, { name: 'Chapter One', minDurationSec: 0.6 });
 
     // Open Settings -> check setup guide origin -> configure Client ID -> Connect Drive
     await page.getByLabel('Back to library').click();

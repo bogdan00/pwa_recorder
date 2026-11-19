@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createBook, parseTimerSeconds } from './helpers';
+import { createBook, waitForStudioTimer } from './helpers';
 
 test.describe('CUJ-02: Core Audio Recording — Start, Live Waveform, Pause, Safe Resume & Stop Name Prompt', () => {
   test('records live audio with advancing timer, pauses, resumes a second time cleanly, backs out of stop modal safely, then saves named chapter', async ({
@@ -22,16 +22,16 @@ test.describe('CUJ-02: Core Audio Recording — Start, Live Waveform, Pause, Saf
     expect(stopBox).not.toBeNull();
     expect(bigBox!.width).toBeGreaterThan(stopBox!.width + 20);
 
-    // 2. Start recording -> live timer advances & waveform canvas renders
+    // 2. Start recording -> reactively wait for live timer to advance
     await page.locator('#big-record-pause-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('REC');
     await expect(page.locator('#small-stop-btn')).toBeEnabled();
 
-    await page.waitForTimeout(1300);
-    const firstSegmentSec = parseTimerSeconds(
-      (await page.getByTestId('studio-timer').textContent()) || '00:00.0',
+    const firstSegmentSec = await waitForStudioTimer(
+      page,
+      (sec) => sec >= 0.8,
+      'first recording segment should advance to >= 0.8s',
     );
-    expect(firstSegmentSec).toBeGreaterThan(0.8);
 
     // 3. Pause -> then Resume (tests 2nd AudioWorklet attach on same AudioContext!)
     await page.locator('#big-record-pause-btn').click();
@@ -39,12 +39,12 @@ test.describe('CUJ-02: Core Audio Recording — Start, Live Waveform, Pause, Saf
 
     await page.locator('#big-record-pause-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('REC');
-    await page.waitForTimeout(1200);
 
-    const resumedSec = parseTimerSeconds(
-      (await page.getByTestId('studio-timer').textContent()) || '00:00.0',
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= firstSegmentSec + 0.6,
+      'resumed recording segment should advance at least 0.6s beyond first segment',
     );
-    expect(resumedSec).toBeGreaterThan(firstSegmentSec + 0.6);
 
     // 4. Full Stop -> Recording Name prompt -> verify "Back to Recording" safety escape
     await page.locator('#small-stop-btn').click();

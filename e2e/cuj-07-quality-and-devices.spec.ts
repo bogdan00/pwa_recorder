@@ -45,11 +45,11 @@ test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV 
     await usbMicRadio.click();
     await expect(usbMicRadio).toHaveAttribute('aria-checked', 'true');
 
-    // Run live Mic Test and stop cleanly
+    // Run live Mic Test and wait reactively for live dB + hardware channel telemetry
     await page.getByRole('button', { name: 'Test Mic' }).click();
     await expect(page.getByRole('button', { name: 'Stop Test' })).toBeVisible();
-    await page.waitForTimeout(350);
-    await expect(page.locator('.mic-telemetry')).toContainText('dB');
+    await expect(page.locator('.mic-telemetry')).toContainText(/-?\d+\s*dB/);
+    await expect(page.locator('.mic-telemetry')).toContainText(/\d+\s*ch/);
     await page.getByRole('button', { name: 'Stop Test' }).click();
     await expect(page.getByRole('button', { name: 'Test Mic' })).toBeVisible();
 
@@ -82,7 +82,7 @@ test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV 
     await createBook(page, { title: 'Studio Master Test' });
 
     // 5. Record real audio and verify saved 24-bit Stereo WAV bytes inside IndexedDB!
-    await recordAndSaveChapter(page, { name: 'Archival Chapter', recordMs: 1000 });
+    await recordAndSaveChapter(page, { name: 'Archival Chapter', minDurationSec: 0.7 });
     await expect(page.locator('.rec-card__meta')).toContainText('WAV · 48 kHz · 24-bit');
     await expect(page.locator('.rec-card__meta')).toContainText('Stereo');
 
