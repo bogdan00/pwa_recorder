@@ -79,7 +79,7 @@ function parseHashRoute(): Route {
     return {
       view: 'record',
       projectId: decodeURIComponent(parts[1]),
-      draftId: params.get('draft'),
+      draftId: params.get('draft') ?? undefined,
     };
   }
   return { view: 'library' };

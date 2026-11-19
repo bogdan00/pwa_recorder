@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../App';
 import { resetDbConnectionForTests } from '../storage/db';
@@ -201,10 +201,13 @@ describe('StoryTape end-to-end UI workflows', () => {
     expect(screen.getByText('by Julia Donaldson')).toBeInTheDocument();
     expect(screen.getByText('Read by Dad')).toBeInTheDocument();
 
-    // 3. Enter Recording Studio
+    // 3. Enter Recording Studio (and simulate real browser hashchange firing right after navigate)
     await user.click(
       screen.getByRole('button', { name: /record first chapter/i }),
     );
+    act(() => {
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
     expect(screen.getByTestId('recording-studio-view')).toBeInTheDocument();
 
     const bigBtn = screen.getByLabelText('Start recording');

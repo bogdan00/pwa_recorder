@@ -79,6 +79,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   );
   const [caps, setCaps] = useState<CodecCapabilities | null>(null);
   const [studioError, setStudioError] = useState<string | null>(null);
+  const [isStartingMic, setIsStartingMic] = useState(false);
 
   // Modals
   const [saveOpen, setSaveOpen] = useState(false);
@@ -92,18 +93,20 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     void probeAudioCapabilities().then(setCaps);
   }, []);
 
+  // Subscribe once for the lifetime of the view; dispose only on true unmount
   useEffect(() => {
     const engine = engineRef.current!;
     const unsub = engine.subscribe(setSnap);
-
-    if (resumeDraftId) {
-      void engine.loadDraft(resumeDraftId);
-    }
-
     return () => {
       unsub();
       void engine.dispose();
     };
+  }, []);
+
+  // Load recoverable draft separately without tearing down engine subscriptions
+  useEffect(() => {
+    if (!resumeDraftId) return;
+    void engineRef.current?.loadDraft(resumeDraftId);
   }, [resumeDraftId]);
 
   // Warn before accidental browser refresh/close while audio is unsaved
@@ -137,12 +140,14 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   const defaultRecordingName = `Chapter ${existingRecordingCount + 1}`;
 
   const handleBigRecordPauseClick = async () => {
+    if (isStartingMic) return;
     setStudioError(null);
     const engine = engineRef.current!;
     try {
       if (snap.phase === 'recording') {
         await engine.pause();
       } else {
+        setIsStartingMic(true);
         const feedback = await engine.startOrResumeFromEnd(
           settings.audioDevice,
           settings.audioQuality,
@@ -158,6 +163,8 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
           ? err.message
           : 'Could not access microphone. Check browser permissions.',
       );
+    } finally {
+      setIsStartingMic(false);
     }
   };
 
@@ -245,8 +252,9 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     onToast('Take discarded');
   };
 
-  const statusLabel =
-    snap.phase === 'recording'
+  const statusLabel = isStartingMic
+    ? 'STARTING…'
+    : snap.phase === 'recording'
       ? 'REC'
       : snap.phase === 'paused'
         ? 'PAUSED'
