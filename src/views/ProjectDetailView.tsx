@@ -36,6 +36,8 @@ interface ProjectDetailViewProps {
   onRenameRecording: (recordingId: string, newName: string) => Promise<void>;
   onReorderRecordings: (orderedIds: string[]) => Promise<void>;
   onDownloadRecording: (recording: Recording) => Promise<void>;
+  onOpenQualityLab: (recording: Recording) => void;
+  onDeleteLocalMaster: (recordingId: string) => Promise<void>;
   onShareRecording: (recording: Recording) => Promise<void>;
   onDeleteRecording: (recordingId: string) => Promise<void>;
 }
@@ -55,6 +57,8 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   onRenameRecording,
   onReorderRecordings,
   onDownloadRecording,
+  onOpenQualityLab,
+  onDeleteLocalMaster,
   onShareRecording,
   onDeleteRecording,
 }) => {
@@ -288,6 +292,8 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                     onMoveUp={() => handleMove(idx, -1)}
                     onMoveDown={() => handleMove(idx, 1)}
                     onDownloadLocal={() => onDownloadRecording(rec)}
+                    onOpenQualityLab={() => onOpenQualityLab(rec)}
+                    onDeleteLocalMaster={() => onDeleteLocalMaster(rec.id)}
                     onShareAudio={() => onShareRecording(rec)}
                     onRetrySync={async () => onSyncProject()}
                     onDelete={() => onDeleteRecording(rec.id)}

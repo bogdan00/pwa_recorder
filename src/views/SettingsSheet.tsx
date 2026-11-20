@@ -52,6 +52,7 @@ import type { GoogleAuthState } from '../drive/googleAuth';
 import { getDriveFolderWebUrl } from '../drive/shareUtils';
 import type { PwaInstallState } from '../pwa/installPrompt';
 import { ThemePickerGrid } from '../components/ThemeSwitcherSheet';
+import { getLocalMastersSummary } from '../storage/db';
 import { formatBytes, formatGainDb, formatSampleRate } from '../utils/format';
 import './SettingsSheet.css';
 
@@ -74,6 +75,7 @@ interface SettingsSheetProps {
   onSwitchToPersonalLibrary: () => Promise<void>;
   onUnlinkSharedBook: (folderId: string) => void;
   onClearSyncedCache: () => Promise<number>;
+  onClearLocalMasters?: () => Promise<{ count: number; freedBytes: number }>;
   onToast: (message: string) => void;
 }
 
@@ -96,6 +98,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   onSwitchToPersonalLibrary,
   onUnlinkSharedBook,
   onClearSyncedCache,
+  onClearLocalMasters,
   onToast,
 }) => {
   const [devices, setDevices] = useState<AudioInputDeviceInfo[]>([]);
@@ -114,6 +117,10 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
     usage: number;
     quota: number;
   } | null>(null);
+  const [localMastersSummary, setLocalMastersSummary] = useState<{
+    count: number;
+    totalBytes: number;
+  }>({ count: 0, totalBytes: 0 });
 
   const refreshDevices = useCallback(async () => {
     setDeviceLoading(true);
@@ -146,6 +153,9 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
 
     void refreshDevices();
     void probeAudioCapabilities().then(setCaps);
+    void getLocalMastersSummary()
+      .then(setLocalMastersSummary)
+      .catch(() => {});
 
     if (
       typeof navigator !== 'undefined' &&
@@ -484,6 +494,33 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   <span className="preset-card__sub">{preset.tagline}</span>
                 </button>
               ))}
+            </div>
+
+            {/* Opt-in device-local lossless master (32-bit Float WAV) */}
+            <div className="toggle-row" data-testid="keep-local-master-row">
+              <div className="toggle-text">
+                <span className="toggle-title">Save Local Lossless Master</span>
+                <span className="toggle-desc">
+                  Keep an uncompressed 32-bit Float WAV copy on this device for
+                  Quality Lab blind A/B tests &amp; multi-bitrate export. Google
+                  Drive still syncs your regular chapter file.
+                </span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                className="switch"
+                aria-checked={settings.keepLocalMaster}
+                aria-label="Save Local Lossless Master"
+                onClick={() =>
+                  onUpdateSettings({
+                    ...settings,
+                    keepLocalMaster: !settings.keepLocalMaster,
+                  })
+                }
+              >
+                <span className="switch-thumb" />
+              </button>
             </div>
 
             {/* Output Format / Codec */}
@@ -1176,7 +1213,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                     />
                   </div>
                 )}
-                <div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
@@ -1191,6 +1228,26 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   >
                     Free Cached Audio for Synced Chapters
                   </button>
+
+                  {onClearLocalMasters && localMastersSummary.count > 0 && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      data-testid="clear-local-masters-btn"
+                      onClick={async () => {
+                        const res = await onClearLocalMasters();
+                        setLocalMastersSummary({ count: 0, totalBytes: 0 });
+                        onToast(
+                          res.count > 0
+                            ? `Deleted ${res.count} local master${res.count === 1 ? '' : 's'} (${formatBytes(res.freedBytes)} freed)`
+                            : 'No local masters to delete',
+                        );
+                      }}
+                    >
+                      Delete Local Masters ({localMastersSummary.count} ·{' '}
+                      {formatBytes(localMastersSummary.totalBytes)})
+                    </button>
+                  )}
                 </div>
               </div>
             )}

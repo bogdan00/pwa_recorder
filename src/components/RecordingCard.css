@@ -92,6 +92,19 @@
   opacity: 0.45;
 }
 
+.rec-card__master-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-sage-soft);
+  color: var(--accent-sage);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 .rec-card__notes {
   font-size: 12.5px;
   color: var(--ink-secondary);

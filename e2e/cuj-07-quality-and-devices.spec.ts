@@ -88,7 +88,7 @@ test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV 
 
     const wavHeader = await page.evaluate(async () => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const req = indexedDB.open('storytape-db', 1);
+        const req = indexedDB.open('storytape-db');
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });

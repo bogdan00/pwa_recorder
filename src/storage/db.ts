@@ -8,7 +8,7 @@ import type {
 } from '../types/models';
 
 const DB_NAME = 'storytape-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 interface StoredBinaryRecord {
   buffer: ArrayBuffer;
@@ -60,6 +60,10 @@ interface StoryTapeDBSchema extends DBSchema {
     key: string;
     value: Blob | StoredBinaryRecord;
   };
+  recordingMasters: {
+    key: string;
+    value: Blob | StoredBinaryRecord;
+  };
   playbackProgress: {
     key: string;
     value: PlaybackProgress;
@@ -95,6 +99,9 @@ export function getDb(): Promise<IDBPDatabase<StoryTapeDBSchema>> {
         }
         if (!db.objectStoreNames.contains('recordingBlobs')) {
           db.createObjectStore('recordingBlobs');
+        }
+        if (!db.objectStoreNames.contains('recordingMasters')) {
+          db.createObjectStore('recordingMasters');
         }
         if (!db.objectStoreNames.contains('playbackProgress')) {
           const store = db.createObjectStore('playbackProgress', {
@@ -152,6 +159,7 @@ export async function deleteProject(projectId: string): Promise<void> {
       'projectCovers',
       'recordings',
       'recordingBlobs',
+      'recordingMasters',
       'playbackProgress',
     ],
     'readwrite',
@@ -162,6 +170,7 @@ export async function deleteProject(projectId: string): Promise<void> {
   for (const rec of recs) {
     await tx.objectStore('recordings').delete(rec.id);
     await tx.objectStore('recordingBlobs').delete(rec.id);
+    await tx.objectStore('recordingMasters').delete(rec.id);
   }
   await tx.done;
 }
@@ -189,7 +198,7 @@ export async function deleteProjectCover(projectId: string): Promise<void> {
 }
 
 // ============================================================================
-// Recordings (Chapters)
+// Recordings (Chapters) & Local-Only Lossless Masters
 // ============================================================================
 
 export async function listAllRecordings(): Promise<Recording[]> {
@@ -213,13 +222,27 @@ export async function getRecording(id: string): Promise<Recording | undefined> {
 export async function putRecording(
   recording: Recording,
   blob?: Blob,
+  masterBlob?: Blob,
 ): Promise<void> {
   const db = await getDb();
-  if (blob) {
-    const stored = await blobToStoredRecord(blob);
-    const tx = db.transaction(['recordings', 'recordingBlobs'], 'readwrite');
+  if (blob || masterBlob) {
+    const [storedBlob, storedMaster] = await Promise.all([
+      blob ? blobToStoredRecord(blob) : Promise.resolve(null),
+      masterBlob ? blobToStoredRecord(masterBlob) : Promise.resolve(null),
+    ]);
+    const stores: Array<'recordings' | 'recordingBlobs' | 'recordingMasters'> = [
+      'recordings',
+    ];
+    if (storedBlob) stores.push('recordingBlobs');
+    if (storedMaster) stores.push('recordingMasters');
+    const tx = db.transaction(stores, 'readwrite');
     await tx.objectStore('recordings').put(recording);
-    await tx.objectStore('recordingBlobs').put(stored, recording.id);
+    if (storedBlob) {
+      await tx.objectStore('recordingBlobs').put(storedBlob, recording.id);
+    }
+    if (storedMaster) {
+      await tx.objectStore('recordingMasters').put(storedMaster, recording.id);
+    }
     await tx.done;
   } else {
     await db.put('recordings', recording);
@@ -248,11 +271,101 @@ export async function deleteRecordingBlob(recordingId: string): Promise<void> {
   await db.delete('recordingBlobs', recordingId);
 }
 
+export async function putRecordingMaster(
+  recordingId: string,
+  blob: Blob,
+): Promise<void> {
+  const stored = await blobToStoredRecord(blob);
+  const db = await getDb();
+  await db.put('recordingMasters', stored, recordingId);
+}
+
+export async function getRecordingMaster(
+  recordingId: string,
+): Promise<Blob | undefined> {
+  const db = await getDb();
+  const raw = await db.get('recordingMasters', recordingId);
+  return storedRecordToBlob(raw);
+}
+
+export async function deleteRecordingMaster(recordingId: string): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction(['recordings', 'recordingMasters'], 'readwrite');
+  await tx.objectStore('recordingMasters').delete(recordingId);
+  const rec = await tx.objectStore('recordings').get(recordingId);
+  if (rec && rec.hasLocalMaster) {
+    await tx.objectStore('recordings').put({
+      ...rec,
+      hasLocalMaster: false,
+      localMasterBytes: undefined,
+      localMasterSampleRate: undefined,
+      localMasterBitDepth: undefined,
+      localMasterChannels: undefined,
+    });
+  }
+  await tx.done;
+}
+
+export async function getLocalMastersSummary(): Promise<{
+  count: number;
+  totalBytes: number;
+}> {
+  const db = await getDb();
+  const all = await db.getAll('recordingMasters');
+  let totalBytes = 0;
+  for (const item of all) {
+    if (item instanceof Blob) {
+      totalBytes += item.size;
+    } else if (item && 'buffer' in item && item.buffer) {
+      totalBytes += item.buffer.byteLength;
+    }
+  }
+  return { count: all.length, totalBytes };
+}
+
+export async function clearAllLocalMasters(): Promise<{
+  count: number;
+  freedBytes: number;
+}> {
+  const db = await getDb();
+  const tx = db.transaction(['recordings', 'recordingMasters'], 'readwrite');
+  const keys = await tx.objectStore('recordingMasters').getAllKeys();
+  let freedBytes = 0;
+  for (const key of keys) {
+    const raw = await tx.objectStore('recordingMasters').get(key);
+    if (raw instanceof Blob) {
+      freedBytes += raw.size;
+    } else if (raw && 'buffer' in raw && raw.buffer) {
+      freedBytes += raw.buffer.byteLength;
+    }
+    await tx.objectStore('recordingMasters').delete(key);
+  }
+  const recs = await tx.objectStore('recordings').getAll();
+  for (const rec of recs) {
+    if (rec.hasLocalMaster) {
+      await tx.objectStore('recordings').put({
+        ...rec,
+        hasLocalMaster: false,
+        localMasterBytes: undefined,
+        localMasterSampleRate: undefined,
+        localMasterBitDepth: undefined,
+        localMasterChannels: undefined,
+      });
+    }
+  }
+  await tx.done;
+  return { count: keys.length, freedBytes };
+}
+
 export async function deleteRecording(recordingId: string): Promise<void> {
   const db = await getDb();
-  const tx = db.transaction(['recordings', 'recordingBlobs'], 'readwrite');
+  const tx = db.transaction(
+    ['recordings', 'recordingBlobs', 'recordingMasters'],
+    'readwrite',
+  );
   await tx.objectStore('recordings').delete(recordingId);
   await tx.objectStore('recordingBlobs').delete(recordingId);
+  await tx.objectStore('recordingMasters').delete(recordingId);
   await tx.done;
 }
 

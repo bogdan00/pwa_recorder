@@ -90,3 +90,135 @@ export function encodeWav(
 
   return new Blob([buffer], { type: 'audio/wav' });
 }
+
+export interface DecodedWavAudio {
+  channels: Float32Array[];
+  sampleRate: number;
+  bitDepth: number;
+  durationMs: number;
+}
+
+function readAscii(view: DataView, offset: number, length: number): string {
+  let out = '';
+  for (let i = 0; i < length; i += 1) {
+    out += String.fromCharCode(view.getUint8(offset + i));
+  }
+  return out;
+}
+
+export function isWavBuffer(buffer: ArrayBuffer): boolean {
+  if (buffer.byteLength < 12) return false;
+  const view = new DataView(buffer);
+  return readAscii(view, 0, 4) === 'RIFF' && readAscii(view, 8, 4) === 'WAVE';
+}
+
+/**
+ * Pure TypeScript RIFF/WAVE decoder supporting 16-bit PCM, 24-bit PCM,
+ * and 32-bit IEEE Float (including WAVE_FORMAT_EXTENSIBLE) with zero
+ * browser-decoder resampling or quantization loss.
+ */
+export function decodeWav(buffer: ArrayBuffer): DecodedWavAudio {
+  if (!isWavBuffer(buffer)) {
+    throw new Error('Invalid RIFF/WAVE header');
+  }
+
+  const view = new DataView(buffer);
+  let offset = 12;
+  let formatTag = 0;
+  let numChannels = 0;
+  let sampleRate = 0;
+  let bitDepth = 0;
+  let dataOffset = -1;
+  let dataSize = 0;
+
+  while (offset + 8 <= buffer.byteLength) {
+    const chunkId = readAscii(view, offset, 4);
+    const chunkSize = view.getUint32(offset + 4, true);
+    const chunkBody = offset + 8;
+
+    if (chunkId === 'fmt ' && chunkSize >= 16 && chunkBody + 16 <= buffer.byteLength) {
+      formatTag = view.getUint16(chunkBody, true);
+      numChannels = view.getUint16(chunkBody + 2, true);
+      sampleRate = view.getUint32(chunkBody + 4, true);
+      bitDepth = view.getUint16(chunkBody + 14, true);
+      if (formatTag === 0xfffe && chunkSize >= 40 && chunkBody + 26 <= buffer.byteLength) {
+        // WAVE_FORMAT_EXTENSIBLE: first 2 bytes of SubFormat GUID carry actual tag (1=PCM, 3=Float)
+        formatTag = view.getUint16(chunkBody + 24, true);
+      }
+    } else if (chunkId === 'data') {
+      dataOffset = chunkBody;
+      dataSize = Math.min(chunkSize, buffer.byteLength - chunkBody);
+      break;
+    }
+
+    // RIFF chunks are word-aligned (pad byte when odd size)
+    offset = chunkBody + chunkSize + (chunkSize % 2);
+  }
+
+  if (dataOffset < 0 || numChannels < 1 || sampleRate < 1) {
+    throw new Error('Incomplete WAV file: missing fmt or data chunk');
+  }
+
+  if (
+    (formatTag !== 1 && formatTag !== 3) ||
+    (bitDepth !== 16 && bitDepth !== 24 && bitDepth !== 32)
+  ) {
+    throw new Error(
+      `Unsupported WAV format (tag=${formatTag}, bitDepth=${bitDepth})`,
+    );
+  }
+
+  const bytesPerSample = bitDepth / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const numFrames = Math.floor(dataSize / blockAlign);
+  const channels = Array.from(
+    { length: numChannels },
+    () => new Float32Array(numFrames),
+  );
+
+  let pos = dataOffset;
+  if (formatTag === 3 && bitDepth === 32) {
+    for (let f = 0; f < numFrames; f += 1) {
+      for (let ch = 0; ch < numChannels; ch += 1) {
+        channels[ch][f] = view.getFloat32(pos, true);
+        pos += 4;
+      }
+    }
+  } else if (formatTag === 1 && bitDepth === 16) {
+    for (let f = 0; f < numFrames; f += 1) {
+      for (let ch = 0; ch < numChannels; ch += 1) {
+        const v = view.getInt16(pos, true);
+        channels[ch][f] = v < 0 ? v / 0x8000 : v / 0x7fff;
+        pos += 2;
+      }
+    }
+  } else if (formatTag === 1 && bitDepth === 24) {
+    for (let f = 0; f < numFrames; f += 1) {
+      for (let ch = 0; ch < numChannels; ch += 1) {
+        const b0 = view.getUint8(pos);
+        const b1 = view.getUint8(pos + 1);
+        const b2 = view.getUint8(pos + 2);
+        let int24 = b0 | (b1 << 8) | (b2 << 16);
+        if (int24 & 0x800000) int24 |= ~0xffffff; // sign-extend 24-bit signed int
+        channels[ch][f] = int24 < 0 ? int24 / 0x800000 : int24 / 0x7fffff;
+        pos += 3;
+      }
+    }
+  } else {
+    // 32-bit signed integer PCM
+    for (let f = 0; f < numFrames; f += 1) {
+      for (let ch = 0; ch < numChannels; ch += 1) {
+        const v = view.getInt32(pos, true);
+        channels[ch][f] = v < 0 ? v / 0x80000000 : v / 0x7fffffff;
+        pos += 4;
+      }
+    }
+  }
+
+  return {
+    channels,
+    sampleRate,
+    bitDepth,
+    durationMs: Math.round((numFrames / sampleRate) * 1000),
+  };
+}

@@ -17,6 +17,7 @@ For enduring system invariants and architectural decisions backing these journey
 | [CUJ-07](./CUJ-07-quality-and-devices.md) | Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV Export) & Microphone Selection | P0 | [`e2e/cuj-07-quality-and-devices.spec.ts`](../e2e/cuj-07-quality-and-devices.spec.ts) |
 | [CUJ-08](./CUJ-08-draft-recovery-drive-pwa.md) | Crash-Safe Draft Recovery, Google Drive Two-Way Sync, PWA Install Prompt & Subpath Integrity | P0 | [`e2e/cuj-08-draft-recovery-drive-pwa.spec.ts`](../e2e/cuj-08-draft-recovery-drive-pwa.spec.ts) |
 | [CUJ-09](./CUJ-09-multi-user-sharing.md) | Multi-User Family Sharing, Guided Join, Conflict-Safe Co-Narration, Listener Mode & Quick Chapter Share | P0 | [`e2e/cuj-09-multi-user-sharing.spec.ts`](../e2e/cuj-09-multi-user-sharing.spec.ts) |
+| [CUJ-10](./CUJ-10-local-master-export-compare.md) | Local Lossless Master Archival, Multi-Bitrate Export & Quality Lab (Blind A/B Threshold Finder) | P1 | [`e2e/cuj-10-local-master-export-compare.spec.ts`](../e2e/cuj-10-local-master-export-compare.spec.ts) |
 
 ## Running All CUJ E2E Tests
 

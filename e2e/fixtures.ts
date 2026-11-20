@@ -113,6 +113,7 @@ export const test = base.extend<StoryTapeTestOptions>({
         '.library-header__inner',
         '.library-page',
         '.project-page',
+        '.quality-lab-page',
         '.sheet-panel',
         '.studio-page',
         '.player-sheet',
@@ -120,6 +121,7 @@ export const test = base.extend<StoryTapeTestOptions>({
       const BOUNDED_ITEM_SELECTORS = [
         '.library-header button',
         '.project-topbar button',
+        '.quality-lab-topbar button',
         '[data-testid="theme-switcher-sheet"] [data-theme-option]',
       ];
 

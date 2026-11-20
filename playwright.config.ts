@@ -66,9 +66,9 @@ export default defineConfig<StoryTapeTestOptions>({
     },
     {
       // Verifies narrow 360px phone layouts (including Drive-connected "Synced" / "N to sync"
-      // header pills, Theme Switcher, Settings, ShareSheet, and JoinShareModal) before push.
+      // header pills, Theme Switcher, Settings, ShareSheet, JoinShareModal, and Quality Lab) before push.
       name: 'mobile-compact',
-      testMatch: /cuj-(01|06|08|09)-.*\.spec\.ts/,
+      testMatch: /cuj-(01|06|08|09|10)-.*\.spec\.ts/,
       use: {
         viewport: { width: 360, height: 740 },
         cpuThrottleRate: 1,

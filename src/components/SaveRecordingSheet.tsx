@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Loader2, Pause, Play, X } from 'lucide-react';
-import { formatDurationMs } from '../utils/format';
+import { formatBytes, formatDurationMs } from '../utils/format';
 import './SaveRecordingSheet.css';
 
 interface SaveRecordingSheetProps {
@@ -8,10 +8,13 @@ interface SaveRecordingSheetProps {
   defaultName: string;
   durationMs: number;
   specLabel: string;
+  keepLocalMaster?: boolean;
+  estimatedMasterBytes?: number;
   isPreviewPlaying: boolean;
   isSaving: boolean;
   encodeProgress: number; // 0..1
   errorMessage: string | null;
+  onToggleKeepLocalMaster?: (next: boolean) => void;
   onTogglePreview: () => void;
   onBackToRecording: () => void;
   onConfirmSave: (name: string, notes: string) => void;
@@ -22,10 +25,13 @@ export const SaveRecordingSheet: React.FC<SaveRecordingSheetProps> = ({
   defaultName,
   durationMs,
   specLabel,
+  keepLocalMaster = false,
+  estimatedMasterBytes = 0,
   isPreviewPlaying,
   isSaving,
   encodeProgress,
   errorMessage,
+  onToggleKeepLocalMaster,
   onTogglePreview,
   onBackToRecording,
   onConfirmSave,
@@ -126,6 +132,34 @@ export const SaveRecordingSheet: React.FC<SaveRecordingSheetProps> = ({
               disabled={isSaving}
             />
           </div>
+
+          {onToggleKeepLocalMaster && (
+            <div className="save-rec-master-row">
+              <div className="save-rec-master-row__text">
+                <span className="save-rec-master-row__title">
+                  Keep local lossless master (32-bit Float WAV)
+                </span>
+                <span className="save-rec-master-row__desc">
+                  Device-only
+                  {estimatedMasterBytes > 0
+                    ? ` · ~${formatBytes(estimatedMasterBytes)}`
+                    : ''}{' '}
+                  for Quality Lab &amp; re-export
+                </span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                className="switch"
+                aria-checked={keepLocalMaster}
+                aria-label="Keep local lossless master"
+                disabled={isSaving}
+                onClick={() => onToggleKeepLocalMaster(!keepLocalMaster)}
+              >
+                <span className="switch-thumb" />
+              </button>
+            </div>
+          )}
 
           {isSaving && (
             <div className="save-rec-progress" aria-live="polite">

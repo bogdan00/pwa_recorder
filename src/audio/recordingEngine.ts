@@ -16,6 +16,7 @@ import { createId, downsamplePeaks } from '../utils/format';
 import { acquireMicStream } from './audioDevices';
 import { encodeAudio, type EncodedAudioResult } from './nativeEncoder';
 import { PcmTimeline, PEAKS_PER_SECOND } from './pcmTimeline';
+import { encodeWav } from './wavEncoder';
 
 export type StudioPhase = 'idle' | 'recording' | 'paused' | 'playing';
 
@@ -388,8 +389,15 @@ export class RecordingEngine {
   async finalizeAndEncode(
     quality: AudioQualitySettings,
     onProgress?: (ratio: number) => void,
+    options?: { captureLocalMaster?: boolean },
   ): Promise<{
     encoded: EncodedAudioResult;
+    localMaster?: {
+      blob: Blob;
+      sampleRate: number;
+      bitDepth: 32;
+      channels: ChannelCountOption;
+    };
     durationMs: number;
     overviewPeaks: number[];
     deviceLabel: string;
@@ -403,8 +411,37 @@ export class RecordingEngine {
     const overviewPeaks = downsamplePeaks(this.timeline.getPeaks(), 140);
     const channels = this.timeline.extractChannelData();
     const sourceRate = this.timeline.sampleRate;
+    const sourceChannels = this.timeline.channels;
 
-    const encoded = await encodeAudio(channels, sourceRate, quality, onProgress);
+    const encoded = await encodeAudio(
+      channels,
+      sourceRate,
+      quality,
+      options?.captureLocalMaster
+        ? (ratio) => onProgress?.(Math.min(0.88, ratio * 0.88))
+        : onProgress,
+    );
+
+    let localMaster:
+      | {
+          blob: Blob;
+          sampleRate: number;
+          bitDepth: 32;
+          channels: ChannelCountOption;
+        }
+      | undefined;
+
+    if (options?.captureLocalMaster) {
+      // Uncompressed 32-bit IEEE Float WAV at raw hardware sample rate (zero resampling / zero quantization loss)
+      const masterBlob = encodeWav(channels, sourceRate, 32);
+      localMaster = {
+        blob: masterBlob,
+        sampleRate: sourceRate,
+        bitDepth: 32,
+        channels: sourceChannels,
+      };
+      onProgress?.(1);
+    }
 
     const oldDraftId = this.draftId;
     const deviceLabel = this.activeDeviceLabel;
@@ -414,7 +451,7 @@ export class RecordingEngine {
       await deleteDraft(oldDraftId).catch(() => {});
     }
 
-    return { encoded, durationMs, overviewPeaks, deviceLabel };
+    return { encoded, localMaster, durationMs, overviewPeaks, deviceLabel };
   }
 
   async discard(): Promise<void> {

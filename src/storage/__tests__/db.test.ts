@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ActiveDraft, BookProject, Recording } from '../../types/models';
 import {
+  clearAllLocalMasters,
   clearSyncedAudioCache,
   deleteDraft,
   deleteProject,
+  deleteRecording,
+  deleteRecordingMaster,
+  getLocalMastersSummary,
   getPlaybackProgress,
   getProject,
   getProjectCover,
   getRecording,
   getRecordingBlob,
+  getRecordingMaster,
   listDrafts,
   listProjectRecordings,
   listProjects,
@@ -160,5 +165,66 @@ describe('IndexedDB offline repository', () => {
     await deleteDraft('draft-1');
     expect(await listDrafts()).toHaveLength(0);
     expect(await loadDraftChunks('draft-1')).toHaveLength(0);
+  });
+
+  it('stores local-only lossless masters separately, preserves them on synced cache clear, and cleans them up cleanly', async () => {
+    await putProject(makeProject('b-master', 'Master Book'));
+    const r1: Recording = {
+      ...makeRecording('r-m1', 'b-master', 0, 'Ch 1'),
+      driveFileId: 'drv-1',
+      syncStatus: 'synced',
+      hasLocalMaster: true,
+      localMasterBytes: 12,
+      localMasterSampleRate: 48000,
+      localMasterBitDepth: 32,
+      localMasterChannels: 1,
+    };
+    const r2: Recording = {
+      ...makeRecording('r-m2', 'b-master', 1, 'Ch 2'),
+      hasLocalMaster: true,
+      localMasterBytes: 16,
+    };
+
+    await putRecording(
+      r1,
+      new Blob(['compressed-1'], { type: 'audio/mp4' }),
+      new Blob(['master-wav-1'], { type: 'audio/wav' }),
+    );
+    await putRecording(
+      r2,
+      new Blob(['compressed-2'], { type: 'audio/mp4' }),
+      new Blob(['master-wav-two-2'], { type: 'audio/wav' }),
+    );
+
+    const summary = await getLocalMastersSummary();
+    expect(summary.count).toBe(2);
+    expect(summary.totalBytes).toBe(28);
+
+    // Clearing synced Drive cache must NOT remove local masters
+    await clearSyncedAudioCache();
+    expect(await getRecordingBlob('r-m1')).toBeUndefined();
+    expect((await getRecordingMaster('r-m1'))?.size).toBe(12);
+
+    // Deleting a single master keeps the recording and clears hasLocalMaster
+    await deleteRecordingMaster('r-m1');
+    expect(await getRecordingMaster('r-m1')).toBeUndefined();
+    expect((await getRecording('r-m1'))?.hasLocalMaster).toBe(false);
+
+    // Deleting recording cascades to its master
+    await deleteRecording('r-m2');
+    expect(await getRecordingMaster('r-m2')).toBeUndefined();
+
+    // Bulk clearAllLocalMasters reclaims all remaining masters
+    await putRecording(
+      r2,
+      new Blob(['compressed-2'], { type: 'audio/mp4' }),
+      new Blob(['master-wav-two-2'], { type: 'audio/wav' }),
+    );
+    const cleared = await clearAllLocalMasters();
+    expect(cleared.count).toBe(1);
+    expect(cleared.freedBytes).toBe(16);
+    expect((await getLocalMastersSummary()).count).toBe(0);
+    expect((await getRecording('r-m2'))?.hasLocalMaster).toBe(false);
+    expect((await getRecordingBlob('r-m2'))?.size).toBe(12);
   });
 });

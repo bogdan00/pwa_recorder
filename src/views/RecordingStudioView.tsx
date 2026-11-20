@@ -42,6 +42,12 @@ export interface SavedStudioRecording {
   channels: Recording['channels'];
   deviceLabel: string;
   peaks: number[];
+  localMaster?: {
+    blob: Blob;
+    sampleRate: number;
+    bitDepth: 32;
+    channels: Recording['channels'];
+  };
 }
 
 interface RecordingStudioViewProps {
@@ -83,6 +89,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
 
   // Modals
   const [saveOpen, setSaveOpen] = useState(false);
+  const [saveKeepMaster, setSaveKeepMaster] = useState(settings.keepLocalMaster);
   const [isSaving, setIsSaving] = useState(false);
   const [encodeProgress, setEncodeProgress] = useState(0);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -198,6 +205,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   const handleStopClick = async () => {
     if (snap.durationMs === 0 && snap.phase === 'idle') return;
     await engineRef.current!.pauseForStopPrompt();
+    setSaveKeepMaster(settings.keepLocalMaster);
     setSaveError(null);
     setEncodeProgress(0);
     setSaveOpen(true);
@@ -207,6 +215,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     if (snap.durationMs === 0 || snap.playheadMs < 150) return;
     const res = await engineRef.current!.trimToPlayhead();
     if (res.newDurationMs <= 0) return;
+    setSaveKeepMaster(settings.keepLocalMaster);
     setSaveError(null);
     setEncodeProgress(0);
     setSaveOpen(true);
@@ -217,10 +226,11 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     setSaveError(null);
     setEncodeProgress(0.05);
     try {
-      const { encoded, durationMs, overviewPeaks, deviceLabel } =
+      const { encoded, localMaster, durationMs, overviewPeaks, deviceLabel } =
         await engineRef.current!.finalizeAndEncode(
           settings.audioQuality,
           (ratio) => setEncodeProgress(ratio),
+          { captureLocalMaster: saveKeepMaster },
         );
 
       await onRecordingSaved({
@@ -236,6 +246,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
         channels: encoded.channels,
         deviceLabel: deviceLabel || settings.audioDevice.deviceLabel,
         peaks: overviewPeaks,
+        localMaster,
       });
       setSaveOpen(false);
     } catch (err) {
@@ -551,10 +562,15 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
         defaultName={defaultRecordingName}
         durationMs={snap.durationMs}
         specLabel={specSummary}
+        keepLocalMaster={saveKeepMaster}
+        estimatedMasterBytes={Math.round(
+          (snap.durationMs / 1000) * snap.actualSampleRate * snap.channels * 4 + 44,
+        )}
         isPreviewPlaying={snap.phase === 'playing'}
         isSaving={isSaving}
         encodeProgress={encodeProgress}
         errorMessage={saveError}
+        onToggleKeepLocalMaster={setSaveKeepMaster}
         onTogglePreview={() => {
           if (snap.phase === 'playing') {
             engineRef.current!.pausePreview();

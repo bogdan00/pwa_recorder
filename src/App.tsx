@@ -8,11 +8,13 @@ import type {
   SharedBookLink,
 } from './types/models';
 import {
+  clearAllLocalMasters,
   clearSyncedAudioCache,
   deleteDraft,
   deleteProject,
   deleteProjectCover,
   deleteRecording,
+  deleteRecordingMaster,
   getRecordingBlob,
   listAllRecordings,
   listDrafts,
@@ -65,6 +67,7 @@ import {
 } from './pwa/installPrompt';
 import { LibraryView } from './views/LibraryView';
 import { ProjectDetailView } from './views/ProjectDetailView';
+import { QualityCompareView } from './views/QualityCompareView';
 import {
   RecordingStudioView,
   type SavedStudioRecording,
@@ -75,6 +78,7 @@ import type { RecordingEngine } from './audio/recordingEngine';
 type Route =
   | { view: 'library' }
   | { view: 'book'; projectId: string }
+  | { view: 'compare'; projectId: string; recordingId: string }
   | { view: 'record'; projectId: string; draftId?: string | null };
 
 type ShareTarget =
@@ -93,6 +97,13 @@ function parseHashRoute(): Route {
   const [pathPart, queryPart] = hash.split('?');
   const parts = pathPart.split('/').filter(Boolean);
 
+  if (parts[0] === 'book' && parts[1] && parts[2] === 'compare' && parts[3]) {
+    return {
+      view: 'compare',
+      projectId: decodeURIComponent(parts[1]),
+      recordingId: decodeURIComponent(parts[3]),
+    };
+  }
   if (parts[0] === 'book' && parts[1]) {
     return { view: 'book', projectId: decodeURIComponent(parts[1]) };
   }
@@ -114,6 +125,9 @@ function parseJoinInviteFromHash(): JoinShareInvite | null {
 }
 
 function serializeRoute(route: Route): string {
+  if (route.view === 'compare') {
+    return `#/book/${encodeURIComponent(route.projectId)}/compare/${encodeURIComponent(route.recordingId)}`;
+  }
   if (route.view === 'book') {
     return `#/book/${encodeURIComponent(route.projectId)}`;
   }
@@ -689,6 +703,11 @@ const StoryTapeShell: React.FC<AppProps> = ({
       deviceLabel: saved.deviceLabel,
       fileSizeBytes: saved.blob.size,
       peaks: saved.peaks,
+      hasLocalMaster: Boolean(saved.localMaster),
+      localMasterBytes: saved.localMaster?.blob.size,
+      localMasterSampleRate: saved.localMaster?.sampleRate,
+      localMasterBitDepth: saved.localMaster?.bitDepth,
+      localMasterChannels: saved.localMaster?.channels,
       driveFileName: buildChapterDriveFileName(
         orderIndex,
         saved.name,
@@ -699,7 +718,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
       updatedAt: now,
     };
 
-    await putRecording(rec, saved.blob);
+    await putRecording(rec, saved.blob, saved.localMaster?.blob);
     await putProject({
       ...project,
       syncStatus: googleAuth.hasValidToken() ? 'pending_upload' : project.syncStatus,
@@ -709,11 +728,21 @@ const StoryTapeShell: React.FC<AppProps> = ({
     await player.refreshChaptersForProject(project.id);
 
     navigate({ view: 'book', projectId: project.id });
-    showToast(`Saved "${rec.name}"`);
+    showToast(
+      saved.localMaster
+        ? `Saved "${rec.name}" + local lossless master`
+        : `Saved "${rec.name}"`,
+    );
 
     if (googleAuth.hasValidToken()) {
       void handleSyncProject(project.id, true);
     }
+  };
+
+  const handleDeleteLocalMaster = async (recordingId: string) => {
+    await deleteRecordingMaster(recordingId);
+    await reloadData();
+    showToast('Deleted local lossless master (chapter audio kept)');
   };
 
   const handleRenameRecording = async (
@@ -841,6 +870,13 @@ const StoryTapeShell: React.FC<AppProps> = ({
       ? projects.find((p) => p.id === route.projectId) ?? null
       : null;
 
+  const activeCompareRecording =
+    route.view === 'compare' && activeBook
+      ? (recordingsByProject.get(activeBook.id) ?? []).find(
+          (r) => r.id === route.recordingId,
+        ) ?? null
+      : null;
+
   const shareSheetBook =
     shareTarget?.scope === 'book'
       ? projects.find((p) => p.id === shareTarget.projectId) ?? null
@@ -848,6 +884,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
 
   const hasMiniPlayer =
     route.view !== 'record' &&
+    route.view !== 'compare' &&
     Boolean(player.project && player.currentRecording && !player.isExpanded);
 
   return (
@@ -898,6 +935,23 @@ const StoryTapeShell: React.FC<AppProps> = ({
           onRecordingSaved={(saved) => handleRecordingSaved(activeBook, saved)}
           engineFactory={engineFactory}
         />
+      ) : route.view === 'compare' && activeBook && activeCompareRecording ? (
+        <QualityCompareView
+          project={activeBook}
+          recording={activeCompareRecording}
+          audioQuality={settings.audioQuality}
+          hasMiniPlayer={hasMiniPlayer}
+          onBack={() => navigate({ view: 'book', projectId: activeBook.id })}
+          onApplyRecommendedQuality={(nextQuality) =>
+            handleUpdateSettings({
+              ...settingsRef.current,
+              audioQuality: nextQuality,
+            })
+          }
+          onDeleteLocalMaster={handleDeleteLocalMaster}
+          onResolveCloudBlob={resolveRecordingBlob}
+          onToast={(msg) => showToast(msg)}
+        />
       ) : route.view === 'book' && activeBook ? (
         <ProjectDetailView
           project={activeBook}
@@ -926,6 +980,15 @@ const StoryTapeShell: React.FC<AppProps> = ({
             handleReorderRecordings(activeBook, ids)
           }
           onDownloadRecording={handleDownloadRecording}
+          onOpenQualityLab={(rec) => {
+            player.pauseForRecording();
+            navigate({
+              view: 'compare',
+              projectId: activeBook.id,
+              recordingId: rec.id,
+            });
+          }}
+          onDeleteLocalMaster={handleDeleteLocalMaster}
           onShareRecording={(rec) => handleShareRecording(activeBook, rec)}
           onDeleteRecording={(recId) =>
             handleDeleteRecording(activeBook, recId)
@@ -982,7 +1045,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
       )}
 
       {/* Persistent Minimalistic Audiobook Player */}
-      <MiniPlayerBar hidden={route.view === 'record'} />
+      <MiniPlayerBar hidden={route.view === 'record' || route.view === 'compare'} />
       <AudioPlayerSheet />
 
       {/* Book Create / Edit Metadata Sheet */}
@@ -1093,6 +1156,11 @@ const StoryTapeShell: React.FC<AppProps> = ({
           const count = await clearSyncedAudioCache();
           await reloadData();
           return count;
+        }}
+        onClearLocalMasters={async () => {
+          const res = await clearAllLocalMasters();
+          await reloadData();
+          return res;
         }}
         onToast={(msg) => showToast(msg)}
       />

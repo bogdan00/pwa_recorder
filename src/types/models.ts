@@ -84,6 +84,7 @@ export interface AppSettings {
   defaultNarrator: string;
   theme: ThemePreference;
   keepScreenAwake: boolean;
+  keepLocalMaster: boolean;
   audioQuality: AudioQualitySettings;
   audioDevice: AudioDeviceSettings;
 }
@@ -130,6 +131,12 @@ export interface Recording {
   deviceLabel?: string;
   fileSizeBytes: number;
   peaks: number[]; // normalized 0..1 overview peaks (max ~160 bars for compact UI preview)
+  // Device-local lossless master metadata (never synced to Google Drive)
+  hasLocalMaster?: boolean;
+  localMasterBytes?: number;
+  localMasterSampleRate?: number;
+  localMasterBitDepth?: WavBitDepthOption;
+  localMasterChannels?: ChannelCountOption;
   driveFileId?: string;
   driveFileName?: string;
   syncStatus: SyncStatus;

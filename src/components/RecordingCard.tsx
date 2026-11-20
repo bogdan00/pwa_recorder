@@ -8,6 +8,7 @@ import {
   CloudDownload,
   CloudUpload,
   Download,
+  FlaskConical,
   Loader2,
   MoreVertical,
   Pause,
@@ -36,6 +37,8 @@ interface RecordingCardProps {
   onMoveUp: () => Promise<void>;
   onMoveDown: () => Promise<void>;
   onDownloadLocal: () => Promise<void>;
+  onOpenQualityLab?: () => void;
+  onDeleteLocalMaster?: () => Promise<void>;
   onShareAudio?: () => Promise<void>;
   onRetrySync: () => Promise<void>;
   onDelete: () => Promise<void>;
@@ -56,6 +59,8 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
   onMoveUp,
   onMoveDown,
   onDownloadLocal,
+  onOpenQualityLab,
+  onDeleteLocalMaster,
   onShareAudio,
   onRetrySync,
   onDelete,
@@ -215,6 +220,15 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
                     <span>Stereo</span>
                   </>
                 )}
+                {recording.hasLocalMaster && (
+                  <span
+                    className="rec-card__master-badge"
+                    data-testid="recording-master-badge"
+                    title="Local lossless 32-bit Float WAV master saved on this device"
+                  >
+                    Master
+                  </span>
+                )}
                 {recording.recordedBy && (
                   <>
                     <span className="rec-card__dot">·</span>
@@ -287,6 +301,20 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
                       </button>
                     </>
                   )}
+                  {onOpenQualityLab && (
+                    <button
+                      type="button"
+                      className="rec-menu__item"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onOpenQualityLab();
+                      }}
+                    >
+                      <FlaskConical size={15} />
+                      Export &amp; Quality Lab
+                    </button>
+                  )}
                   {onShareAudio && (
                     <button
                       type="button"
@@ -313,6 +341,20 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
                     <Download size={15} />
                     Download Audio
                   </button>
+                  {recording.hasLocalMaster && onDeleteLocalMaster && (
+                    <button
+                      type="button"
+                      className="rec-menu__item"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void onDeleteLocalMaster();
+                      }}
+                    >
+                      <Trash2 size={15} />
+                      Delete Local Master
+                    </button>
+                  )}
                   {!isReadOnly &&
                     canSyncDrive &&
                     recording.syncStatus !== 'synced' &&
