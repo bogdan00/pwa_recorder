@@ -38,11 +38,19 @@ jobs:
       - name: Run automated tests
         run: npm test
 
+      - name: Generate deploy version (YYYY_MM_DD_HH_MM UTC)
+        id: version
+        run: |
+          APP_VERSION=$(date -u +"%Y_%m_%d_%H_%M")
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Deploying StoryTape version: $APP_VERSION"
+
       - name: Build production PWA
         run: npm run build
         env:
           VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || '/pwa_recorder/' }}
           VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          VITE_APP_VERSION: ${{ steps.version.outputs.app_version }}
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium

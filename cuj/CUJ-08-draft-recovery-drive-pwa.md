@@ -29,9 +29,10 @@ A parent never loses an in-progress recording if the mobile OS suspends/reloads 
    - In Settings → **Free Cached Audio for Synced Chapters**, tap the button and confirm in the dialog.
    - **Expected:** Prompts for confirmation first; on confirm, removes local audio blobs for already-synced chapters (flipping them to `cloud_only`) while preserving unsynced local recordings untouched.
 
-4. **GitHub Pages Subpath PWA & OAuth Branding Pages**
+4. **GitHub Pages Subpath PWA, OAuth Branding Pages & In-App Deploy Version**
    - Verify `/pwa_recorder/manifest.webmanifest` (`start_url`, `scope`, `id` = `/pwa_recorder/`, `display` = `standalone`, icons `192`/`512`/`maskable`).
    - Verify `/pwa_recorder/audio/pcm-capture-worklet.js`, `/pwa_recorder/icons/apple-touch-icon.png`, `/pwa_recorder/privacy.html`, and `/pwa_recorder/terms.html` all return HTTP `200`.
+   - Open **Studio Settings** and verify the bottom version row displays a valid UTC deploy version formatted as `YYYY_MM_DD_HH_MM` (automatically incremented on every deploy).
 
 5. **In-App PWA Install Prompt (Chromium & iOS Safari)**
    - **Android / Desktop Chromium (`beforeinstallprompt`)**:

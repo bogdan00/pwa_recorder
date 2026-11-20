@@ -54,6 +54,7 @@ import type { PwaInstallState } from '../pwa/installPrompt';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ThemePickerGrid } from '../components/ThemeSwitcherSheet';
 import { getLocalMastersSummary } from '../storage/db';
+import { APP_VERSION } from '../utils/appVersion';
 import { formatBytes, formatGainDb, formatSampleRate } from '../utils/format';
 import './SettingsSheet.css';
 
@@ -1346,6 +1347,15 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                 </div>
               </div>
             )}
+            <div className="settings-version-row">
+              <span>App Version</span>
+              <span
+                className="font-mono settings-version-row__value"
+                data-testid="app-version-value"
+              >
+                {APP_VERSION}
+              </span>
+            </div>
           </section>
         </div>
       </div>

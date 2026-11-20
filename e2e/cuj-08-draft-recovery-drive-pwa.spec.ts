@@ -355,7 +355,8 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     await expect(page.getByTestId('mini-player-bar')).toContainText('The Witch’s Cat');
   });
 
-  test('serves valid /pwa_recorder/ PWA manifest, icons, AudioWorklet, privacy.html, and terms.html', async ({
+  test('serves valid /pwa_recorder/ PWA manifest, icons, AudioWorklet, privacy.html, terms.html, and shows deploy version in Settings', async ({
+    page,
     request,
   }) => {
     const manifestRes = await request.get('manifest.webmanifest');
@@ -385,6 +386,14 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
 
     const termsRes = await request.get('terms.html');
     expect(termsRes.status()).toBe(200);
+
+    // Verify in-app deploy version (YYYY_MM_DD_HH_MM) is displayed in Studio Settings
+    await page.goto('./');
+    await page.locator('#open-settings-btn').click();
+    await expect(page.getByTestId('settings-sheet')).toBeVisible();
+    const versionEl = page.getByTestId('app-version-value');
+    await expect(versionEl).toBeVisible();
+    await expect(versionEl).toHaveText(/^\d{4}_\d{2}_\d{2}_\d{2}_\d{2}$/);
   });
 
   test('prompts Chromium users to install via beforeinstallprompt, persists banner dismissal, and allows installing from Settings', async ({
