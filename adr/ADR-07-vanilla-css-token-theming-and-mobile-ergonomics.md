@@ -23,7 +23,7 @@ Standardize on **co-located Vanilla CSS stylesheets backed by semantic CSS custo
 1. **Vanilla CSS only**: No TailwindCSS or CSS-in-JS libraries; all colors and accent borders must flow from semantic CSS custom properties (no hardcoded palette `hsla(...)` leaks across view stylesheets).
 2. **Pre-first-paint theme application**: `:root` defaults to `pitch-oled` (`#000000`) and `applyThemeToDocument(loadSettings().theme)` runs before `ReactDOM.createRoot(...).render(...)`.
 3. **Graceful legacy migration**: Saved legacy `'dark'` / `'light'` values in `localStorage` automatically resolve to `'pitch-oled'` / `'braun-light'` without breaking existing installations.
-4. **Mobile viewport ergonomics**: Primary recording and playback screens must fit cleanly within `100dvh` with safe-area insets and no horizontal overflow at `390×844`.
+4. **Mobile viewport ergonomics (`>= 360px`)**: Every primary screen (Library header & shelf, Book Detail, Recording Studio, Audio Player) and bottom sheet (`ThemeSwitcherSheet`, `SettingsSheet`, `BookEditorSheet`) must fit cleanly with zero horizontal overflow (`scrollWidth <= clientWidth`) down to `360×740`, and Recording Studio / Audio Player must fit within `100dvh` with zero vertical page scroll.
 
 ## Consequences & Trade-offs
 - **Pros:** Zero CSS runtime overhead, authentic hardware & IDE aesthetics without muddy gradients, instant live switching across 10 curated palettes, effortless Canvas/DOM theme parity.

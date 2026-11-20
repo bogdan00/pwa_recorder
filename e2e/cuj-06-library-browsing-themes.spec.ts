@@ -98,4 +98,184 @@ test.describe('CUJ-06: Audiobook Library Browsing (Search, Tags, Sort) & Themes'
       '#242933',
     );
   });
+
+  test('fits cleanly within mobile phone viewports (360px & 390px) with zero horizontal overflow and no studio/player viewport scroll', async ({
+    page,
+  }) => {
+    const assertNoHorizontalOverflow = async (
+      screenLabel: string,
+      extraSelectors: string[] = [],
+    ) => {
+      const metrics = await page.evaluate((selectors) => {
+        const vw = window.innerWidth;
+        const containers = [
+          '.library-header__inner',
+          '.library-page',
+          '.sheet-panel',
+          '.studio-page',
+          '.player-sheet',
+          ...selectors,
+        ];
+        const overflowingContainers: Array<{
+          selector: string;
+          scrollW: number;
+          clientW: number;
+          right: number;
+          vw: number;
+        }> = [];
+
+        for (const sel of containers) {
+          for (const el of Array.from(document.querySelectorAll<HTMLElement>(sel))) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) continue;
+            if (el.scrollWidth > el.clientWidth + 1 || Math.round(rect.right) > vw) {
+              overflowingContainers.push({
+                selector: sel,
+                scrollW: Math.round(el.scrollWidth),
+                clientW: Math.round(el.clientWidth),
+                right: Math.round(rect.right),
+                vw,
+              });
+            }
+          }
+        }
+
+        return {
+          docScrollW: document.documentElement.scrollWidth,
+          docClientW: document.documentElement.clientWidth,
+          bodyScrollW: document.body.scrollWidth,
+          innerW: vw,
+          scrollX: window.scrollX,
+          overflowingContainers,
+        };
+      }, extraSelectors);
+
+      expect(
+        metrics.scrollX,
+        `${screenLabel}: window.scrollX must remain 0`,
+      ).toBe(0);
+      expect(
+        metrics.docScrollW,
+        `${screenLabel}: documentElement.scrollWidth (${metrics.docScrollW}) must not exceed clientWidth (${metrics.docClientW})`,
+      ).toBeLessThanOrEqual(metrics.docClientW);
+      expect(
+        metrics.bodyScrollW,
+        `${screenLabel}: body.scrollWidth (${metrics.bodyScrollW}) must not exceed innerWidth (${metrics.innerW})`,
+      ).toBeLessThanOrEqual(metrics.innerW);
+      expect(
+        metrics.overflowingContainers,
+        `${screenLabel}: container(s) overflowed viewport`,
+      ).toEqual([]);
+    };
+
+    const assertElementsFitViewport = async (
+      screenLabel: string,
+      selector: string,
+    ) => {
+      const result = await page.evaluate((sel) => {
+        const vw = window.innerWidth;
+        return Array.from(document.querySelectorAll<HTMLElement>(sel)).map((el) => {
+          const r = el.getBoundingClientRect();
+          return {
+            id: el.id || el.getAttribute('data-theme-option') || el.getAttribute('aria-label') || el.textContent?.trim().slice(0, 24),
+            left: Math.round(r.left),
+            right: Math.round(r.right),
+            vw,
+          };
+        });
+      }, selector);
+      expect(result.length, `${screenLabel}: expected elements for ${selector}`).toBeGreaterThan(0);
+      for (const el of result) {
+        expect(
+          el.left,
+          `${screenLabel}: element "${el.id}" overflows left edge (${el.left})`,
+        ).toBeGreaterThanOrEqual(0);
+        expect(
+          el.right,
+          `${screenLabel}: element "${el.id}" overflows right edge (${el.right} > ${el.vw})`,
+        ).toBeLessThanOrEqual(el.vw);
+      }
+    };
+
+    // Test at narrow 360x740 Android/small-phone viewport AND standard 390x844 iPhone viewport
+    for (const vp of [
+      { width: 360, height: 740, label: '360x740' },
+      { width: 390, height: 844, label: '390x844' },
+    ]) {
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await page.goto('./');
+      await expect(page.getByRole('heading', { name: 'StoryTape' })).toBeVisible();
+
+      // Seed a book + chapter on first pass so tags, Continue Listening, and Mini-Player exist
+      if (vp.width === 360) {
+        await createBook(page, {
+          title: 'The Wind in the Willows',
+          author: 'Kenneth Grahame',
+          tags: 'Bedtime, Classics, Adventure, Family, Nature',
+        });
+        await recordAndSaveChapter(page, {
+          name: 'Chapter 1: The River Bank',
+          minDurationSec: 0.5,
+        });
+        await page.getByLabel('Back to library').click();
+        await expect(page.getByRole('heading', { name: 'StoryTape' })).toBeVisible();
+      }
+
+      // 1. Library screen: zero horizontal scroll + every header button inside viewport
+      await assertNoHorizontalOverflow(`Library (${vp.label})`);
+      await assertElementsFitViewport(`Library (${vp.label})`, '.library-header button');
+
+      // 2. Theme Switcher sheet: zero horizontal scroll & every theme card fits inside viewport
+      await page.locator('#open-theme-switcher-btn').click();
+      await expect(page.getByTestId('theme-switcher-sheet')).toBeVisible();
+      await assertNoHorizontalOverflow(`ThemeSwitcherSheet (${vp.label})`, ['.theme-grid']);
+      await assertElementsFitViewport(
+        `ThemeSwitcherSheet (${vp.label})`,
+        '[data-testid="theme-switcher-sheet"] [data-theme-option]',
+      );
+      await page.getByRole('button', { name: 'Done' }).click();
+
+      // 3. Settings sheet: zero horizontal scroll
+      await page.locator('#open-settings-btn').click();
+      await expect(page.getByRole('heading', { name: 'Studio Settings' })).toBeVisible();
+      await assertNoHorizontalOverflow(`SettingsSheet (${vp.label})`, ['.theme-grid']);
+      await page.getByLabel('Close settings').click();
+
+      // 4. Book Detail + Full-Screen Audio Player: zero overflow
+      await page.locator('.book-card').first().click();
+      await expect(page.locator('#record-chapter-btn')).toBeVisible();
+      await assertNoHorizontalOverflow(`BookDetail (${vp.label})`);
+
+      await page.getByRole('button', { name: /Play Chapter 1/i }).click();
+      await expect(page.getByTestId('mini-player-bar')).toBeVisible();
+      await page.getByTestId('mini-player-bar').locator('.mini-player__tap-zone').click();
+      await expect(page.getByTestId('audio-player-sheet')).toBeVisible();
+      await assertNoHorizontalOverflow(`AudioPlayerSheet (${vp.label})`);
+      const playerVertical = await page.evaluate(() => ({
+        scrollH: document.documentElement.scrollHeight,
+        clientH: document.documentElement.clientHeight,
+      }));
+      expect(
+        playerVertical.scrollH,
+        `AudioPlayerSheet (${vp.label}): should fit without vertical page scroll`,
+      ).toBeLessThanOrEqual(playerVertical.clientH);
+      await page.getByLabel('Minimize player').click();
+
+      // 5. Recording Studio: zero horizontal scroll AND zero vertical page scroll in 100dvh
+      await page.locator('#record-chapter-btn').click();
+      await expect(page.getByTestId('recording-studio-view')).toBeVisible();
+      await assertNoHorizontalOverflow(`RecordingStudio (${vp.label})`);
+      const studioVertical = await page.evaluate(() => ({
+        scrollH: document.documentElement.scrollHeight,
+        clientH: document.documentElement.clientHeight,
+      }));
+      expect(
+        studioVertical.scrollH,
+        `RecordingStudio (${vp.label}): should fit in 100dvh without vertical page scroll (${studioVertical.scrollH} > ${studioVertical.clientH})`,
+      ).toBeLessThanOrEqual(studioVertical.clientH);
+
+      await page.getByLabel('Leave recording studio').click();
+      await page.getByLabel('Back to library').click();
+    }
+  });
 });

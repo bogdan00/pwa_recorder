@@ -30,3 +30,6 @@ A parent with multiple recorded audiobooks quickly finds the right story by sear
    - Tap the **Theme** (`Palette`) icon in the Library header → **Theme Switcher** bottom sheet opens displaying all 10 curated themes (`Pitch OLED`, `Braun / Rams`, `E-Ink Paper`, `Gruvbox Hard`, `Nord Polar`, `Tokyo Night`, `Kanagawa Ink`, `Everforest`, `Rosé Pine`, `Solarized Light`) with color swatches plus `System`.
    - Tap **Braun / Rams** → `document.documentElement[data-theme]` immediately updates to `braun-light`, `<meta name="theme-color">` updates to `#ECECE8`, and preference persists across a full page reload.
    - Open Settings → switch to **Nord Polar** → `data-theme="nord"` and `#242933` persist cleanly.
+
+5. **Mobile Viewport Integrity (`360×740` & `390×844`)**
+   - Verify across Library (including all 4 header actions), Theme Switcher sheet, Settings sheet, Book Detail, full-screen Audio Player, and Recording Studio that every header control and theme card fits strictly within the viewport with zero horizontal overflow (`scrollWidth <= clientWidth`), and Recording Studio / Audio Player fit cleanly without vertical page scroll.
