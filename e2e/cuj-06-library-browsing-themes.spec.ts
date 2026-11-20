@@ -2,7 +2,7 @@ import { expect, test } from './fixtures';
 import { createBook, recordAndSaveChapter } from './helpers';
 
 test.describe('CUJ-06: Audiobook Library Browsing (Search, Tags, Sort) & Themes', () => {
-  test('filters by book/author/chapter search and tag chips, sorts A-Z, and persists Warm Paper / Warm Night themes', async ({
+  test('filters by book/author/chapter search and tag chips, sorts A-Z, and switches across 10 curated themes via Quick Switcher & Settings', async ({
     page,
   }) => {
     await page.goto('./');
@@ -63,23 +63,39 @@ test.describe('CUJ-06: Audiobook Library Browsing (Search, Tags, Sort) & Themes'
       'Zog',
     ]);
 
-    // 4. Switch Theme: Warm Night (default) -> Warm Paper (light) -> persists reload
-    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-    await page.locator('#open-settings-btn').click();
-    await page.getByRole('button', { name: 'Warm Paper' }).click();
-    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    // 4. Default Pitch OLED theme -> 1-tap Library Theme Switcher -> Braun / Rams -> persists reload
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'pitch-oled');
     await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
       'content',
-      '#F8F3EC',
+      '#000000',
     );
-    await page.getByLabel('Close settings').click();
+
+    await page.locator('#open-theme-switcher-btn').click();
+    const switcher = page.getByTestId('theme-switcher-sheet');
+    await expect(switcher).toBeVisible();
+    await expect(switcher.locator('[data-theme-option]')).toHaveCount(10);
+    await expect(switcher).not.toContainText('Warm Night');
+    await expect(switcher).not.toContainText('Warm Paper');
+
+    await switcher.locator('[data-theme-option="braun-light"]').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'braun-light');
+    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
+      'content',
+      '#ECECE8',
+    );
+    await switcher.getByRole('button', { name: 'Done' }).click();
+    await expect(switcher).toHaveCount(0);
 
     await page.reload();
-    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'braun-light');
 
-    // Switch back to Warm Night
+    // Switch via Settings to Nord Polar
     await page.locator('#open-settings-btn').click();
-    await page.getByRole('button', { name: 'Warm Night' }).click();
-    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.locator('[data-theme-option="nord"]').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'nord');
+    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
+      'content',
+      '#242933',
+    );
   });
 });

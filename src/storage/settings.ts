@@ -1,8 +1,15 @@
 import type {
   AppSettings,
   AudioQualitySettings,
+  ConcreteThemeId,
   ThemePreference,
 } from '../types/models';
+import {
+  DEFAULT_LIGHT_THEME_ID,
+  DEFAULT_THEME_ID,
+  getThemeDefinition,
+  normalizeThemePreference,
+} from '../styles/themes';
 
 const SETTINGS_STORAGE_KEY = 'storytape.settings.v1';
 
@@ -47,7 +54,7 @@ export function getDefaultSettings(): AppSettings {
     driveAccessRole: 'owner',
     sharedBookFolders: [],
     defaultNarrator: '',
-    theme: 'dark',
+    theme: DEFAULT_THEME_ID,
     keepScreenAwake: true,
     audioQuality: { ...DEFAULT_AUDIO_QUALITY },
     audioDevice: {
@@ -66,6 +73,7 @@ export function loadSettings(): AppSettings {
     return {
       ...defaults,
       ...parsed,
+      theme: normalizeThemePreference(parsed.theme),
       googleClientId:
         parsed.googleClientId?.trim() || defaults.googleClientId,
       googleApiKey:
@@ -99,27 +107,28 @@ export function saveSettings(settings: AppSettings): void {
   }
 }
 
-export function resolveEffectiveTheme(pref: ThemePreference): 'dark' | 'light' {
-  if (pref === 'dark' || pref === 'light') return pref;
+export function resolveEffectiveTheme(pref: ThemePreference): ConcreteThemeId {
+  const normalized = normalizeThemePreference(pref);
+  if (normalized !== 'system') {
+    return normalized;
+  }
   if (
     typeof window !== 'undefined' &&
     typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-color-scheme: light)').matches
   ) {
-    return 'light';
+    return DEFAULT_LIGHT_THEME_ID;
   }
-  return 'dark';
+  return DEFAULT_THEME_ID;
 }
 
 export function applyThemeToDocument(pref: ThemePreference): void {
   if (typeof document === 'undefined') return;
   const resolved = resolveEffectiveTheme(pref);
+  const def = getThemeDefinition(resolved);
   document.documentElement.setAttribute('data-theme', resolved);
   const metaTheme = document.querySelector('meta[name="theme-color"]');
   if (metaTheme) {
-    metaTheme.setAttribute(
-      'content',
-      resolved === 'dark' ? '#161311' : '#F8F3EC',
-    );
+    metaTheme.setAttribute('content', def.metaThemeColor);
   }
 }

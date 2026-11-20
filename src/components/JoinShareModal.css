@@ -148,7 +148,7 @@
   padding: 16px 18px;
   border-radius: var(--radius-md);
   background: var(--accent-amber-soft);
-  border: 1px solid hsla(36 76% 60% / 0.38);
+  border: 1px solid var(--accent-amber-border);
 }
 
 .join-picker-card__head {
@@ -182,7 +182,7 @@
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: var(--accent-danger-soft);
-  border: 1px solid hsla(2 68% 56% / 0.25);
+  border: 1px solid var(--accent-danger-border);
   color: var(--accent-danger);
   font-size: 13px;
   line-height: 1.45;

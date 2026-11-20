@@ -58,6 +58,7 @@ import { IosInstallGuideModal } from './components/IosInstallGuideModal';
 import { JoinShareModal } from './components/JoinShareModal';
 import { MiniPlayerBar } from './components/MiniPlayerBar';
 import { ShareSheet } from './components/ShareSheet';
+import { ThemeSwitcherSheet } from './components/ThemeSwitcherSheet';
 import {
   pwaInstallController,
   type PwaInstallState,
@@ -151,6 +152,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
 
   // Modals & transient status
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [themeSwitcherOpen, setThemeSwitcherOpen] = useState(false);
   const [iosInstallGuideOpen, setIosInstallGuideOpen] = useState(false);
   const [pwaInstallState, setPwaInstallState] = useState<PwaInstallState>(() =>
     pwaInstallController.getState(),
@@ -956,6 +958,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
             setEditingBook(null);
             setBookEditorOpen(true);
           }}
+          onOpenThemeSwitcher={() => setThemeSwitcherOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenShareLibrary={() => setShareTarget({ scope: 'library' })}
           onSyncNow={() => void handleSyncAll()}
@@ -1092,6 +1095,16 @@ const StoryTapeShell: React.FC<AppProps> = ({
           return count;
         }}
         onToast={(msg) => showToast(msg)}
+      />
+
+      {/* 1-Tap Color Theme Switcher Sheet */}
+      <ThemeSwitcherSheet
+        open={themeSwitcherOpen}
+        currentTheme={settings.theme}
+        onSelectTheme={(theme) =>
+          handleUpdateSettings({ ...settingsRef.current, theme })
+        }
+        onClose={() => setThemeSwitcherOpen(false)}
       />
 
       {/* iOS / iPadOS Add to Home Screen Guide */}

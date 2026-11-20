@@ -34,8 +34,8 @@ export default defineConfig(({ command, isPreview }) => {
           scope: base,
           display: 'standalone',
           orientation: 'portrait-primary',
-          background_color: '#161311',
-          theme_color: '#161311',
+          background_color: '#000000',
+          theme_color: '#000000',
           categories: ['books', 'entertainment', 'utilities'],
           icons: [
             {

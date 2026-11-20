@@ -141,7 +141,7 @@
 
 .share-role-option--active {
   background: var(--accent-amber-soft);
-  border-color: hsla(36 76% 60% / 0.48);
+  border-color: var(--accent-amber-border);
 }
 
 .share-role-option__label {

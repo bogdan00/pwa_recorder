@@ -10,7 +10,7 @@
   background: var(--bg-canvas);
   background-image: radial-gradient(
     ellipse 80% 42% at 50% 100%,
-    hsla(8 74% 58% / 0.08),
+    var(--studio-ambient-glow),
     transparent 68%
   );
 }
@@ -75,19 +75,19 @@
 .studio-status-pill--rec {
   background: var(--accent-record-soft);
   color: var(--accent-record);
-  border-color: hsla(8 74% 58% / 0.35);
+  border-color: var(--accent-record-border);
 }
 
 .studio-status-pill--paused {
   background: var(--accent-amber-soft);
   color: var(--accent-amber);
-  border-color: hsla(36 76% 60% / 0.3);
+  border-color: var(--accent-amber-border);
 }
 
 .studio-status-pill--playing {
   background: var(--accent-sage-soft);
   color: var(--accent-sage);
-  border-color: hsla(146 28% 54% / 0.3);
+  border-color: var(--accent-sage-border);
 }
 
 .rec-dot {

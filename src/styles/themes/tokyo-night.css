@@ -1,0 +1,56 @@
+/* ==========================================================================
+   Tokyo Night — Crisp midnight indigo-slate IDE (#1a1b26)
+   Inspired by enkia's Tokyo Night theme
+   ========================================================================== */
+
+[data-theme='tokyo-night'] {
+  color-scheme: dark;
+
+  --bg-canvas: #16161e;
+  --bg-surface: #1a1b26;
+  --bg-elevated: #24283b;
+  --bg-elevated-hover: #2f3549;
+  --bg-input: #14151e;
+  --bg-scrim: rgba(10, 11, 18, 0.8);
+  --bg-glass: rgba(22, 22, 30, 0.94);
+  --bg-ambient-glow: transparent;
+  --studio-ambient-glow: transparent;
+  --player-ambient-glow: transparent;
+
+  --ink-primary: #c0caf5;
+  --ink-secondary: #9aa5ce;
+  --ink-muted: #565f89;
+  --ink-inverse: #16161e;
+
+  --border-subtle: rgba(169, 177, 214, 0.1);
+  --border-strong: rgba(169, 177, 214, 0.2);
+  --border-focus: #7aa2f7;
+
+  --accent-record: #f7768e;
+  --accent-record-hover: #ff899f;
+  --accent-record-soft: rgba(247, 118, 142, 0.16);
+  --accent-record-border: rgba(247, 118, 142, 0.4);
+  --accent-amber: #7aa2f7;
+  --accent-amber-soft: rgba(122, 162, 247, 0.15);
+  --accent-amber-border: rgba(122, 162, 247, 0.38);
+  --accent-sage: #9ece6a;
+  --accent-sage-soft: rgba(158, 206, 106, 0.14);
+  --accent-sage-border: rgba(158, 206, 106, 0.34);
+  --accent-danger: #f7768e;
+  --accent-danger-soft: rgba(247, 118, 142, 0.15);
+  --accent-danger-border: rgba(247, 118, 142, 0.35);
+
+  --wave-active: #c0caf5;
+  --wave-recording: #f7768e;
+  --wave-played: #7aa2f7;
+  --wave-dimmed: rgba(154, 165, 206, 0.22);
+  --wave-ruler: rgba(154, 165, 206, 0.38);
+  --wave-grid: rgba(154, 165, 206, 0.08);
+  --wave-playhead: #7aa2f7;
+
+  --shadow-sm: 0 2px 8px rgba(8, 9, 15, 0.42);
+  --shadow-md: 0 8px 24px rgba(8, 9, 15, 0.52);
+  --shadow-lg: 0 18px 48px rgba(8, 9, 15, 0.68);
+  --shadow-book: 0 10px 24px rgba(8, 9, 15, 0.58);
+  --shadow-record-btn: 0 8px 24px rgba(247, 118, 142, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}

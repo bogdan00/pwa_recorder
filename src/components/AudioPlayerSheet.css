@@ -5,7 +5,7 @@
   background: var(--bg-canvas);
   background-image: radial-gradient(
     ellipse 90% 50% at 50% 18%,
-    hsla(36 60% 52% / 0.1),
+    var(--player-ambient-glow),
     transparent 65%
   );
   display: flex;

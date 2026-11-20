@@ -52,7 +52,8 @@ export interface AudioDeviceSettings {
   deviceLabel: string;
 }
 
-export type ThemePreference = 'dark' | 'light' | 'system';
+import type { ConcreteThemeId, ThemePreference } from '../styles/themes';
+export type { ConcreteThemeId, ThemePreference };
 export type ShareAccessRole = 'owner' | 'writer' | 'reader';
 export type DriveLibraryMode = 'personal' | 'shared';
 

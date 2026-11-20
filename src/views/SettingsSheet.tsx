@@ -26,7 +26,6 @@ import type {
   BitrateModeOption,
   ChannelCountOption,
   SampleRateOption,
-  ThemePreference,
   WavBitDepthOption,
 } from '../types/models';
 import {
@@ -52,6 +51,7 @@ import {
 import type { GoogleAuthState } from '../drive/googleAuth';
 import { getDriveFolderWebUrl } from '../drive/shareUtils';
 import type { PwaInstallState } from '../pwa/installPrompt';
+import { ThemePickerGrid } from '../components/ThemeSwitcherSheet';
 import { formatBytes, formatGainDb, formatSampleRate } from '../utils/format';
 import './SettingsSheet.css';
 
@@ -1058,26 +1058,12 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
 
             <div className="field">
               <span className="field-label">Theme</span>
-              <div className="pill-grid">
-                {(
-                  [
-                    { id: 'dark', label: 'Warm Night' },
-                    { id: 'light', label: 'Warm Paper' },
-                    { id: 'system', label: 'System' },
-                  ] as Array<{ id: ThemePreference; label: string }>
-                ).map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    className={`opt-pill ${settings.theme === t.id ? 'opt-pill--active' : ''}`}
-                    onClick={() =>
-                      onUpdateSettings({ ...settings, theme: t.id })
-                    }
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
+              <ThemePickerGrid
+                currentTheme={settings.theme}
+                onSelectTheme={(theme) =>
+                  onUpdateSettings({ ...settings, theme })
+                }
+              />
             </div>
 
             <div className="field">

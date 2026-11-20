@@ -1,0 +1,56 @@
+/* ==========================================================================
+   Braun / Rams — Industrial aluminum studio gear
+   Inspired by Dieter Rams audio hardware & Teenage Engineering OP-1
+   ========================================================================== */
+
+[data-theme='braun-light'] {
+  color-scheme: light;
+
+  --bg-canvas: #ecece8;
+  --bg-surface: #f7f7f4;
+  --bg-elevated: #e1e1dc;
+  --bg-elevated-hover: #d5d5cf;
+  --bg-input: #f2f2ee;
+  --bg-scrim: rgba(24, 24, 22, 0.46);
+  --bg-glass: rgba(236, 236, 232, 0.94);
+  --bg-ambient-glow: transparent;
+  --studio-ambient-glow: transparent;
+  --player-ambient-glow: transparent;
+
+  --ink-primary: #1a1a18;
+  --ink-secondary: #52524e;
+  --ink-muted: #7c7c76;
+  --ink-inverse: #f7f7f4;
+
+  --border-subtle: rgba(26, 26, 24, 0.11);
+  --border-strong: rgba(26, 26, 24, 0.22);
+  --border-focus: #e8541e;
+
+  --accent-record: #e8541e;
+  --accent-record-hover: #d14512;
+  --accent-record-soft: rgba(232, 84, 30, 0.12);
+  --accent-record-border: rgba(232, 84, 30, 0.36);
+  --accent-amber: #c94714;
+  --accent-amber-soft: rgba(232, 84, 30, 0.11);
+  --accent-amber-border: rgba(232, 84, 30, 0.34);
+  --accent-sage: #2b7a4b;
+  --accent-sage-soft: rgba(43, 122, 75, 0.11);
+  --accent-sage-border: rgba(43, 122, 75, 0.3);
+  --accent-danger: #c62828;
+  --accent-danger-soft: rgba(198, 40, 40, 0.11);
+  --accent-danger-border: rgba(198, 40, 40, 0.28);
+
+  --wave-active: #272724;
+  --wave-recording: #e8541e;
+  --wave-played: #e8541e;
+  --wave-dimmed: rgba(26, 26, 24, 0.2);
+  --wave-ruler: rgba(26, 26, 24, 0.45);
+  --wave-grid: rgba(26, 26, 24, 0.08);
+  --wave-playhead: #e8541e;
+
+  --shadow-sm: 0 1px 2px rgba(26, 26, 24, 0.06);
+  --shadow-md: 0 6px 18px rgba(26, 26, 24, 0.09);
+  --shadow-lg: 0 16px 40px rgba(26, 26, 24, 0.15);
+  --shadow-book: 0 6px 16px rgba(26, 26, 24, 0.14), 0 1px 3px rgba(26, 26, 24, 0.08);
+  --shadow-record-btn: 0 6px 18px rgba(232, 84, 30, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}

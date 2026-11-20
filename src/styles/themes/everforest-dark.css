@@ -1,0 +1,56 @@
+/* ==========================================================================
+   Everforest — Soft organic mossy dark IDE (#2d353b)
+   Inspired by Sainnhe's Everforest Dark Medium
+   ========================================================================== */
+
+[data-theme='everforest-dark'] {
+  color-scheme: dark;
+
+  --bg-canvas: #232a2e;
+  --bg-surface: #2d353b;
+  --bg-elevated: #343f44;
+  --bg-elevated-hover: #3d484d;
+  --bg-input: #272e33;
+  --bg-scrim: rgba(18, 22, 25, 0.78);
+  --bg-glass: rgba(35, 42, 46, 0.94);
+  --bg-ambient-glow: transparent;
+  --studio-ambient-glow: transparent;
+  --player-ambient-glow: transparent;
+
+  --ink-primary: #d3c6aa;
+  --ink-secondary: #a7b0a5;
+  --ink-muted: #7a8478;
+  --ink-inverse: #232a2e;
+
+  --border-subtle: rgba(211, 198, 170, 0.1);
+  --border-strong: rgba(211, 198, 170, 0.2);
+  --border-focus: #dbbc7f;
+
+  --accent-record: #e67e80;
+  --accent-record-hover: #ef8f91;
+  --accent-record-soft: rgba(230, 126, 128, 0.16);
+  --accent-record-border: rgba(230, 126, 128, 0.38);
+  --accent-amber: #dbbc7f;
+  --accent-amber-soft: rgba(219, 188, 127, 0.15);
+  --accent-amber-border: rgba(219, 188, 127, 0.36);
+  --accent-sage: #a7c080;
+  --accent-sage-soft: rgba(167, 192, 128, 0.15);
+  --accent-sage-border: rgba(167, 192, 128, 0.34);
+  --accent-danger: #e67e80;
+  --accent-danger-soft: rgba(230, 126, 128, 0.15);
+  --accent-danger-border: rgba(230, 126, 128, 0.34);
+
+  --wave-active: #d3c6aa;
+  --wave-recording: #e67e80;
+  --wave-played: #a7c080;
+  --wave-dimmed: rgba(167, 176, 165, 0.24);
+  --wave-ruler: rgba(167, 176, 165, 0.42);
+  --wave-grid: rgba(211, 198, 170, 0.08);
+  --wave-playhead: #dbbc7f;
+
+  --shadow-sm: 0 2px 8px rgba(14, 18, 20, 0.34);
+  --shadow-md: 0 8px 22px rgba(14, 18, 20, 0.44);
+  --shadow-lg: 0 18px 44px rgba(14, 18, 20, 0.58);
+  --shadow-book: 0 8px 22px rgba(14, 18, 20, 0.48);
+  --shadow-record-btn: 0 8px 24px rgba(230, 126, 128, 0.34), inset 0 1px 0 rgba(255, 250, 240, 0.22);
+}

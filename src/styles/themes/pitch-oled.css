@@ -1,0 +1,57 @@
+/* ==========================================================================
+   Pitch OLED — Pure black #000 hardware studio (Default)
+   Inspired by true OLED dark mode & Leica monochrome hardware
+   ========================================================================== */
+
+:root,
+[data-theme='pitch-oled'] {
+  color-scheme: dark;
+
+  --bg-canvas: #000000;
+  --bg-surface: #0a0a0a;
+  --bg-elevated: #141414;
+  --bg-elevated-hover: #1e1e1e;
+  --bg-input: #080808;
+  --bg-scrim: rgba(0, 0, 0, 0.84);
+  --bg-glass: rgba(0, 0, 0, 0.92);
+  --bg-ambient-glow: transparent;
+  --studio-ambient-glow: transparent;
+  --player-ambient-glow: transparent;
+
+  --ink-primary: #f4f4f5;
+  --ink-secondary: #a1a1aa;
+  --ink-muted: #63636b;
+  --ink-inverse: #000000;
+
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --border-focus: #f4f4f5;
+
+  --accent-record: #ff3b30;
+  --accent-record-hover: #ff5147;
+  --accent-record-soft: rgba(255, 59, 48, 0.15);
+  --accent-record-border: rgba(255, 59, 48, 0.42);
+  --accent-amber: #f4f4f5;
+  --accent-amber-soft: rgba(255, 255, 255, 0.11);
+  --accent-amber-border: rgba(255, 255, 255, 0.28);
+  --accent-sage: #4ade80;
+  --accent-sage-soft: rgba(74, 222, 128, 0.12);
+  --accent-sage-border: rgba(74, 222, 128, 0.3);
+  --accent-danger: #ff453a;
+  --accent-danger-soft: rgba(255, 69, 58, 0.14);
+  --accent-danger-border: rgba(255, 69, 58, 0.34);
+
+  --wave-active: #e4e4e7;
+  --wave-recording: #ff3b30;
+  --wave-played: #ffffff;
+  --wave-dimmed: rgba(255, 255, 255, 0.2);
+  --wave-ruler: rgba(255, 255, 255, 0.35);
+  --wave-grid: rgba(255, 255, 255, 0.08);
+  --wave-playhead: #ff3b30;
+
+  --shadow-sm: none;
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.85);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.95);
+  --shadow-book: 0 8px 20px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-record-btn: 0 0 0 1px rgba(255, 59, 48, 0.55), 0 8px 24px rgba(255, 59, 48, 0.28);
+}

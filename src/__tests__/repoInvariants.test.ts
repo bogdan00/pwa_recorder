@@ -100,4 +100,43 @@ describe('Repository E2E, CUJ & ADR systemic invariants', () => {
       }
     }
   });
+
+  it('keeps every color theme isolated in its own src/styles/themes/<id>.css file imported by tokens.css', () => {
+    const themesDir = path.join(REPO_ROOT, 'src/styles/themes');
+    const tokensCss = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/styles/tokens.css'),
+      'utf8',
+    );
+    const themesTs = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/styles/themes.ts'),
+      'utf8',
+    );
+
+    const themeCssFiles = fs
+      .readdirSync(themesDir)
+      .filter((f) => f.endsWith('.css'))
+      .sort();
+
+    // Extract every concrete id: '...' entry from THEME_DEFINITIONS
+    const registeredIds = Array.from(
+      themesTs.matchAll(/\bid:\s*'([a-z0-9-]+)'/g),
+      (m) => m[1],
+    ).sort();
+
+    expect(registeredIds.length).toBe(10);
+    expect(themeCssFiles).toEqual(registeredIds.map((id) => `${id}.css`));
+
+    for (const id of registeredIds) {
+      expect(
+        tokensCss,
+        `src/styles/tokens.css must @import './themes/${id}.css'`,
+      ).toContain(`@import './themes/${id}.css';`);
+
+      const cssContent = fs.readFileSync(path.join(themesDir, `${id}.css`), 'utf8');
+      expect(
+        cssContent,
+        `src/styles/themes/${id}.css must scope its tokens under [data-theme='${id}']`,
+      ).toContain(`[data-theme='${id}']`);
+    }
+  });
 });

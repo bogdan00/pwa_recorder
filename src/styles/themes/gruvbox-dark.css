@@ -1,0 +1,56 @@
+/* ==========================================================================
+   Gruvbox Hard — Classic retro-analog dark IDE (#1d2021)
+   Inspired by Pavel Pertsev's Gruvbox Dark Hard
+   ========================================================================== */
+
+[data-theme='gruvbox-dark'] {
+  color-scheme: dark;
+
+  --bg-canvas: #1d2021;
+  --bg-surface: #282828;
+  --bg-elevated: #3c3836;
+  --bg-elevated-hover: #504945;
+  --bg-input: #222425;
+  --bg-scrim: rgba(16, 18, 19, 0.78);
+  --bg-glass: rgba(29, 32, 33, 0.94);
+  --bg-ambient-glow: transparent;
+  --studio-ambient-glow: transparent;
+  --player-ambient-glow: transparent;
+
+  --ink-primary: #ebdbb2;
+  --ink-secondary: #d5c4a1;
+  --ink-muted: #928374;
+  --ink-inverse: #1d2021;
+
+  --border-subtle: rgba(235, 219, 178, 0.1);
+  --border-strong: rgba(235, 219, 178, 0.2);
+  --border-focus: #fabd2f;
+
+  --accent-record: #fb4934;
+  --accent-record-hover: #ff5e4a;
+  --accent-record-soft: rgba(251, 73, 52, 0.16);
+  --accent-record-border: rgba(251, 73, 52, 0.4);
+  --accent-amber: #fabd2f;
+  --accent-amber-soft: rgba(250, 189, 47, 0.15);
+  --accent-amber-border: rgba(250, 189, 47, 0.38);
+  --accent-sage: #b8bb26;
+  --accent-sage-soft: rgba(184, 187, 38, 0.14);
+  --accent-sage-border: rgba(184, 187, 38, 0.34);
+  --accent-danger: #cc241d;
+  --accent-danger-soft: rgba(251, 73, 52, 0.15);
+  --accent-danger-border: rgba(251, 73, 52, 0.35);
+
+  --wave-active: #ebdbb2;
+  --wave-recording: #fb4934;
+  --wave-played: #fabd2f;
+  --wave-dimmed: rgba(213, 196, 161, 0.22);
+  --wave-ruler: rgba(189, 174, 147, 0.42);
+  --wave-grid: rgba(235, 219, 178, 0.08);
+  --wave-playhead: #fabd2f;
+
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.6);
+  --shadow-book: 0 8px 20px rgba(0, 0, 0, 0.5);
+  --shadow-record-btn: 0 8px 24px rgba(204, 36, 29, 0.44), inset 0 1px 0 rgba(255, 240, 220, 0.22);
+}

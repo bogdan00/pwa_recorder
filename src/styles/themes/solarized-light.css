@@ -1,0 +1,56 @@
+/* ==========================================================================
+   Solarized Light — Ethan Schoonover CIELAB parchment IDE (#fdf6e3)
+   Inspired by Solarized Light
+   ========================================================================== */
+
+[data-theme='solarized-light'] {
+  color-scheme: light;
+
+  --bg-canvas: #eee8d5;
+  --bg-surface: #fdf6e3;
+  --bg-elevated: #e4ddc8;
+  --bg-elevated-hover: #d8d0b8;
+  --bg-input: #f7f0dc;
+  --bg-scrim: rgba(7, 54, 66, 0.46);
+  --bg-glass: rgba(238, 232, 213, 0.94);
+  --bg-ambient-glow: transparent;
+  --studio-ambient-glow: transparent;
+  --player-ambient-glow: transparent;
+
+  --ink-primary: #073642;
+  --ink-secondary: #586e75;
+  --ink-muted: #839496;
+  --ink-inverse: #fdf6e3;
+
+  --border-subtle: rgba(7, 54, 66, 0.11);
+  --border-strong: rgba(7, 54, 66, 0.22);
+  --border-focus: #268bd2;
+
+  --accent-record: #dc322f;
+  --accent-record-hover: #c52825;
+  --accent-record-soft: rgba(220, 50, 47, 0.12);
+  --accent-record-border: rgba(220, 50, 47, 0.34);
+  --accent-amber: #268bd2;
+  --accent-amber-soft: rgba(38, 139, 210, 0.12);
+  --accent-amber-border: rgba(38, 139, 210, 0.34);
+  --accent-sage: #859900;
+  --accent-sage-soft: rgba(133, 153, 0, 0.12);
+  --accent-sage-border: rgba(133, 153, 0, 0.32);
+  --accent-danger: #dc322f;
+  --accent-danger-soft: rgba(220, 50, 47, 0.11);
+  --accent-danger-border: rgba(220, 50, 47, 0.3);
+
+  --wave-active: #073642;
+  --wave-recording: #dc322f;
+  --wave-played: #268bd2;
+  --wave-dimmed: rgba(88, 110, 117, 0.25);
+  --wave-ruler: rgba(88, 110, 117, 0.48);
+  --wave-grid: rgba(7, 54, 66, 0.08);
+  --wave-playhead: #268bd2;
+
+  --shadow-sm: 0 1px 4px rgba(7, 54, 66, 0.08);
+  --shadow-md: 0 6px 18px rgba(7, 54, 66, 0.11);
+  --shadow-lg: 0 16px 40px rgba(7, 54, 66, 0.18);
+  --shadow-book: 0 8px 18px rgba(7, 54, 66, 0.15), 0 2px 4px rgba(7, 54, 66, 0.09);
+  --shadow-record-btn: 0 6px 18px rgba(220, 50, 47, 0.3), inset 0 1px 0 rgba(253, 246, 227, 0.32);
+}

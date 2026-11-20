@@ -25,7 +25,7 @@ body {
   background-color: var(--bg-canvas);
   background-image: radial-gradient(
     ellipse 85% 55% at 50% -10%,
-    hsla(36 45% 55% / 0.06),
+    var(--bg-ambient-glow),
     transparent 70%
   );
   -webkit-font-smoothing: antialiased;
@@ -158,11 +158,11 @@ button:disabled {
 .btn-amber {
   background: var(--accent-amber-soft);
   color: var(--accent-amber);
-  border: 1px solid hsla(36 76% 60% / 0.3);
+  border: 1px solid var(--accent-amber-border);
 }
 
 .btn-amber:hover:not(:disabled) {
-  background: hsla(36 76% 60% / 0.24);
+  background: var(--accent-amber-border);
 }
 
 .btn-ghost {
@@ -178,11 +178,11 @@ button:disabled {
 .btn-danger {
   background: var(--accent-danger-soft);
   color: var(--accent-danger);
-  border: 1px solid hsla(2 68% 56% / 0.25);
+  border: 1px solid var(--accent-danger-border);
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: hsla(2 68% 56% / 0.22);
+  background: var(--accent-danger-border);
 }
 
 .btn-sm {
@@ -423,12 +423,19 @@ button:disabled {
 }
 
 .sheet-body {
+  flex: 1;
+  min-height: 0;
   padding: 18px 20px 24px;
   overflow-y: auto;
+  scroll-padding-block: 36px;
   -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+.sheet-body > * {
+  flex-shrink: 0;
 }
 
 .sheet-footer {

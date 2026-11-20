@@ -98,7 +98,7 @@
   padding: 12px 14px;
   border-radius: var(--radius-md);
   background: var(--accent-sage-soft);
-  border: 1px solid hsla(142 35% 52% / 0.3);
+  border: 1px solid var(--accent-sage-border);
 }
 
 .shared-lib-banner__text {
@@ -132,7 +132,7 @@
   padding: 14px 16px;
   border-radius: var(--radius-md);
   background: var(--accent-amber-soft);
-  border: 1px solid hsla(36 76% 60% / 0.3);
+  border: 1px solid var(--accent-amber-border);
 }
 
 .draft-banner__text {

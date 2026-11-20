@@ -96,7 +96,7 @@ Enforce clear separation of concerns across layers—avoid putting audio DSP, In
   - Do not expose OAuth Client ID inputs, API key inputs, or Google Cloud Console setup/Testing-mode instructions in the app UI. Manage OAuth configuration via build defaults / repository variables (`VITE_GOOGLE_CLIENT_ID`).
 
 ### Styling, Mobile Ergonomics & GitHub Pages Subpath
-- **Vanilla CSS only** (no TailwindCSS or CSS-in-JS). Use semantic tokens in `src/styles/global.css` supporting both **Warm Night** (`dark`) and **Warm Paper** (`light`) themes.
+- **Vanilla CSS only** (no TailwindCSS or CSS-in-JS). Use semantic tokens in `src/styles/tokens.css` & `src/styles/global.css` (zero hardcoded palette borders or ambient glows) supporting all 10 curated themes in `src/styles/themes.ts` (defaulting to **Pitch OLED**).
 - **iOS Safari / Mobile PWA gestures**:
   - Call `googleAuth.requestSignIn()` and `AudioContext.resume()` synchronously inside click/tap handlers so iOS standalone PWAs don't block popups or audio playback.
   - Design for `100dvh`, safe-area insets, and thumb-zone controls.

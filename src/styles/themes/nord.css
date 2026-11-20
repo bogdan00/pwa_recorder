@@ -1,0 +1,56 @@
+/* ==========================================================================
+   Nord Polar — Arctic matte Scandinavian dark IDE (#2e3440)
+   Inspired by Arctic Ice Studio's Nord palette
+   ========================================================================== */
+
+[data-theme='nord'] {
+  color-scheme: dark;
+
+  --bg-canvas: #242933;
+  --bg-surface: #2e3440;
+  --bg-elevated: #3b4252;
+  --bg-elevated-hover: #434c5e;
+  --bg-input: #272c36;
+  --bg-scrim: rgba(22, 26, 33, 0.78);
+  --bg-glass: rgba(36, 41, 51, 0.94);
+  --bg-ambient-glow: transparent;
+  --studio-ambient-glow: transparent;
+  --player-ambient-glow: transparent;
+
+  --ink-primary: #eceff4;
+  --ink-secondary: #d8dee9;
+  --ink-muted: #8190a5;
+  --ink-inverse: #242933;
+
+  --border-subtle: rgba(216, 222, 233, 0.1);
+  --border-strong: rgba(216, 222, 233, 0.2);
+  --border-focus: #88c0d0;
+
+  --accent-record: #bf616a;
+  --accent-record-hover: #cf717a;
+  --accent-record-soft: rgba(191, 97, 106, 0.18);
+  --accent-record-border: rgba(191, 97, 106, 0.44);
+  --accent-amber: #88c0d0;
+  --accent-amber-soft: rgba(136, 192, 208, 0.15);
+  --accent-amber-border: rgba(136, 192, 208, 0.36);
+  --accent-sage: #a3be8c;
+  --accent-sage-soft: rgba(163, 190, 140, 0.15);
+  --accent-sage-border: rgba(163, 190, 140, 0.34);
+  --accent-danger: #bf616a;
+  --accent-danger-soft: rgba(191, 97, 106, 0.16);
+  --accent-danger-border: rgba(191, 97, 106, 0.36);
+
+  --wave-active: #e5e9f0;
+  --wave-recording: #bf616a;
+  --wave-played: #88c0d0;
+  --wave-dimmed: rgba(216, 222, 233, 0.22);
+  --wave-ruler: rgba(216, 222, 233, 0.4);
+  --wave-grid: rgba(216, 222, 233, 0.08);
+  --wave-playhead: #88c0d0;
+
+  --shadow-sm: 0 2px 8px rgba(15, 18, 24, 0.32);
+  --shadow-md: 0 8px 22px rgba(15, 18, 24, 0.42);
+  --shadow-lg: 0 18px 46px rgba(15, 18, 24, 0.56);
+  --shadow-book: 0 8px 22px rgba(15, 18, 24, 0.48);
+  --shadow-record-btn: 0 8px 24px rgba(191, 97, 106, 0.36), inset 0 1px 0 rgba(236, 239, 244, 0.22);
+}

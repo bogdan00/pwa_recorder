@@ -107,7 +107,7 @@
   padding: 11px 14px;
   border-radius: var(--radius-md);
   background: var(--accent-amber-soft);
-  border: 1px solid hsla(36 76% 60% / 0.28);
+  border: 1px solid var(--accent-amber-border);
   color: var(--ink-primary);
   font-size: 13px;
   line-height: 1.45;

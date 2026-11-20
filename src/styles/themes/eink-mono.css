@@ -1,0 +1,56 @@
+/* ==========================================================================
+   E-Ink Paper — Ultra-minimalist Swiss monochrome print
+   Inspired by reMarkable 2 e-paper & Swiss typographic grids
+   ========================================================================== */
+
+[data-theme='eink-mono'] {
+  color-scheme: light;
+
+  --bg-canvas: #f4f3ef;
+  --bg-surface: #faf9f6;
+  --bg-elevated: #e9e7e1;
+  --bg-elevated-hover: #dedcd4;
+  --bg-input: #faf9f6;
+  --bg-scrim: rgba(17, 17, 16, 0.42);
+  --bg-glass: rgba(244, 243, 239, 0.96);
+  --bg-ambient-glow: transparent;
+  --studio-ambient-glow: transparent;
+  --player-ambient-glow: transparent;
+
+  --ink-primary: #111110;
+  --ink-secondary: #464642;
+  --ink-muted: #767670;
+  --ink-inverse: #faf9f6;
+
+  --border-subtle: rgba(17, 17, 16, 0.14);
+  --border-strong: rgba(17, 17, 16, 0.32);
+  --border-focus: #111110;
+
+  --accent-record: #c62828;
+  --accent-record-hover: #a71e1e;
+  --accent-record-soft: rgba(198, 40, 40, 0.1);
+  --accent-record-border: rgba(198, 40, 40, 0.35);
+  --accent-amber: #111110;
+  --accent-amber-soft: rgba(17, 17, 16, 0.08);
+  --accent-amber-border: rgba(17, 17, 16, 0.32);
+  --accent-sage: #2e3b32;
+  --accent-sage-soft: rgba(46, 59, 50, 0.09);
+  --accent-sage-border: rgba(46, 59, 50, 0.28);
+  --accent-danger: #b71c1c;
+  --accent-danger-soft: rgba(183, 28, 28, 0.09);
+  --accent-danger-border: rgba(183, 28, 28, 0.3);
+
+  --wave-active: #111110;
+  --wave-recording: #c62828;
+  --wave-played: #111110;
+  --wave-dimmed: rgba(17, 17, 16, 0.22);
+  --wave-ruler: rgba(17, 17, 16, 0.5);
+  --wave-grid: rgba(17, 17, 16, 0.09);
+  --wave-playhead: #c62828;
+
+  --shadow-sm: none;
+  --shadow-md: 0 2px 10px rgba(17, 17, 16, 0.07);
+  --shadow-lg: 0 12px 32px rgba(17, 17, 16, 0.14);
+  --shadow-book: 0 2px 8px rgba(17, 17, 16, 0.12), 0 0 0 1px rgba(17, 17, 16, 0.14);
+  --shadow-record-btn: 0 4px 12px rgba(198, 40, 40, 0.26);
+}

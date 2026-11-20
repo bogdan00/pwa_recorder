@@ -6,6 +6,7 @@ import {
   CloudUpload,
   Download,
   Loader2,
+  Palette,
   Play,
   Plus,
   Search,
@@ -43,6 +44,7 @@ interface LibraryViewProps {
   onDismissInstallBanner?: () => void;
   onOpenBook: (projectId: string) => void;
   onNewBook: () => void;
+  onOpenThemeSwitcher: () => void;
   onOpenSettings: () => void;
   onOpenShareLibrary: () => void;
   onSyncNow: () => void;
@@ -70,6 +72,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onDismissInstallBanner,
   onOpenBook,
   onNewBook,
+  onOpenThemeSwitcher,
   onOpenSettings,
   onOpenShareLibrary,
   onSyncNow,
@@ -218,6 +221,17 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                   <span>Drive</span>
                 </>
               )}
+            </button>
+
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={onOpenThemeSwitcher}
+              aria-label="Change color theme"
+              id="open-theme-switcher-btn"
+              title="Color theme"
+            >
+              <Palette size={19} />
             </button>
 
             <button
