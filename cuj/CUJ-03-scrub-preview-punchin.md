@@ -1,10 +1,10 @@
-# CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In Re-Recording & Undo
+# CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In, Stop Here & Undo
 
 **Priority:** P0  
 **E2E Spec:** [`e2e/cuj-03-scrub-preview-punchin.spec.ts`](../e2e/cuj-03-scrub-preview-punchin.spec.ts)
 
 ## Goal
-While reading aloud, the parent pauses, drags the waveform directly with touch/pointer gestures to scrub back to an earlier moment, plays back to check how the last bit sounded, decides either to continue safely from the end OR punch-in ("Re-record from MM:SS") to fix a stumble, and can undo a trim or discard a bad take safely.
+While reading aloud, the parent pauses, drags the waveform directly with touch/pointer gestures to scrub back to an earlier moment, plays back to check how the last bit sounded, and chooses between continuing safely from the end, punching in (**Re-record from MM:SS**), or trimming the trailing audio and finishing immediately (**Stop here**), with 1-step Undo trim and discard protection.
 
 ## Preconditions
 - Inside Recording Studio with a paused recording of at least 2–3 seconds.
@@ -27,10 +27,18 @@ While reading aloud, the parent pauses, drags the waveform directly with touch/p
    - Tap **Re-record from MM:SS**.
    - **Expected:** Audio after the playhead is trimmed with a 15ms crossfade splice, recording resumes from that timestamp (`REC`), and pausing reveals the **Undo trim** button.
 
-4. **1-Step Undo Trim**
-   - Tap **Undo trim** while paused.
+4. **Contextual Trim & Finish ("Stop here")**
+   - While paused and scrubbed back (with playhead ≥ 0.15s so the remaining take is non-empty), verify a contextual **Stop here (MM:SS)** button appears next to **Re-record from MM:SS**.
+   - Tap **Stop here (MM:SS)**.
+   - **Expected:**
+     - Everything after the scrubbed playhead is trimmed with a smooth 15ms fade-out and a 1-step Undo snapshot is saved.
+     - The **Save Recording** name prompt opens immediately showing the shorter trimmed duration.
+     - Tapping **Back to Recording** returns to `PAUSED` with **Undo trim** available to restore the cut tail; confirming **Save** encodes and saves the trimmed chapter cleanly.
+
+5. **1-Step Undo Trim**
+   - Tap **Undo trim** while paused (after either **Re-record from** or **Stop here** → **Back to Recording**).
    - **Expected:** Restores the pre-trim duration and hides the **Undo trim** button.
 
-5. **Discard Take & Unsaved Leave Protection**
+6. **Discard Take & Unsaved Leave Protection**
    - Tap Back while unsaved audio exists → **Unsaved Recording** dialog appears with **Stay**, **Discard & Leave**, and **Keep Draft & Leave**.
    - Tap **Stay**, then test the **Discard** button → confirmation modal → **Discard Take** resets studio back to `READY` / `00:00.0`.

@@ -229,6 +229,30 @@ export class RecordingEngine {
   }
 
   /**
+   * Trims everything after current playheadMs (15ms smooth tail fade-out + 1-step undo snapshot)
+   * without restarting the microphone — used by "Stop here" so the user can cut trailing noise
+   * and immediately save the recording.
+   */
+  async trimToPlayhead(): Promise<{ trimmedMs: number; newDurationMs: number }> {
+    this.stopPreviewPlayback();
+    if (this.phase === 'recording') {
+      await this.pause();
+    }
+
+    if (!this.timeline) {
+      return { trimmedMs: 0, newDurationMs: 0 };
+    }
+
+    const targetFrame = this.timeline.msToFrame(this.playheadMs);
+    const res = this.timeline.truncateAtFrame(targetFrame);
+    this.playheadMs = res.newDurationMs;
+    this.phase = res.newDurationMs > 0 ? 'paused' : 'idle';
+    await this.syncFullDraftToDb();
+    this.emit();
+    return res;
+  }
+
+  /**
    * Restores the tail removed by the most recent punch-in (while paused).
    */
   async undoLastTrim(): Promise<boolean> {

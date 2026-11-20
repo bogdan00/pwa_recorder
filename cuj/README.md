@@ -8,7 +8,7 @@ This folder defines every end-to-end **Customer User Journey (CUJ)** built into 
 | --- | --- | --- | --- |
 | [CUJ-01](./CUJ-01-book-management.md) | Book Project Creation, Metadata, Cover Art, Editing & Deletion | P0 | [`e2e/cuj-01-book-management.spec.ts`](../e2e/cuj-01-book-management.spec.ts) |
 | [CUJ-02](./CUJ-02-core-recording.md) | Core Audio Recording: Start, Live Waveform, Pause, Safe Resume & Stop Name Prompt | P0 | [`e2e/cuj-02-core-recording.spec.ts`](../e2e/cuj-02-core-recording.spec.ts) |
-| [CUJ-03](./CUJ-03-scrub-preview-punchin.md) | Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In Re-Recording & Undo | P0 | [`e2e/cuj-03-scrub-preview-punchin.spec.ts`](../e2e/cuj-03-scrub-preview-punchin.spec.ts) |
+| [CUJ-03](./CUJ-03-scrub-preview-punchin.md) | Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In, Stop Here & Undo | P0 | [`e2e/cuj-03-scrub-preview-punchin.spec.ts`](../e2e/cuj-03-scrub-preview-punchin.spec.ts) |
 | [CUJ-04](./CUJ-04-chapter-management.md) | Chapter Management: Rename, Reorder, Download Audio & Delete | P1 | [`e2e/cuj-04-chapter-management.spec.ts`](../e2e/cuj-04-chapter-management.spec.ts) |
 | [CUJ-05](./CUJ-05-audiobook-player.md) | Minimalistic Audiobook Player, Mini-Player, Speed, Sleep Timer & Continue Listening | P0 | [`e2e/cuj-05-audiobook-player.spec.ts`](../e2e/cuj-05-audiobook-player.spec.ts) |
 | [CUJ-06](./CUJ-06-library-browsing-themes.md) | Audiobook Library Browsing (Search, Tags, Sort) & Warm Night / Warm Paper Themes | P1 | [`e2e/cuj-06-library-browsing-themes.spec.ts`](../e2e/cuj-06-library-browsing-themes.spec.ts) |

@@ -203,6 +203,15 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     setSaveOpen(true);
   };
 
+  const handleStopHere = async () => {
+    if (snap.durationMs === 0 || snap.playheadMs < 150) return;
+    const res = await engineRef.current!.trimToPlayhead();
+    if (res.newDurationMs <= 0) return;
+    setSaveError(null);
+    setEncodeProgress(0);
+    setSaveOpen(true);
+  };
+
   const handleConfirmSave = async (name: string, notes: string) => {
     setIsSaving(true);
     setSaveError(null);
@@ -419,15 +428,29 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
 
                 <div className="studio-punch-row">
                   {isScrubbedBack && (
-                    <button
-                      type="button"
-                      className="btn btn-amber btn-sm"
-                      onClick={() => void handlePunchIn()}
-                      id="punch-in-btn"
-                    >
-                      <Scissors size={14} />
-                      Re-record from {formatDurationMs(snap.playheadMs)}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-amber btn-sm"
+                        onClick={() => void handlePunchIn()}
+                        id="punch-in-btn"
+                      >
+                        <Scissors size={14} />
+                        Re-record from {formatDurationMs(snap.playheadMs)}
+                      </button>
+
+                      {snap.playheadMs >= 150 && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => void handleStopHere()}
+                          id="trim-stop-here-btn"
+                        >
+                          <Square size={12} fill="currentColor" />
+                          Stop here ({formatDurationMs(snap.playheadMs)})
+                        </button>
+                      )}
+                    </>
                   )}
 
                   {snap.phase === 'paused' && snap.canUndoTrim && (

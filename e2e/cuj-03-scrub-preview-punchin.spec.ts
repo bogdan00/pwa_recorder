@@ -111,4 +111,96 @@ test.describe('CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In
     await expect(page.locator('.studio-status-pill')).toHaveText('READY');
     await expect(page.getByTestId('studio-timer')).toHaveText('00:00.0');
   });
+
+  test('trims trailing audio via Stop here, supports undo after backing out of save prompt, and saves the trimmed chapter', async ({
+    page,
+  }) => {
+    await page.goto('./');
+    await createBook(page, { title: 'The Velveteen Rabbit' });
+
+    // Record until timer reaches >= 2.2s so we can scrub into the middle and stop cleanly
+    await page.locator('#record-chapter-btn').click();
+    await page.locator('#big-record-pause-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('REC');
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= 2.2,
+      'initial take should reach at least 2.2s before scrubbing to Stop here',
+    );
+
+    await page.locator('#big-record-pause-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
+
+    const fullDurationSec = parseTimerSeconds(
+      (await page.getByTestId('studio-timer').textContent()) || '00:00.0',
+    );
+    expect(fullDurationSec).toBeGreaterThanOrEqual(2.2);
+
+    // Drag right across a moderate portion of the waveform so playhead lands in the middle (>= 0.3s, < end - 0.5s)
+    const canvas = page.locator('.waveform-canvas');
+    const box = await canvas.boundingBox();
+    expect(box).not.toBeNull();
+    const midY = box!.y + box!.height * 0.5;
+    const dragStart = box!.x + box!.width * 0.35;
+    const dragEnd = box!.x + box!.width * 0.62;
+
+    await page.mouse.move(dragStart, midY);
+    await page.mouse.down();
+    await page.mouse.move(dragEnd, midY, { steps: 10 });
+    await page.mouse.up();
+
+    await expect(page.locator('.studio-timer-sub')).toContainText('Scrubbed');
+    const scrubbedSec = await waitForStudioTimer(
+      page,
+      (sec) => sec >= 0.3 && sec <= fullDurationSec - 0.4,
+      'playhead should scrub cleanly into the middle of the take',
+    );
+
+    // Verify Stop here button appears beside Re-record from
+    const stopHereBtn = page.locator('#trim-stop-here-btn');
+    await expect(stopHereBtn).toBeVisible();
+    await expect(stopHereBtn).toContainText('Stop here');
+
+    // 1. Tap Stop here -> trims trailing audio & opens Save Recording modal directly
+    await stopHereBtn.click();
+    const nameInput = page.locator('#recording-name-input');
+    await expect(nameInput).toBeVisible();
+
+    // 2. Tap Back to Recording -> returns paused at trimmed length with Undo trim available!
+    await page.getByRole('button', { name: 'Back to Recording', exact: true }).click();
+    await expect(nameInput).toBeHidden();
+    await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
+    await waitForStudioTimer(
+      page,
+      (sec) => sec <= scrubbedSec + 0.2 && sec < fullDurationSec - 0.3,
+      'studio timer should reflect trimmed duration after Stop here',
+    );
+
+    // Undo trim restores full original duration!
+    const undoBtn = page.locator('#undo-trim-btn');
+    await expect(undoBtn).toBeVisible();
+    await undoBtn.click();
+    await expect(undoBtn).toBeHidden();
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= fullDurationSec - 0.15,
+      'undo trim should restore full pre-cut duration',
+    );
+
+    // 3. Scrub back into middle again -> Stop here -> Save trimmed chapter cleanly
+    await page.mouse.move(dragStart, midY);
+    await page.mouse.down();
+    await page.mouse.move(dragEnd, midY, { steps: 10 });
+    await page.mouse.up();
+    await expect(stopHereBtn).toBeVisible();
+
+    await stopHereBtn.click();
+    await expect(nameInput).toBeVisible();
+    await nameInput.fill('Trimmed Ending');
+    await page.locator('#confirm-save-recording-btn').click();
+
+    await expect(
+      page.locator('.rec-card__title', { hasText: 'Trimmed Ending' }),
+    ).toBeVisible();
+  });
 });
