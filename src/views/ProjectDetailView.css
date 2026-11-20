@@ -25,13 +25,45 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-topbar__inner .btn-sm {
+  min-height: 34px;
+  padding: 5px 10px;
+  gap: 5px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.project-topbar__inner > .btn-ghost {
+  padding-left: 4px;
+  padding-right: 8px;
 }
 
 .project-topbar__actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+@media (min-width: 440px) {
+  .project-topbar__inner {
+    gap: 8px;
+  }
+
+  .project-topbar__inner .btn-sm {
+    min-height: 36px;
+    padding: 6px 14px;
+    gap: 8px;
+    font-size: 13px;
+  }
+
+  .project-topbar__actions {
+    gap: 6px;
+  }
 }
 
 .project-content {

@@ -95,8 +95,133 @@ export const test = base.extend<StoryTapeTestOptions>({
 
   page: async ({ context, page, cpuThrottleRate }, use) => {
     const uncaughtErrors: string[] = [];
+    const viewportOverflowViolations = new Set<string>();
+
     page.on('pageerror', (err) => {
       uncaughtErrors.push(err.stack || err.message || String(err));
+    });
+
+    // Global mobile viewport overflow fence: streams horizontal overflow violations from
+    // ANY screen, sheet, or state visited during ANY CUJ E2E test directly into the runner
+    // so layout regressions never slip past precheck onto phones.
+    await page.exposeFunction('__storyTapeReportOverflow', (detail: string) => {
+      viewportOverflowViolations.add(detail);
+    });
+
+    await page.addInitScript(() => {
+      const CHECK_SELECTORS = [
+        '.library-header__inner',
+        '.library-page',
+        '.project-page',
+        '.sheet-panel',
+        '.studio-page',
+        '.player-sheet',
+      ];
+      const BOUNDED_ITEM_SELECTORS = [
+        '.library-header button',
+        '.project-topbar button',
+        '[data-testid="theme-switcher-sheet"] [data-theme-option]',
+      ];
+
+      let raf1 = 0;
+      let raf2 = 0;
+
+      const report = (msg: string) => {
+        const fn = (
+          window as unknown as { __storyTapeReportOverflow?: (s: string) => void }
+        ).__storyTapeReportOverflow;
+        if (typeof fn === 'function') fn(msg);
+      };
+
+      const checkLayout = () => {
+        if (!document.body || !document.documentElement) return;
+        const vw = window.innerWidth;
+        if (vw <= 0) return;
+        const route = window.location.hash || '#/';
+
+        if (Math.abs(window.scrollX) > 1) {
+          report(`[${route} @ ${vw}px] window.scrollX=${Math.round(window.scrollX)}`);
+        }
+
+        const docScrollW = document.documentElement.scrollWidth;
+        const docClientW = document.documentElement.clientWidth;
+        if (docScrollW > docClientW + 1) {
+          report(
+            `[${route} @ ${vw}px] documentElement horizontal overflow (${docScrollW} > ${docClientW})`,
+          );
+        }
+
+        for (const sel of CHECK_SELECTORS) {
+          const nodes = document.querySelectorAll<HTMLElement>(sel);
+          for (const el of Array.from(nodes)) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) continue;
+            if (el.scrollWidth > el.clientWidth + 1) {
+              report(
+                `[${route} @ ${vw}px] ${sel} scrollWidth overflow (${Math.round(el.scrollWidth)} > ${Math.round(el.clientWidth)})`,
+              );
+            }
+            if (Math.round(rect.right) > vw + 1 || Math.round(rect.left) < -1) {
+              report(
+                `[${route} @ ${vw}px] ${sel} outside viewport [${Math.round(rect.left)}, ${Math.round(rect.right)}] vs [0, ${vw}]`,
+              );
+            }
+          }
+        }
+
+        for (const sel of BOUNDED_ITEM_SELECTORS) {
+          const nodes = document.querySelectorAll<HTMLElement>(sel);
+          for (const el of Array.from(nodes)) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) continue;
+            if (Math.round(rect.right) > vw + 1 || Math.round(rect.left) < -1) {
+              const label =
+                el.id ||
+                el.getAttribute('data-theme-option') ||
+                el.getAttribute('aria-label') ||
+                el.textContent?.trim().slice(0, 20) ||
+                sel;
+              report(
+                `[${route} @ ${vw}px] control "${label}" outside viewport [${Math.round(rect.left)}, ${Math.round(rect.right)}] vs [0, ${vw}]`,
+              );
+            }
+          }
+        }
+      };
+
+      const scheduleCheck = () => {
+        if (raf1) cancelAnimationFrame(raf1);
+        if (raf2) cancelAnimationFrame(raf2);
+        raf1 = requestAnimationFrame(() => {
+          raf2 = requestAnimationFrame(checkLayout);
+        });
+      };
+
+      window.addEventListener('load', scheduleCheck);
+      window.addEventListener('resize', scheduleCheck);
+      window.addEventListener('hashchange', scheduleCheck);
+
+      const startObservers = () => {
+        if (!document.body) return;
+        const mo = new MutationObserver(scheduleCheck);
+        mo.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['class', 'style', 'data-theme'],
+        });
+        if (typeof ResizeObserver !== 'undefined') {
+          const ro = new ResizeObserver(scheduleCheck);
+          ro.observe(document.documentElement);
+        }
+        scheduleCheck();
+      };
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startObservers, { once: true });
+      } else {
+        startObservers();
+      }
     });
 
     let cdpSession: Awaited<ReturnType<typeof context.newCDPSession>> | null =
@@ -116,6 +241,11 @@ export const test = base.extend<StoryTapeTestOptions>({
         .catch(() => {});
       await cdpSession.detach().catch(() => {});
     }
+
+    expect(
+      Array.from(viewportOverflowViolations),
+      'Mobile horizontal viewport overflow detected during E2E execution.',
+    ).toEqual([]);
 
     expect(
       uncaughtErrors,

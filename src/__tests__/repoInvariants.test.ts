@@ -139,4 +139,42 @@ describe('Repository E2E, CUJ & ADR systemic invariants', () => {
       ).toContain(`[data-theme='${id}']`);
     }
   });
+
+  it('forbids mobile horizontal-overflow CSS footguns (bare 1fr 1fr grids and overflow-x: hidden on html/body)', () => {
+    const collectCssFiles = (dir: string): string[] => {
+      const results: string[] = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          results.push(...collectCssFiles(full));
+        } else if (entry.isFile() && entry.name.endsWith('.css')) {
+          results.push(full);
+        }
+      }
+      return results;
+    };
+
+    const cssFiles = collectCssFiles(path.join(REPO_ROOT, 'src'));
+    expect(cssFiles.length).toBeGreaterThan(0);
+
+    for (const file of cssFiles) {
+      const rel = path.relative(REPO_ROOT, file);
+      const css = fs.readFileSync(file, 'utf8');
+
+      // Bare `1fr 1fr` defaults to minmax(auto, 1fr), allowing wide children to push past 360px phones
+      expect(
+        css,
+        `${rel}: use repeat(N, minmax(0, 1fr)) instead of bare repeated 1fr tracks so mobile viewports never overflow`,
+      ).not.toMatch(/grid-template-columns\s*:\s*[^;]*\b1fr\s+1fr\b/);
+    }
+
+    const globalCss = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/styles/global.css'),
+      'utf8',
+    );
+    expect(
+      globalCss,
+      'src/styles/global.css must use overflow-x: clip (not overflow-x: hidden) so position: sticky headers keep working',
+    ).not.toMatch(/overflow-x\s*:\s*hidden/);
+  });
 });

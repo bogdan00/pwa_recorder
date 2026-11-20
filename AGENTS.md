@@ -37,8 +37,9 @@ StoryTape separates **what users experience** ([`cuj/`](./cuj/README.md)) from *
   - Every `e2e/cuj-*.spec.ts` must import `{ test, expect }` from `./fixtures` (enforced by `src/__tests__/repoInvariants.test.ts`).
   - `e2e/fixtures.ts` enforces:
     1. **External network fence**: aborts and fails any unstubbed request outside `127.0.0.1`/`localhost` so missing third-party mocks fail immediately offline instead of only failing on online CI runners.
-    2. **Zero uncaught `pageerror`**: any uncaught runtime exception fails the test automatically.
-    3. **CDP CPU throttling parity**: `playwright.config.ts` runs timing- and animation-sensitive CUJs (`CUJ-02`, `CUJ-03`) under both `mobile` (`1×`) and `mobile-slow-cpu` (`4×` CPU slowdown) with `retries: 0` and fresh preview server (`PRECHECK=1`) so slow-phone and contended-CI races reproduce locally before push.
+    2. **Global mobile viewport overflow fence**: continuously checks settled layout frames across every screen and sheet visited in any E2E test and fails automatically on horizontal overflow (`scrollX !== 0`, `scrollWidth > clientWidth`, or controls/sheets outside `[0, innerWidth]`).
+    3. **Zero uncaught `pageerror`**: any uncaught runtime exception fails the test automatically.
+    4. **Multi-profile mobile parity**: `playwright.config.ts` runs all specs in `mobile` (`390×844`), layout/header-dense specs (`CUJ-01`, `CUJ-06`, `CUJ-08`, `CUJ-09`) in `mobile-compact` (`360×740`), and timing/animation-sensitive specs (`CUJ-02`, `CUJ-03`) in `mobile-slow-cpu` (`4×` CPU slowdown) with `retries: 0` and fresh preview server (`PRECHECK=1`).
 - **Unit-test real-time animation & async state races deterministically.**
   - Any `requestAnimationFrame` loop, scrub momentum, timer, or async audio/sync transition must have a deterministic Vitest unit/component test (e.g., `src/components/__tests__/WaveformCanvas.test.tsx`) in addition to CUJ E2E coverage.
 - **Parallelize to the maximum.**

@@ -65,6 +65,16 @@ export default defineConfig<StoryTapeTestOptions>({
       },
     },
     {
+      // Verifies narrow 360px phone layouts (including Drive-connected "Synced" / "N to sync"
+      // header pills, Theme Switcher, Settings, ShareSheet, and JoinShareModal) before push.
+      name: 'mobile-compact',
+      testMatch: /cuj-(01|06|08|09)-.*\.spec\.ts/,
+      use: {
+        viewport: { width: 360, height: 740 },
+        cpuThrottleRate: 1,
+      },
+    },
+    {
       // Deterministically reproduces slow mobile phones & contended CI runners locally
       // for real-time audio capture, live waveform rAF, scrub momentum, trim, and undo.
       name: 'mobile-slow-cpu',
