@@ -53,11 +53,33 @@ export interface AudioDeviceSettings {
 }
 
 export type ThemePreference = 'dark' | 'light' | 'system';
+export type ShareAccessRole = 'owner' | 'writer' | 'reader';
+export type DriveLibraryMode = 'personal' | 'shared';
+
+export interface SharedBookLink {
+  folderId: string;
+  title: string;
+  role: 'writer' | 'reader';
+  addedAt: number;
+}
+
+export interface DriveCollaboratorPermission {
+  id: string;
+  type: 'user' | 'group' | 'domain' | 'anyone';
+  role: 'owner' | 'organizer' | 'fileOrganizer' | 'writer' | 'commenter' | 'reader';
+  emailAddress?: string;
+  displayName?: string;
+}
 
 export interface AppSettings {
   googleClientId: string;
+  googleApiKey?: string;
   driveRootFolderName: string;
   driveRootFolderId?: string;
+  driveLibraryMode?: DriveLibraryMode;
+  driveSharedFolderName?: string;
+  driveAccessRole?: ShareAccessRole;
+  sharedBookFolders?: SharedBookLink[];
   defaultNarrator: string;
   theme: ThemePreference;
   keepScreenAwake: boolean;
@@ -81,6 +103,9 @@ export interface BookProject {
   driveFolderId?: string;
   driveMetadataFileId?: string;
   driveCoverFileId?: string;
+  isShared?: boolean;
+  accessRole?: ShareAccessRole;
+  deletedRecordingIds?: string[];
   syncStatus: SyncStatus;
   syncError?: string;
   createdAt: number;
@@ -92,6 +117,7 @@ export interface Recording {
   projectId: string;
   name: string;
   notes: string;
+  recordedBy?: string;
   orderIndex: number;
   durationMs: number;
   mimeType: string;
@@ -152,12 +178,14 @@ export interface DriveProjectMetadataFile {
   coverFileName?: string;
   coverMimeType?: string;
   coverUpdatedAt?: number;
+  deletedRecordingIds?: string[];
   createdAt: number;
   updatedAt: number;
   recordings: Array<{
     id: string;
     name: string;
     notes: string;
+    recordedBy?: string;
     orderIndex: number;
     durationMs: number;
     mimeType: string;

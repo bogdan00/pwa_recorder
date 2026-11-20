@@ -9,13 +9,16 @@ import {
   Plus,
   Search,
   Settings,
+  Users,
   X,
 } from 'lucide-react';
 import type {
   ActiveDraft,
   BookProject,
+  DriveLibraryMode,
   PlaybackProgress,
   Recording,
+  ShareAccessRole,
 } from '../types/models';
 import type { GoogleAuthState } from '../drive/googleAuth';
 import { formatDurationMs, formatHumanDuration } from '../utils/format';
@@ -28,11 +31,15 @@ interface LibraryViewProps {
   progressByProject: Map<string, PlaybackProgress>;
   drafts: ActiveDraft[];
   authState: GoogleAuthState;
+  driveLibraryMode?: DriveLibraryMode;
+  driveSharedFolderName?: string;
+  driveAccessRole?: ShareAccessRole;
   isSyncing: boolean;
   hasMiniPlayer: boolean;
   onOpenBook: (projectId: string) => void;
   onNewBook: () => void;
   onOpenSettings: () => void;
+  onOpenShareLibrary: () => void;
   onSyncNow: () => void;
   onResumeDraft: (draft: ActiveDraft) => void;
   onDiscardDraft: (draftId: string) => void;
@@ -47,11 +54,15 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   progressByProject,
   drafts,
   authState,
+  driveLibraryMode = 'personal',
+  driveSharedFolderName,
+  driveAccessRole = 'owner',
   isSyncing,
   hasMiniPlayer,
   onOpenBook,
   onNewBook,
   onOpenSettings,
+  onOpenShareLibrary,
   onSyncNow,
   onResumeDraft,
   onDiscardDraft,
@@ -118,7 +129,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         p.narrator.toLowerCase().includes(q) ||
         p.dedicatedTo.toLowerCase().includes(q) ||
         p.tags.some((t) => t.toLowerCase().includes(q));
-      const inChapters = recs.some((r) => r.name.toLowerCase().includes(q));
+      const inChapters = recs.some(
+        (r) =>
+          r.name.toLowerCase().includes(q) ||
+          (r.recordedBy?.toLowerCase().includes(q) ?? false),
+      );
       return inBook || inChapters;
     });
 
@@ -199,6 +214,17 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             <button
               type="button"
               className="icon-btn"
+              onClick={onOpenShareLibrary}
+              aria-label="Share family library"
+              id="open-share-library-btn"
+              title="Share family library"
+            >
+              <Users size={19} />
+            </button>
+
+            <button
+              type="button"
+              className="icon-btn"
               onClick={onOpenSettings}
               aria-label="Open settings"
               id="open-settings-btn"
@@ -210,6 +236,34 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       </header>
 
       <main className="app-container library-content">
+        {/* Shared Family Library active banner */}
+        {driveLibraryMode === 'shared' && (
+          <section
+            className="shared-lib-banner"
+            aria-label="Shared family library"
+            data-testid="shared-library-banner"
+          >
+            <div className="shared-lib-banner__text">
+              <span className="shared-lib-banner__title">
+                <Users size={14} />
+                {driveSharedFolderName || 'Shared Family Library'}
+              </span>
+              <span className="shared-lib-banner__sub">
+                {driveAccessRole === 'reader'
+                  ? 'Listener mode (read-only)'
+                  : 'Co-Narrator access · Shared via Google Drive'}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={onOpenSettings}
+            >
+              Manage
+            </button>
+          </section>
+        )}
+
         {/* Crash-recovery draft banner */}
         {latestDraft && draftBook && (
           <section className="draft-banner" aria-label="Unfinished recording draft">
@@ -442,6 +496,18 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                       coverUpdatedAt={project.coverUpdatedAt}
                       progressRatio={progressRatio}
                     />
+                    {project.isShared && (
+                      <span
+                        className="book-card__shared-dot"
+                        title={
+                          project.accessRole === 'reader'
+                            ? 'Shared book (Listener)'
+                            : 'Shared book (Co-Narrator)'
+                        }
+                      >
+                        <Users size={11} />
+                      </span>
+                    )}
                     {project.syncStatus === 'synced' && !hasPending && (
                       <span
                         className="book-card__sync-dot"
@@ -482,17 +548,18 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         )}
       </main>
 
-      {projects.length > 0 && (
-        <button
-          type="button"
-          className={`btn btn-primary library-fab ${hasMiniPlayer ? 'library-fab--raised' : ''}`}
-          onClick={onNewBook}
-          id="new-book-fab"
-        >
-          <Plus size={18} />
-          New Book
-        </button>
-      )}
+      {projects.length > 0 &&
+        !(driveLibraryMode === 'shared' && driveAccessRole === 'reader') && (
+          <button
+            type="button"
+            className={`btn btn-primary library-fab ${hasMiniPlayer ? 'library-fab--raised' : ''}`}
+            onClick={onNewBook}
+            id="new-book-fab"
+          >
+            <Plus size={18} />
+            New Book
+          </button>
+        )}
     </div>
   );
 };

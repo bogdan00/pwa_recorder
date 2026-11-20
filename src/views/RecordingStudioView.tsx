@@ -109,9 +109,10 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     void engineRef.current?.loadDraft(resumeDraftId);
   }, [resumeDraftId]);
 
+  const hasUnsaved = snap.durationMs > 0 || snap.phase === 'recording';
+
   // Warn before accidental browser refresh/close while audio is unsaved
   useEffect(() => {
-    const hasUnsaved = snap.durationMs > 0 || snap.phase === 'recording';
     if (!hasUnsaved) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
@@ -119,7 +120,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [snap.durationMs, snap.phase]);
+  }, [hasUnsaved]);
 
   const isScrubbedBack =
     snap.phase === 'paused' &&
@@ -330,6 +331,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
         {/* Live & Drag-to-Scrub Waveform Canvas */}
         <section className="studio-wave-wrap">
           <WaveformCanvas
+            engine={engineRef.current ?? undefined}
             peaks={snap.peaks}
             durationMs={snap.durationMs}
             playheadMs={snap.playheadMs}

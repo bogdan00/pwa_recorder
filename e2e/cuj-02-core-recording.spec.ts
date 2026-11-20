@@ -33,6 +33,15 @@ test.describe('CUJ-02: Core Audio Recording — Start, Live Waveform, Pause, Saf
       'first recording segment should advance to >= 0.8s',
     );
 
+    // Verify smooth continuous requestAnimationFrame waveform rendering (not 8Hz/120ms stair-stepping)
+    const waveFrames = await page.evaluate(() => {
+      const canvas = document.querySelector<HTMLCanvasElement & { __renderCount?: number }>(
+        '.waveform-canvas',
+      );
+      return canvas?.__renderCount ?? 0;
+    });
+    expect(waveFrames).toBeGreaterThanOrEqual(15);
+
     // 3. Pause -> then Resume (tests 2nd AudioWorklet attach on same AudioContext!)
     await page.locator('#big-record-pause-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');

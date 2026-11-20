@@ -262,6 +262,28 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
         });
       }
 
+      const verifyMatch = url.match(/\/drive\/v3\/files\/([^/?]+)\?fields=/);
+      if (method === 'GET' && verifyMatch) {
+        const id = decodeURIComponent(verifyMatch[1]);
+        const nameMap: Record<string, string> = {
+          'drive-root-1': 'StoryTape Audiobooks',
+          'drive-book-local': 'Local Bedtime Book',
+          'drive-remote-folder': 'Room on the Broom',
+        };
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id,
+            name: nameMap[id] || id,
+            mimeType: 'application/vnd.google-apps.folder',
+            trashed: false,
+            ownedByMe: true,
+            capabilities: { canEdit: true, canAddChildren: true, canShare: true },
+          }),
+        });
+      }
+
       // Default folder lookup -> empty so app creates folders cleanly
       return route.fulfill({
         status: 200,
@@ -297,7 +319,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     // Open Settings -> check setup guide origin -> configure Client ID -> Connect Drive
     await page.getByLabel('Back to library').click();
     await page.locator('#open-settings-btn').click();
-    await page.getByRole('button', { name: /2-Minute Google Drive Setup Guide/i }).click();
+    await page.getByRole('button', { name: /2-Minute Google Drive.*Setup Guide/i }).click();
     await expect(page.locator('.origin-copy-box')).toContainText('http://127.0.0.1:');
 
     await page

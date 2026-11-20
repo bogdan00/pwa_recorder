@@ -1,0 +1,189 @@
+/* ==========================================================================
+   JoinShareModal — Guided Onboarding for Shared StoryTape Libraries & Books
+   ========================================================================== */
+
+.join-share-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.join-share-heading__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-amber-soft);
+  color: var(--accent-amber);
+  flex-shrink: 0;
+}
+
+/* Invite summary card */
+.join-invite-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.join-invite-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.join-invite-card__name {
+  font-family: var(--font-serif);
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--ink-primary);
+  word-break: break-word;
+}
+
+.join-invite-card__desc {
+  font-size: 13.5px;
+  color: var(--ink-secondary);
+  line-height: 1.5;
+}
+
+/* Pre-filled Client ID confirmation pill */
+.join-client-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-sage-soft);
+  color: var(--accent-sage);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.join-client-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+}
+
+/* Step flow indicator */
+.join-steps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.join-step-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.join-step-chip--active {
+  color: var(--accent-amber);
+}
+
+.join-step-chip--done {
+  color: var(--accent-sage);
+}
+
+.join-step-divider {
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+/* Action step card */
+.join-action-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+}
+
+.join-action-card__title {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+
+.join-action-card__desc {
+  font-size: 13px;
+  color: var(--ink-secondary);
+  line-height: 1.45;
+}
+
+.join-action-card__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+/* Google Picker privacy card */
+.join-picker-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  background: var(--accent-amber-soft);
+  border: 1px solid hsla(36 76% 60% / 0.38);
+}
+
+.join-picker-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent-amber);
+}
+
+.join-picker-card__text {
+  font-size: 13.5px;
+  color: var(--ink-primary);
+  line-height: 1.5;
+}
+
+.join-picker-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.join-external-link {
+  text-decoration: none;
+}
+
+/* Inline error alert */
+.join-error-banner {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-danger-soft);
+  border: 1px solid hsla(2 68% 56% / 0.25);
+  color: var(--accent-danger);
+  font-size: 13px;
+  line-height: 1.45;
+}

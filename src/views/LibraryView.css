@@ -89,6 +89,39 @@
   gap: 18px;
 }
 
+/* Shared family library banner */
+.shared-lib-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--accent-sage-soft);
+  border: 1px solid hsla(142 35% 52% / 0.3);
+}
+
+.shared-lib-banner__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.shared-lib-banner__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--accent-sage);
+}
+
+.shared-lib-banner__sub {
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
 /* Recovery banner */
 .draft-banner {
   display: flex;
@@ -319,6 +352,22 @@
 
 .book-card__cover-wrap {
   position: relative;
+}
+
+.book-card__shared-dot {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: hsla(24 20% 8% / 0.72);
+  backdrop-filter: blur(6px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-amber);
 }
 
 .book-card__sync-dot {

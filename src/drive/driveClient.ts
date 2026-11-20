@@ -1,3 +1,5 @@
+import type { DriveCollaboratorPermission } from '../types/models';
+
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
@@ -17,6 +19,14 @@ export interface DriveFileSummary {
   mimeType: string;
   size?: string;
   modifiedTime?: string;
+  ownedByMe?: boolean;
+  shared?: boolean;
+  webViewLink?: string;
+  capabilities?: {
+    canEdit?: boolean;
+    canAddChildren?: boolean;
+    canShare?: boolean;
+  };
 }
 
 function escapeQueryValue(val: string): string {
@@ -73,7 +83,7 @@ export class DriveClient {
       ? ` and '${escapeQueryValue(parentId)}' in parents`
       : ` and 'root' in parents`;
     const q = `name = '${escapeQueryValue(name)}' and mimeType = '${FOLDER_MIME}' and trashed = false${parentClause}`;
-    const url = `${DRIVE_API_BASE}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,modifiedTime)&pageSize=5`;
+    const url = `${DRIVE_API_BASE}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare))&pageSize=5`;
 
     const res = await fetch(url, { headers: this.authHeaders() });
     if (!res.ok) throw await parseErrorResponse(res);
@@ -89,7 +99,7 @@ export class DriveClient {
     if (parentId) metadata.parents = [parentId];
 
     const res = await fetch(
-      `${DRIVE_API_BASE}/files?fields=id,name,mimeType,modifiedTime`,
+      `${DRIVE_API_BASE}/files?fields=id,name,mimeType,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare)`,
       {
         method: 'POST',
         headers: this.authHeaders({ 'Content-Type': 'application/json' }),
@@ -111,13 +121,13 @@ export class DriveClient {
 
   async verifyFileExists(fileId: string): Promise<DriveFileSummary | null> {
     const res = await fetch(
-      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,trashed`,
+      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,trashed,ownedByMe,shared,webViewLink,capabilities(canEdit,canAddChildren,canShare)`,
       { headers: this.authHeaders() },
     );
     if (res.status === 404) return null;
     if (!res.ok) throw await parseErrorResponse(res);
     const data = (await res.json()) as DriveFileSummary & { trashed?: boolean };
-    if (data.trashed) return null;
+    if (!data?.id || data.trashed) return null;
     return data;
   }
 
@@ -129,7 +139,8 @@ export class DriveClient {
       const q = `'${escapeQueryValue(folderId)}' in parents and trashed = false`;
       const params = new URLSearchParams({
         q,
-        fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime)',
+        fields:
+          'nextPageToken,files(id,name,mimeType,size,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare))',
         pageSize: '100',
       });
       if (pageToken) params.set('pageToken', pageToken);
@@ -275,6 +286,108 @@ export class DriveClient {
         method: 'PATCH',
         headers: this.authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ trashed: true }),
+      },
+    );
+    if (!res.ok && res.status !== 404) {
+      throw await parseErrorResponse(res);
+    }
+  }
+
+  // ============================================================================
+  // Multi-User Collaboration & Sharing (Google Drive Permissions API v3)
+  // ============================================================================
+
+  async listPermissions(fileId: string): Promise<DriveCollaboratorPermission[]> {
+    const res = await fetch(
+      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions?fields=permissions(id,type,role,emailAddress,displayName)`,
+      { headers: this.authHeaders() },
+    );
+    if (!res.ok) throw await parseErrorResponse(res);
+    const data = (await res.json()) as {
+      permissions?: DriveCollaboratorPermission[];
+    };
+    return data.permissions ?? [];
+  }
+
+  async shareWithEmail(
+    fileId: string,
+    email: string,
+    role: 'writer' | 'reader',
+    emailMessage?: string,
+  ): Promise<DriveCollaboratorPermission> {
+    const params = new URLSearchParams({
+      sendNotificationEmail: 'true',
+      fields: 'id,type,role,emailAddress,displayName',
+    });
+    if (emailMessage?.trim()) {
+      params.set('emailMessage', emailMessage.trim());
+    }
+    const res = await fetch(
+      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions?${params.toString()}`,
+      {
+        method: 'POST',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          type: 'user',
+          role,
+          emailAddress: email.trim(),
+        }),
+      },
+    );
+    if (!res.ok) throw await parseErrorResponse(res);
+    return (await res.json()) as DriveCollaboratorPermission;
+  }
+
+  async setAnyoneLinkAccess(
+    fileId: string,
+    enabled: boolean,
+    role: 'reader' | 'writer' = 'reader',
+  ): Promise<DriveCollaboratorPermission | null> {
+    const existing = await this.listPermissions(fileId);
+    const anyonePerm = existing.find((p) => p.type === 'anyone');
+
+    if (!enabled) {
+      if (anyonePerm) {
+        await this.removePermission(fileId, anyonePerm.id);
+      }
+      return null;
+    }
+
+    if (anyonePerm) {
+      if (anyonePerm.role === role) return anyonePerm;
+      const patchRes = await fetch(
+        `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(anyonePerm.id)}?fields=id,type,role,emailAddress,displayName`,
+        {
+          method: 'PATCH',
+          headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ role }),
+        },
+      );
+      if (!patchRes.ok) throw await parseErrorResponse(patchRes);
+      return (await patchRes.json()) as DriveCollaboratorPermission;
+    }
+
+    const res = await fetch(
+      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions?fields=id,type,role,emailAddress,displayName`,
+      {
+        method: 'POST',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          type: 'anyone',
+          role,
+        }),
+      },
+    );
+    if (!res.ok) throw await parseErrorResponse(res);
+    return (await res.json()) as DriveCollaboratorPermission;
+  }
+
+  async removePermission(fileId: string, permissionId: string): Promise<void> {
+    const res = await fetch(
+      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(permissionId)}`,
+      {
+        method: 'DELETE',
+        headers: this.authHeaders(),
       },
     );
     if (!res.ok && res.status !== 404) {

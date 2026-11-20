@@ -19,8 +19,9 @@
   - Multi-microphone selector with permission unlock, live hot-plug updates, unplug fallback, and a built-in **Test Mic** dB level meter.
 - **Minimalistic Audiobook Player**:
   - Floating mini-player + serene full-screen Now Playing sheet with waveform scrub bar, `-15s`/`+15s`, chapter auto-advance, playback speed (`0.75×`–`1.5×`), bedtime **Sleep Timer** (`10m`/`15m`/`30m`/`End of Chapter` with soft fade-out), saved resume positions, and iOS/Android lock-screen Media Session controls.
-- **Offline-First Google Drive Sync**:
+- **Offline-First Google Drive Sync & Multi-User Family Sharing**:
   - Stores every book in its own tidy Drive subfolder (`project.json`, `cover.jpg`, `01 - Chapter Name.m4a`) via Google Drive REST API v3 Resumable Uploads (`drive.file` scope).
+  - Share either your entire **Family Library** or an individual **Book** directly in-app: invite collaborators by email as **Co-Narrator** (record & listen) or **Listener** (read-only), toggle *"Anyone with the link can listen"*, send a 1-tap `#/join?...` invite link (with Google Picker folder unlock), merge concurrent multi-narrator chapters safely with per-chapter attribution (`Read by Mom` / `Read by Dad`), and share individual chapters via native mobile Share Sheet.
 
 ---
 
@@ -43,7 +44,7 @@ npm run precheck    # Full pre-submit gate (all four steps above)
 
 ### Customer User Journeys (CUJ) & Pre-Submit Hook
 
-- Every core user journey is documented under [`cuj/`](./cuj/README.md) (`CUJ-01` through `CUJ-08`) and covered by parallel Playwright E2E specs under `e2e/`.
+- Every core user journey is documented under [`cuj/`](./cuj/README.md) (`CUJ-01` through `CUJ-09`) and covered by parallel reactive Playwright E2E specs under `e2e/`.
 - A versioned Git pre-push hook (`.githooks/pre-push`) is automatically enabled during `npm install` (via `prepare` → `git config core.hooksPath .githooks`). Every `git push` runs `npm run precheck` and blocks pushing if typecheck, unit tests, production build, or any CUJ E2E test fails.
 - To activate the hook manually without reinstalling: `git config core.hooksPath .githooks`.
 

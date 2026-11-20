@@ -23,6 +23,7 @@ A parent never loses an in-progress recording if the mobile OS suspends/reloads 
      - Local book folder, `cover.jpg` (if present), `01 - <Chapter>.ext` (resumable upload), and `project.json` are pushed to Drive, flipping local book & chapter sync badges to `Synced`.
      - A remote book present in Drive is pulled into the Library with its chapter marked `cloud_only`.
      - Tapping Play on the `cloud_only` chapter downloads it on demand from Drive, caches it into IndexedDB, and opens playback.
+     - *See also [CUJ-09](./CUJ-09-multi-user-sharing.md) for multi-user family sharing, Google Drive collaborator permissions, conflict-safe co-narration merge, and read-only Listener mode.*
 
 3. **Free Synced Local Audio Cache**
    - In Settings → **Free Cached Audio for Synced Chapters**, tap the button.

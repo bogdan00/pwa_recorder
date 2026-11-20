@@ -14,6 +14,7 @@ import {
   Pencil,
   Play,
   RefreshCw,
+  Share2,
   Trash2,
 } from 'lucide-react';
 import type { Recording } from '../types/models';
@@ -29,11 +30,13 @@ interface RecordingCardProps {
   isLoading: boolean;
   isCompleted: boolean;
   canSyncDrive: boolean;
+  isReadOnly?: boolean;
   onPlay: () => void;
   onRename: (newName: string) => Promise<void>;
   onMoveUp: () => Promise<void>;
   onMoveDown: () => Promise<void>;
   onDownloadLocal: () => Promise<void>;
+  onShareAudio?: () => Promise<void>;
   onRetrySync: () => Promise<void>;
   onDelete: () => Promise<void>;
 }
@@ -47,11 +50,13 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
   isLoading,
   isCompleted,
   canSyncDrive,
+  isReadOnly = false,
   onPlay,
   onRename,
   onMoveUp,
   onMoveDown,
   onDownloadLocal,
+  onShareAudio,
   onRetrySync,
   onDelete,
 }) => {
@@ -210,6 +215,12 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
                     <span>Stereo</span>
                   </>
                 )}
+                {recording.recordedBy && (
+                  <>
+                    <span className="rec-card__dot">·</span>
+                    <span>Read by {recording.recordedBy}</span>
+                  </>
+                )}
               </div>
               {recording.notes && (
                 <span className="rec-card__notes">{recording.notes}</span>
@@ -233,45 +244,63 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
 
               {menuOpen && (
                 <div className="rec-menu" role="menu">
-                  <button
-                    type="button"
-                    className="rec-menu__item"
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setDraftName(recording.name);
-                      setRenaming(true);
-                    }}
-                  >
-                    <Pencil size={15} />
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    className="rec-menu__item"
-                    role="menuitem"
-                    disabled={index === 0}
-                    onClick={() => {
-                      setMenuOpen(false);
-                      void onMoveUp();
-                    }}
-                  >
-                    <ArrowUp size={15} />
-                    Move Up
-                  </button>
-                  <button
-                    type="button"
-                    className="rec-menu__item"
-                    role="menuitem"
-                    disabled={index >= totalCount - 1}
-                    onClick={() => {
-                      setMenuOpen(false);
-                      void onMoveDown();
-                    }}
-                  >
-                    <ArrowDown size={15} />
-                    Move Down
-                  </button>
+                  {!isReadOnly && (
+                    <>
+                      <button
+                        type="button"
+                        className="rec-menu__item"
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          setDraftName(recording.name);
+                          setRenaming(true);
+                        }}
+                      >
+                        <Pencil size={15} />
+                        Rename
+                      </button>
+                      <button
+                        type="button"
+                        className="rec-menu__item"
+                        role="menuitem"
+                        disabled={index === 0}
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void onMoveUp();
+                        }}
+                      >
+                        <ArrowUp size={15} />
+                        Move Up
+                      </button>
+                      <button
+                        type="button"
+                        className="rec-menu__item"
+                        role="menuitem"
+                        disabled={index >= totalCount - 1}
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void onMoveDown();
+                        }}
+                      >
+                        <ArrowDown size={15} />
+                        Move Down
+                      </button>
+                    </>
+                  )}
+                  {onShareAudio && (
+                    <button
+                      type="button"
+                      className="rec-menu__item"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void onShareAudio();
+                      }}
+                    >
+                      <Share2 size={15} />
+                      Share Audio
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="rec-menu__item"
@@ -284,7 +313,8 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
                     <Download size={15} />
                     Download Audio
                   </button>
-                  {canSyncDrive &&
+                  {!isReadOnly &&
+                    canSyncDrive &&
                     recording.syncStatus !== 'synced' &&
                     recording.syncStatus !== 'cloud_only' && (
                       <button
@@ -300,18 +330,20 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
                         Sync to Drive
                       </button>
                     )}
-                  <button
-                    type="button"
-                    className="rec-menu__item rec-menu__item--danger"
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      void onDelete();
-                    }}
-                  >
-                    <Trash2 size={15} />
-                    Delete
-                  </button>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      className="rec-menu__item rec-menu__item--danger"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void onDelete();
+                      }}
+                    >
+                      <Trash2 size={15} />
+                      Delete
+                    </button>
+                  )}
                 </div>
               )}
             </div>

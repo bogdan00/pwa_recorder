@@ -28,11 +28,21 @@ export function getDefaultSettings(): AppSettings {
       import.meta.env &&
       import.meta.env.VITE_GOOGLE_CLIENT_ID) ||
     '';
+  const envApiKey =
+    (typeof import.meta !== 'undefined' &&
+      import.meta.env &&
+      import.meta.env.VITE_GOOGLE_API_KEY) ||
+    '';
 
   return {
     googleClientId: envClientId.trim(),
+    googleApiKey: envApiKey.trim(),
     driveRootFolderName: 'StoryTape Audiobooks',
     driveRootFolderId: undefined,
+    driveLibraryMode: 'personal',
+    driveSharedFolderName: undefined,
+    driveAccessRole: 'owner',
+    sharedBookFolders: [],
     defaultNarrator: '',
     theme: 'dark',
     keepScreenAwake: true,
@@ -55,8 +65,15 @@ export function loadSettings(): AppSettings {
       ...parsed,
       googleClientId:
         parsed.googleClientId?.trim() || defaults.googleClientId,
+      googleApiKey:
+        parsed.googleApiKey?.trim() || defaults.googleApiKey || '',
       driveRootFolderName:
         parsed.driveRootFolderName?.trim() || defaults.driveRootFolderName,
+      driveLibraryMode:
+        parsed.driveLibraryMode === 'shared' ? 'shared' : 'personal',
+      sharedBookFolders: Array.isArray(parsed.sharedBookFolders)
+        ? parsed.sharedBookFolders
+        : [],
       audioQuality: {
         ...defaults.audioQuality,
         ...(parsed.audioQuality ?? {}),

@@ -32,12 +32,28 @@ export interface StudioSnapshot {
   draftId: string | null;
 }
 
+export interface LiveWaveformState {
+  phase: StudioPhase;
+  durationMs: number;
+  playheadMs: number;
+  liveLevel: number;
+  peaks: readonly number[];
+  lastChunkPerfMs: number;
+  isLiveClockActive: boolean;
+}
+
 export interface StartRecordingFeedback {
   usedFallbackDevice: boolean;
   fallbackReason?: string;
 }
 
 const DRAFT_FLUSH_SECONDS = 2;
+const LIVE_EMIT_INTERVAL_MS = 65; // ~15 Hz React UI updates during live capture/preview
+const EMPTY_PEAKS: readonly number[] = [];
+
+function nowPerfMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
 
 export class RecordingEngine {
   private projectId: string;
@@ -46,6 +62,9 @@ export class RecordingEngine {
   private timeline: PcmTimeline | null = null;
   private playheadMs = 0;
   private liveLevel = 0;
+  private lastChunkPerfMs = 0;
+  private lastEmitPerfMs = 0;
+  private hasEmittedFirstChunkInSession = false;
 
   // Capture graph
   private audioCtx: AudioContext | null = null;
@@ -103,7 +122,44 @@ export class RecordingEngine {
     };
   }
 
+  /**
+   * Zero-copy live waveform state read directly from the canvas rAF loop
+   * at 60/120 fps without triggering React re-renders or copying the peaks array.
+   */
+  getLiveRenderState(): LiveWaveformState {
+    const durationMs = this.timeline?.getDurationMs() ?? 0;
+    let playheadMs = this.playheadMs;
+    let isLiveClockActive = false;
+
+    if (this.phase === 'recording' && this.timeline) {
+      isLiveClockActive = true;
+    } else if (
+      this.phase === 'playing' &&
+      this.audioCtx &&
+      this.timeline &&
+      this.previewSource
+    ) {
+      const elapsedMs = Math.max(
+        0,
+        (this.audioCtx.currentTime - this.previewStartCtxTime) * 1000,
+      );
+      playheadMs = Math.min(durationMs, this.previewStartOffsetMs + elapsedMs);
+      isLiveClockActive = true;
+    }
+
+    return {
+      phase: this.phase,
+      durationMs,
+      playheadMs,
+      liveLevel: this.liveLevel,
+      peaks: this.timeline ? this.timeline.getPeaks() : EMPTY_PEAKS,
+      lastChunkPerfMs: this.lastChunkPerfMs,
+      isLiveClockActive,
+    };
+  }
+
   private emit(): void {
+    this.lastEmitPerfMs = nowPerfMs();
     const snap = this.getSnapshot();
     this.listeners.forEach((fn) => fn(snap));
   }
@@ -257,6 +313,7 @@ export class RecordingEngine {
     this.previewSource = source;
     this.previewStartCtxTime = ctx.currentTime;
     this.previewStartOffsetMs = this.playheadMs;
+    this.lastChunkPerfMs = nowPerfMs();
     this.phase = 'playing';
 
     source.onended = () => {
@@ -281,7 +338,9 @@ export class RecordingEngine {
         this.timeline.getDurationMs(),
         this.previewStartOffsetMs + elapsedMs,
       );
-      this.emit();
+      if (nowPerfMs() - this.lastEmitPerfMs >= LIVE_EMIT_INTERVAL_MS) {
+        this.emit();
+      }
       this.previewRafId = window.requestAnimationFrame(step);
     };
     this.previewRafId = window.requestAnimationFrame(step);
@@ -367,6 +426,9 @@ export class RecordingEngine {
     this.phase = 'idle';
     this.playheadMs = 0;
     this.liveLevel = 0;
+    this.lastChunkPerfMs = 0;
+    this.lastEmitPerfMs = 0;
+    this.hasEmittedFirstChunkInSession = false;
     this.pendingPersistBuffers = [];
     this.pendingPersistSamples = 0;
     this.persistedChunkCount = 0;
@@ -487,7 +549,13 @@ export class RecordingEngine {
 
     this.phase = 'recording';
     this.playheadMs = this.timeline.getDurationMs();
+    const startPerf = nowPerfMs();
+    this.lastChunkPerfMs = startPerf;
+    this.hasEmittedFirstChunkInSession = false;
     await this.requestWakeLock();
+    if (this.lastChunkPerfMs === startPerf) {
+      this.lastChunkPerfMs = nowPerfMs();
+    }
     this.emit();
 
     return {
@@ -619,9 +687,11 @@ export class RecordingEngine {
     liveLevel: number,
   ): void {
     if (!this.timeline) return;
+    const now = nowPerfMs();
     this.timeline.appendFrames(interleaved, peaks);
     this.playheadMs = this.timeline.getDurationMs();
     this.liveLevel = Math.min(1, Math.max(0, liveLevel || 0));
+    this.lastChunkPerfMs = now;
 
     // Buffer for crash-safe 2-second IndexedDB flushes
     this.pendingPersistBuffers.push(interleaved);
@@ -633,7 +703,13 @@ export class RecordingEngine {
       void this.flushPendingDraftToDb();
     }
 
-    this.emit();
+    if (
+      !this.hasEmittedFirstChunkInSession ||
+      now - this.lastEmitPerfMs >= LIVE_EMIT_INTERVAL_MS
+    ) {
+      this.hasEmittedFirstChunkInSession = true;
+      this.emit();
+    }
   }
 
   private teardownMicCapture(): void {

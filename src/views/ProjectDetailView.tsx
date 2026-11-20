@@ -7,6 +7,8 @@ import {
   Loader2,
   Mic,
   Pencil,
+  Share2,
+  Users,
 } from 'lucide-react';
 import type {
   BookProject,
@@ -28,11 +30,13 @@ interface ProjectDetailViewProps {
   hasMiniPlayer: boolean;
   onBack: () => void;
   onEditBook: () => void;
+  onShareBook: () => void;
   onStartRecording: () => void;
   onSyncProject: () => void;
   onRenameRecording: (recordingId: string, newName: string) => Promise<void>;
   onReorderRecordings: (orderedIds: string[]) => Promise<void>;
   onDownloadRecording: (recording: Recording) => Promise<void>;
+  onShareRecording: (recording: Recording) => Promise<void>;
   onDeleteRecording: (recordingId: string) => Promise<void>;
 }
 
@@ -45,25 +49,29 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   hasMiniPlayer,
   onBack,
   onEditBook,
+  onShareBook,
   onStartRecording,
   onSyncProject,
   onRenameRecording,
   onReorderRecordings,
   onDownloadRecording,
+  onShareRecording,
   onDeleteRecording,
 }) => {
   const player = usePlayer();
   const totalMs = recordings.reduce((acc, r) => acc + r.durationMs, 0);
   const completedIds = new Set(progress?.completedRecordingIds ?? []);
+  const isReadOnly = project.accessRole === 'reader';
 
   const hasPendingSync =
-    project.syncStatus !== 'synced' ||
-    recordings.some(
-      (r) =>
-        r.syncStatus === 'pending_upload' ||
-        r.syncStatus === 'local_only' ||
-        r.syncStatus === 'error',
-    );
+    !isReadOnly &&
+    (project.syncStatus !== 'synced' ||
+      recordings.some(
+        (r) =>
+          r.syncStatus === 'pending_upload' ||
+          r.syncStatus === 'local_only' ||
+          r.syncStatus === 'error',
+      ));
 
   const handleMove = async (fromIndex: number, delta: -1 | 1) => {
     const toIndex = fromIndex + delta;
@@ -106,19 +114,38 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 ) : (
                   <Cloud size={14} />
                 )}
-                {isSyncing ? 'Syncing' : hasPendingSync ? 'Sync' : 'Synced'}
+                {isSyncing
+                  ? 'Syncing'
+                  : isReadOnly
+                    ? 'Refresh'
+                    : hasPendingSync
+                      ? 'Sync'
+                      : 'Synced'}
               </button>
             )}
 
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={onEditBook}
-              id="edit-book-btn"
+              onClick={onShareBook}
+              id="share-book-btn"
+              aria-label="Share book"
             >
-              <Pencil size={14} />
-              Edit
+              <Share2 size={14} />
+              Share
             </button>
+
+            {!isReadOnly && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={onEditBook}
+                id="edit-book-btn"
+              >
+                <Pencil size={14} />
+                Edit
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -147,8 +174,17 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               {project.language && <span>{project.language}</span>}
             </div>
 
-            {project.tags.length > 0 && (
+            {(project.tags.length > 0 || project.isShared) && (
               <div className="project-hero__tags">
+                {project.isShared && (
+                  <span
+                    className={`badge ${isReadOnly ? 'badge-amber' : 'badge-sage'}`}
+                    data-testid="book-shared-role-badge"
+                  >
+                    <Users size={11} />
+                    {isReadOnly ? 'Shared · Listener' : 'Shared · Co-Narrator'}
+                  </span>
+                )}
                 {project.tags.map((tag) => (
                   <span key={tag} className="badge">
                     {tag}
@@ -163,14 +199,24 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
           <p className="project-hero__desc">{project.description}</p>
         )}
 
+        {isReadOnly && (
+          <div className="project-readonly-banner" role="status">
+            <Headphones size={16} />
+            <span>
+              <strong>Listener mode</strong> — This shared book is read-only. You
+              can listen, stream, and download chapters anytime.
+            </span>
+          </div>
+        )}
+
         {/* Primary Listen + Record CTAs */}
         <div
-          className={`project-cta-row ${recordings.length > 0 ? 'project-cta-row--dual' : ''}`}
+          className={`project-cta-row ${recordings.length > 0 && !isReadOnly ? 'project-cta-row--dual' : ''}`}
         >
           {recordings.length > 0 && (
             <button
               type="button"
-              className="btn btn-secondary"
+              className={`btn ${isReadOnly ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() =>
                 void player.playBook(project, {
                   resumeSaved: true,
@@ -184,15 +230,17 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             </button>
           )}
 
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={onStartRecording}
-            id="record-chapter-btn"
-          >
-            <Mic size={18} />
-            {recordings.length > 0 ? 'Record Chapter' : 'Record First Chapter'}
-          </button>
+          {!isReadOnly && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onStartRecording}
+              id="record-chapter-btn"
+            >
+              <Mic size={18} />
+              {recordings.length > 0 ? 'Record Chapter' : 'Record First Chapter'}
+            </button>
+          )}
         </div>
 
         {/* Chapters list */}
@@ -208,8 +256,14 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
           {recordings.length === 0 ? (
             <div className="chapters-empty">
-              No chapters recorded yet. Tap <strong>Record First Chapter</strong>{' '}
-              above to open the recording studio.
+              {isReadOnly ? (
+                <>No chapters have been uploaded to this shared book yet.</>
+              ) : (
+                <>
+                  No chapters recorded yet. Tap <strong>Record First Chapter</strong>{' '}
+                  above to open the recording studio.
+                </>
+              )}
             </div>
           ) : (
             <div className="chapters-list">
@@ -226,6 +280,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                     isLoading={isActive && player.isLoading}
                     isCompleted={completedIds.has(rec.id)}
                     canSyncDrive={canSyncDrive}
+                    isReadOnly={isReadOnly}
                     onPlay={() =>
                       void player.playChapter(project, recordings, rec.id, false)
                     }
@@ -233,6 +288,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                     onMoveUp={() => handleMove(idx, -1)}
                     onMoveDown={() => handleMove(idx, 1)}
                     onDownloadLocal={() => onDownloadRecording(rec)}
+                    onShareAudio={() => onShareRecording(rec)}
                     onRetrySync={async () => onSyncProject()}
                     onDelete={() => onDeleteRecording(rec.id)}
                   />

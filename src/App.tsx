@@ -5,6 +5,7 @@ import type {
   BookProject,
   PlaybackProgress,
   Recording,
+  SharedBookLink,
 } from './types/models';
 import {
   clearSyncedAudioCache,
@@ -27,10 +28,19 @@ import {
   loadSettings,
   saveSettings,
 } from './storage/settings';
-import { DriveClient } from './drive/driveClient';
+import { DriveApiError, DriveClient } from './drive/driveClient';
 import { googleAuth, type GoogleAuthState } from './drive/googleAuth';
+import { pickSharedDriveFolder } from './drive/googlePicker';
+import {
+  type JoinShareInvite,
+  parseJoinInviteInput,
+  shareAudioChapter,
+} from './drive/shareUtils';
 import {
   downloadCloudRecording,
+  ensureShareableBookFolder,
+  ensureShareableLibraryFolder,
+  inspectSharedDriveFolder,
   syncAllWithDrive,
   syncSingleProjectWithDrive,
 } from './drive/syncService';
@@ -44,7 +54,9 @@ import {
   type BookFormSubmission,
 } from './components/BookEditorSheet';
 import { AudioPlayerSheet } from './components/AudioPlayerSheet';
+import { JoinShareModal } from './components/JoinShareModal';
 import { MiniPlayerBar } from './components/MiniPlayerBar';
+import { ShareSheet } from './components/ShareSheet';
 import { LibraryView } from './views/LibraryView';
 import { ProjectDetailView } from './views/ProjectDetailView';
 import {
@@ -58,6 +70,10 @@ type Route =
   | { view: 'library' }
   | { view: 'book'; projectId: string }
   | { view: 'record'; projectId: string; draftId?: string | null };
+
+type ShareTarget =
+  | { scope: 'library' }
+  | { scope: 'book'; projectId: string };
 
 interface ToastItem {
   id: string;
@@ -83,6 +99,12 @@ function parseHashRoute(): Route {
     };
   }
   return { view: 'library' };
+}
+
+function parseJoinInviteFromHash(): JoinShareInvite | null {
+  if (typeof window === 'undefined') return null;
+  if (!window.location.hash.includes('/join')) return null;
+  return parseJoinInviteInput(window.location.hash);
 }
 
 function serializeRoute(route: Route): string {
@@ -126,6 +148,10 @@ const StoryTapeShell: React.FC<AppProps> = ({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bookEditorOpen, setBookEditorOpen] = useState(false);
   const [editingBook, setEditingBook] = useState<BookProject | null>(null);
+  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
+  const [pendingJoinInvite, setPendingJoinInvite] =
+    useState<JoinShareInvite | null>(() => parseJoinInviteFromHash());
+  const [isJoiningShare, setIsJoiningShare] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(
     null,
@@ -133,6 +159,8 @@ const StoryTapeShell: React.FC<AppProps> = ({
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const toastTimersRef = useRef<Map<string, number>>(new Map());
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   const showToast = useCallback(
     (message: string, actionLabel?: string, onAction?: () => void) => {
@@ -157,6 +185,12 @@ const StoryTapeShell: React.FC<AppProps> = ({
     };
   }, []);
 
+  const handleUpdateSettings = useCallback((next: AppSettings) => {
+    settingsRef.current = next;
+    setSettings(next);
+    saveSettings(next);
+  }, []);
+
   const navigate = useCallback((next: Route) => {
     const hash = serializeRoute(next);
     if (window.location.hash !== hash) {
@@ -165,8 +199,27 @@ const StoryTapeShell: React.FC<AppProps> = ({
     setRoute(next);
   }, []);
 
+  // Pre-fill Google OAuth Client ID if opened via a StoryTape invite link
   useEffect(() => {
-    const onHashChange = () => setRoute(parseHashRoute());
+    if (
+      pendingJoinInvite?.clientId &&
+      !settingsRef.current.googleClientId.trim()
+    ) {
+      handleUpdateSettings({
+        ...settingsRef.current,
+        googleClientId: pendingJoinInvite.clientId,
+      });
+    }
+  }, [handleUpdateSettings, pendingJoinInvite]);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const invite = parseJoinInviteFromHash();
+      if (invite) {
+        setPendingJoinInvite(invite);
+      }
+      setRoute(parseHashRoute());
+    };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
@@ -207,11 +260,6 @@ const StoryTapeShell: React.FC<AppProps> = ({
     return googleAuth.subscribe(setAuthState);
   }, [settings.googleClientId]);
 
-  const handleUpdateSettings = useCallback((next: AppSettings) => {
-    setSettings(next);
-    saveSettings(next);
-  }, []);
-
   // Derived maps
   const recordingsByProject = useMemo(() => {
     const map = new Map<string, Recording[]>();
@@ -233,57 +281,68 @@ const StoryTapeShell: React.FC<AppProps> = ({
   }, [progressList]);
 
   // Sync handlers
-  const handleSyncAll = useCallback(async () => {
-    if (isSyncing) return;
-    if (!googleAuth.hasValidToken()) {
-      setSettingsOpen(true);
-      showToast('Connect Google Drive in Settings to sync');
-      return;
-    }
+  const handleSyncAll = useCallback(
+    async (overrideSettings?: AppSettings) => {
+      if (isSyncing) return;
+      if (!googleAuth.hasValidToken()) {
+        setSettingsOpen(true);
+        showToast('Connect Google Drive in Settings to sync');
+        return;
+      }
 
-    setIsSyncing(true);
-    setSyncStatusMessage('Syncing with Google Drive…');
-    try {
-      const result = await syncAllWithDrive(settings, (u) =>
-        setSyncStatusMessage(u.message),
-      );
-      if (result.rootFolderId !== settings.driveRootFolderId) {
-        handleUpdateSettings({
-          ...settings,
-          driveRootFolderId: result.rootFolderId,
-        });
-      }
-      await reloadData();
-      if (result.errors.length > 0) {
-        showToast(`Synced with ${result.errors.length} error(s)`);
-      } else {
-        showToast(
-          result.pushedRecordings > 0 || result.pulledProjects > 0
-            ? `Drive synced (${result.pushedRecordings} uploaded, ${result.pulledProjects} pulled)`
-            : 'Google Drive is up to date',
+      const activeSettings = overrideSettings ?? settingsRef.current;
+      setIsSyncing(true);
+      setSyncStatusMessage('Syncing with Google Drive…');
+      try {
+        const result = await syncAllWithDrive(activeSettings, (u) =>
+          setSyncStatusMessage(u.message),
         );
+        if (
+          result.rootFolderId !== activeSettings.driveRootFolderId ||
+          result.rootAccessRole !== activeSettings.driveAccessRole
+        ) {
+          handleUpdateSettings({
+            ...activeSettings,
+            driveRootFolderId: result.rootFolderId,
+            driveAccessRole: result.rootAccessRole,
+          });
+        }
+        await reloadData();
+        if (result.errors.length > 0) {
+          showToast(`Synced with ${result.errors.length} error(s)`);
+        } else {
+          showToast(
+            result.pushedRecordings > 0 || result.pulledProjects > 0
+              ? `Drive synced (${result.pushedRecordings} uploaded, ${result.pulledProjects} pulled)`
+              : 'Google Drive is up to date',
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Google Drive sync failed';
+        setSyncStatusMessage(msg);
+        showToast(msg);
+      } finally {
+        setIsSyncing(false);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Google Drive sync failed';
-      setSyncStatusMessage(msg);
-      showToast(msg);
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [handleUpdateSettings, isSyncing, reloadData, settings, showToast]);
+    },
+    [handleUpdateSettings, isSyncing, reloadData, showToast],
+  );
 
   const handleSyncProject = useCallback(
     async (projectId: string, silent = false) => {
       if (!googleAuth.hasValidToken()) return;
+      const activeSettings = settingsRef.current;
       setIsSyncing(true);
       setSyncStatusMessage('Syncing book to Google Drive…');
       try {
-        const res = await syncSingleProjectWithDrive(projectId, settings, (u) =>
-          setSyncStatusMessage(u.message),
+        const res = await syncSingleProjectWithDrive(
+          projectId,
+          activeSettings,
+          (u) => setSyncStatusMessage(u.message),
         );
-        if (res.rootFolderId !== settings.driveRootFolderId) {
+        if (res.rootFolderId !== activeSettings.driveRootFolderId) {
           handleUpdateSettings({
-            ...settings,
+            ...activeSettings,
             driveRootFolderId: res.rootFolderId,
           });
         }
@@ -297,11 +356,11 @@ const StoryTapeShell: React.FC<AppProps> = ({
         setIsSyncing(false);
       }
     },
-    [handleUpdateSettings, reloadData, settings, showToast],
+    [handleUpdateSettings, reloadData, showToast],
   );
 
   // Must invoke googleAuth.requestSignIn() synchronously inside button click for iOS PWA
-  const handleConnectDrive = () => {
+  const handleConnectDrive = (options?: { skipAutoSync?: boolean }) => {
     void googleAuth
       .requestSignIn()
       .then(async (token) => {
@@ -313,12 +372,178 @@ const StoryTapeShell: React.FC<AppProps> = ({
           // Optional user profile fetch
         }
         showToast('Connected to Google Drive');
-        await handleSyncAll();
+        if (!options?.skipAutoSync) {
+          await handleSyncAll();
+        }
       })
       .catch((err) => {
         showToast(err instanceof Error ? err.message : 'Sign-in cancelled');
       });
   };
+
+  // Multi-user sharing & join handlers
+  const clearJoinHash = useCallback(() => {
+    if (window.location.hash.includes('/join')) {
+      window.location.hash = '#/';
+    }
+  }, []);
+
+  const handleJoinFolder = useCallback(
+    async (options: {
+      folderId: string;
+      name: string;
+      scope: 'library' | 'book';
+      role: 'writer' | 'reader';
+    }): Promise<{ ok: boolean; needsPicker?: boolean; error?: string }> => {
+      if (!googleAuth.hasValidToken()) {
+        return { ok: false, error: 'Please connect Google Drive first.' };
+      }
+
+      setIsJoiningShare(true);
+      try {
+        const info = await inspectSharedDriveFolder(options.folderId);
+        const resolvedScope = info.scope || options.scope;
+        const resolvedRole: 'writer' | 'reader' =
+          info.accessRole === 'reader' ? 'reader' : 'writer';
+        const resolvedName = info.name || options.name || 'Shared Audiobooks';
+
+        let nextSettings: AppSettings;
+        if (resolvedScope === 'book') {
+          const existing = settingsRef.current.sharedBookFolders ?? [];
+          const nextEntry: SharedBookLink = {
+            folderId: info.folderId,
+            title: resolvedName,
+            role: resolvedRole,
+            addedAt: Date.now(),
+          };
+          const filtered = existing.filter((b) => b.folderId !== info.folderId);
+          nextSettings = {
+            ...settingsRef.current,
+            sharedBookFolders: [...filtered, nextEntry],
+          };
+        } else {
+          nextSettings = {
+            ...settingsRef.current,
+            driveLibraryMode: 'shared',
+            driveRootFolderId: info.folderId,
+            driveSharedFolderName: resolvedName,
+            driveAccessRole: info.accessRole,
+          };
+        }
+
+        handleUpdateSettings(nextSettings);
+        setPendingJoinInvite(null);
+        clearJoinHash();
+
+        await handleSyncAll(nextSettings);
+        showToast(
+          resolvedScope === 'book'
+            ? `Joined shared book "${resolvedName}"`
+            : `Connected to shared library "${resolvedName}"`,
+        );
+        return { ok: true };
+      } catch (err) {
+        if (err instanceof DriveApiError && (err.status === 404 || err.status === 403)) {
+          return {
+            ok: false,
+            needsPicker: true,
+            error:
+              'Google Drive requires you to pick this shared folder once so StoryTape can access it safely.',
+          };
+        }
+        const msg =
+          err instanceof Error ? err.message : 'Could not link shared folder.';
+        showToast(msg);
+        return { ok: false, error: msg };
+      } finally {
+        setIsJoiningShare(false);
+      }
+    },
+    [clearJoinHash, handleSyncAll, handleUpdateSettings, showToast],
+  );
+
+  const handleJoinSharedFolderFromSettings = useCallback(
+    async (rawInput: string) => {
+      const invite = parseJoinInviteInput(rawInput);
+      if (!invite) {
+        showToast('Paste a valid StoryTape invite link or Google Drive folder URL');
+        return;
+      }
+      if (invite.clientId && !settingsRef.current.googleClientId.trim()) {
+        handleUpdateSettings({
+          ...settingsRef.current,
+          googleClientId: invite.clientId,
+        });
+      }
+      if (!googleAuth.hasValidToken()) {
+        setSettingsOpen(false);
+        setPendingJoinInvite(invite);
+        return;
+      }
+      const res = await handleJoinFolder(invite);
+      if (!res.ok && res.needsPicker) {
+        setSettingsOpen(false);
+        setPendingJoinInvite(invite);
+      }
+    },
+    [handleJoinFolder, handleUpdateSettings, showToast],
+  );
+
+  const handlePickSharedFolder = useCallback(async () => {
+    const token = googleAuth.getAccessToken();
+    if (!token) {
+      showToast('Connect Google Drive first');
+      return;
+    }
+    try {
+      const picked = await pickSharedDriveFolder({
+        accessToken: token,
+        apiKey: settingsRef.current.googleApiKey,
+        clientId: settingsRef.current.googleClientId,
+        title: 'Select Shared StoryTape Folder',
+      });
+      if (!picked) return;
+      await handleJoinFolder({
+        folderId: picked.folderId,
+        name: picked.name,
+        scope: 'library',
+        role: 'writer',
+      });
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Could not open Google Picker',
+      );
+    }
+  }, [handleJoinFolder, showToast]);
+
+  const handleSwitchToPersonalLibrary = useCallback(async () => {
+    const nextSettings: AppSettings = {
+      ...settingsRef.current,
+      driveLibraryMode: 'personal',
+      driveRootFolderId: undefined,
+      driveSharedFolderName: undefined,
+      driveAccessRole: 'owner',
+    };
+    handleUpdateSettings(nextSettings);
+    showToast('Switched back to your personal Drive library');
+    if (googleAuth.hasValidToken()) {
+      await handleSyncAll(nextSettings);
+    }
+  }, [handleSyncAll, handleUpdateSettings, showToast]);
+
+  const handleUnlinkSharedBook = useCallback(
+    (folderId: string) => {
+      const nextLinks = (settingsRef.current.sharedBookFolders ?? []).filter(
+        (b) => b.folderId !== folderId,
+      );
+      handleUpdateSettings({
+        ...settingsRef.current,
+        sharedBookFolders: nextLinks,
+      });
+      showToast('Unlinked shared book from Drive sync');
+    },
+    [handleUpdateSettings, showToast],
+  );
 
   // Book CRUD
   const handleSaveBook = async (data: BookFormSubmission) => {
@@ -359,6 +584,9 @@ const StoryTapeShell: React.FC<AppProps> = ({
       driveMetadataFileId: editingBook?.driveMetadataFileId,
       driveCoverFileId:
         data.coverChange === 'remove' ? undefined : editingBook?.driveCoverFileId,
+      isShared: editingBook?.isShared ?? settings.driveLibraryMode === 'shared',
+      accessRole: editingBook?.accessRole ?? 'owner',
+      deletedRecordingIds: editingBook?.deletedRecordingIds,
       syncStatus: googleAuth.hasValidToken() ? 'pending_upload' : 'local_only',
       createdAt: editingBook?.createdAt ?? now,
       updatedAt: now,
@@ -378,7 +606,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
       navigate({ view: 'book', projectId: savedProject.id });
     }
 
-    if (googleAuth.hasValidToken() && navigator.onLine) {
+    if (googleAuth.hasValidToken()) {
       void handleSyncProject(savedProject.id, true);
     }
   };
@@ -401,11 +629,18 @@ const StoryTapeShell: React.FC<AppProps> = ({
     const existing = recordingsByProject.get(project.id) ?? [];
     const now = Date.now();
     const orderIndex = existing.length;
+    const narratorAttribution =
+      settings.defaultNarrator.trim() ||
+      authState.userName?.trim() ||
+      project.narrator.trim() ||
+      undefined;
+
     const rec: Recording = {
       id: createId('rec'),
       projectId: project.id,
       name: saved.name,
       notes: saved.notes,
+      recordedBy: narratorAttribution,
       orderIndex,
       durationMs: saved.durationMs,
       mimeType: saved.mimeType,
@@ -439,7 +674,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
     navigate({ view: 'book', projectId: project.id });
     showToast(`Saved "${rec.name}"`);
 
-    if (googleAuth.hasValidToken() && navigator.onLine) {
+    if (googleAuth.hasValidToken()) {
       void handleSyncProject(project.id, true);
     }
   };
@@ -461,7 +696,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
     await putProject({ ...project, updatedAt: now });
     await reloadData();
     await player.refreshChaptersForProject(project.id);
-    if (googleAuth.hasValidToken() && navigator.onLine) {
+    if (googleAuth.hasValidToken()) {
       void handleSyncProject(project.id, true);
     }
   };
@@ -474,18 +709,23 @@ const StoryTapeShell: React.FC<AppProps> = ({
     await putProject({ ...project, updatedAt: Date.now() });
     await reloadData();
     await player.refreshChaptersForProject(project.id);
-    if (googleAuth.hasValidToken() && navigator.onLine) {
+    if (googleAuth.hasValidToken()) {
       void handleSyncProject(project.id, true);
     }
   };
 
+  const resolveRecordingBlob = async (recording: Recording): Promise<Blob | null> => {
+    let blob = await getRecordingBlob(recording.id);
+    if (!blob && recording.syncStatus === 'cloud_only') {
+      blob = await downloadCloudRecording(recording.id);
+      await reloadData();
+    }
+    return blob ?? null;
+  };
+
   const handleDownloadRecording = async (recording: Recording) => {
     try {
-      let blob = await getRecordingBlob(recording.id);
-      if (!blob && recording.syncStatus === 'cloud_only') {
-        blob = await downloadCloudRecording(recording.id);
-        await reloadData();
-      }
+      const blob = await resolveRecordingBlob(recording);
       if (!blob) {
         showToast('Audio file not available locally');
         return;
@@ -507,16 +747,54 @@ const StoryTapeShell: React.FC<AppProps> = ({
     }
   };
 
+  const handleShareRecording = async (
+    project: BookProject,
+    recording: Recording,
+  ) => {
+    try {
+      const blob = await resolveRecordingBlob(recording);
+      if (!blob) {
+        showToast('Audio file not available to share');
+        return;
+      }
+      const fileName = buildChapterDriveFileName(
+        recording.orderIndex,
+        recording.name,
+        recording.extension,
+      );
+      const outcome = await shareAudioChapter({
+        blob,
+        fileName,
+        title: `${project.title} — ${recording.name}`,
+        text: `Listen to "${recording.name}" from ${project.title}`,
+      });
+      if (outcome === 'shared') {
+        showToast(`Shared "${recording.name}"`);
+      } else if (outcome === 'downloaded') {
+        showToast(`Downloaded "${fileName}" to share`);
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not share audio');
+    }
+  };
+
   const handleDeleteRecording = async (
     project: BookProject,
     recordingId: string,
   ) => {
     await deleteRecording(recordingId);
-    await putProject({ ...project, updatedAt: Date.now() });
+    const nextDeleted = Array.from(
+      new Set([...(project.deletedRecordingIds ?? []), recordingId]),
+    );
+    await putProject({
+      ...project,
+      deletedRecordingIds: nextDeleted,
+      updatedAt: Date.now(),
+    });
     await reloadData();
     await player.refreshChaptersForProject(project.id);
     showToast('Recording deleted');
-    if (googleAuth.hasValidToken() && navigator.onLine) {
+    if (googleAuth.hasValidToken()) {
       void handleSyncProject(project.id, true);
     }
   };
@@ -524,6 +802,11 @@ const StoryTapeShell: React.FC<AppProps> = ({
   const activeBook =
     route.view !== 'library'
       ? projects.find((p) => p.id === route.projectId) ?? null
+      : null;
+
+  const shareSheetBook =
+    shareTarget?.scope === 'book'
+      ? projects.find((p) => p.id === shareTarget.projectId) ?? null
       : null;
 
   const hasMiniPlayer =
@@ -591,6 +874,9 @@ const StoryTapeShell: React.FC<AppProps> = ({
             setEditingBook(activeBook);
             setBookEditorOpen(true);
           }}
+          onShareBook={() =>
+            setShareTarget({ scope: 'book', projectId: activeBook.id })
+          }
           onStartRecording={() => {
             player.pauseForRecording();
             navigate({ view: 'record', projectId: activeBook.id });
@@ -603,6 +889,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
             handleReorderRecordings(activeBook, ids)
           }
           onDownloadRecording={handleDownloadRecording}
+          onShareRecording={(rec) => handleShareRecording(activeBook, rec)}
           onDeleteRecording={(recId) =>
             handleDeleteRecording(activeBook, recId)
           }
@@ -614,6 +901,9 @@ const StoryTapeShell: React.FC<AppProps> = ({
           progressByProject={progressByProject}
           drafts={drafts}
           authState={authState}
+          driveLibraryMode={settings.driveLibraryMode}
+          driveSharedFolderName={settings.driveSharedFolderName}
+          driveAccessRole={settings.driveAccessRole}
           isSyncing={isSyncing}
           hasMiniPlayer={hasMiniPlayer}
           onOpenBook={(projectId) => navigate({ view: 'book', projectId })}
@@ -622,6 +912,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
             setBookEditorOpen(true);
           }}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenShareLibrary={() => setShareTarget({ scope: 'library' })}
           onSyncNow={() => void handleSyncAll()}
           onResumeDraft={(draft) => {
             player.pauseForRecording();
@@ -656,6 +947,87 @@ const StoryTapeShell: React.FC<AppProps> = ({
         onDelete={editingBook ? handleDeleteBook : undefined}
       />
 
+      {/* Multi-User Family Sharing & Invite Sheet */}
+      <ShareSheet
+        open={shareTarget !== null}
+        scope={shareTarget?.scope ?? 'library'}
+        targetTitle={
+          shareTarget?.scope === 'book'
+            ? shareSheetBook?.title || 'Audiobook'
+            : settings.driveSharedFolderName ||
+              settings.driveRootFolderName ||
+              'StoryTape Audiobooks'
+        }
+        folderId={
+          shareTarget?.scope === 'book'
+            ? shareSheetBook?.driveFolderId
+            : settings.driveRootFolderId
+        }
+        accessRole={
+          shareTarget?.scope === 'book'
+            ? shareSheetBook?.accessRole
+            : settings.driveAccessRole
+        }
+        isDriveConnected={authState.status === 'connected'}
+        googleClientId={settings.googleClientId}
+        onClose={() => setShareTarget(null)}
+        onConnectDrive={() => {
+          if (!settings.googleClientId.trim()) {
+            setShareTarget(null);
+            setSettingsOpen(true);
+            showToast('Add your Google OAuth Client ID in Settings first');
+            return;
+          }
+          handleConnectDrive({ skipAutoSync: true });
+        }}
+        onPrepareFolder={async () => {
+          if (shareTarget?.scope === 'book' && shareSheetBook) {
+            const res = await ensureShareableBookFolder(
+              shareSheetBook.id,
+              settingsRef.current,
+            );
+            if (
+              res.rootFolderId &&
+              res.rootFolderId !== settingsRef.current.driveRootFolderId
+            ) {
+              handleUpdateSettings({
+                ...settingsRef.current,
+                driveRootFolderId: res.rootFolderId,
+              });
+            }
+            await reloadData();
+            return { folderId: res.folderId, title: res.title };
+          }
+          const lib = await ensureShareableLibraryFolder(settingsRef.current);
+          handleUpdateSettings({
+            ...settingsRef.current,
+            driveRootFolderId: lib.folderId,
+            driveAccessRole: lib.accessRole,
+          });
+          return { folderId: lib.folderId, title: lib.folderName };
+        }}
+        onToast={(msg) => showToast(msg)}
+      />
+
+      {/* Guided Join Shared Library / Book Modal (from #/join?... invite link) */}
+      <JoinShareModal
+        open={pendingJoinInvite !== null}
+        invite={pendingJoinInvite}
+        settings={settings}
+        isDriveConnected={authState.status === 'connected'}
+        isJoining={isJoiningShare}
+        onClose={() => {
+          setPendingJoinInvite(null);
+          clearJoinHash();
+        }}
+        onUpdateClientId={(clientId) =>
+          handleUpdateSettings({ ...settingsRef.current, googleClientId: clientId })
+        }
+        onConnectDrive={() => handleConnectDrive({ skipAutoSync: true })}
+        onJoinFolder={handleJoinFolder}
+        onToast={(msg) => showToast(msg)}
+      />
+
       {/* Audio Quality, Microphone & Drive Settings Sheet */}
       <SettingsSheet
         open={settingsOpen}
@@ -665,12 +1037,20 @@ const StoryTapeShell: React.FC<AppProps> = ({
         syncStatusMessage={syncStatusMessage}
         onClose={() => setSettingsOpen(false)}
         onUpdateSettings={handleUpdateSettings}
-        onConnectDrive={handleConnectDrive}
+        onConnectDrive={() => handleConnectDrive()}
         onSignOutDrive={() => {
           googleAuth.signOut();
           showToast('Signed out of Google Drive');
         }}
         onSyncAll={() => void handleSyncAll()}
+        onOpenShareLibrary={() => {
+          setSettingsOpen(false);
+          setShareTarget({ scope: 'library' });
+        }}
+        onJoinSharedFolder={handleJoinSharedFolderFromSettings}
+        onPickSharedFolder={handlePickSharedFolder}
+        onSwitchToPersonalLibrary={handleSwitchToPersonalLibrary}
+        onUnlinkSharedBook={handleUnlinkSharedBook}
         onClearSyncedCache={async () => {
           const count = await clearSyncedAudioCache();
           await reloadData();

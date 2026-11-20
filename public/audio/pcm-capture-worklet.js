@@ -10,12 +10,13 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     this.channels = opts.channels === 2 ? 2 : 1;
     this.active = true;
     this.peakWindowFrames = Math.max(1, Math.round(sampleRate / 50)); // 50 peaks/sec
-    this.flushFrames = Math.max(2048, Math.round(sampleRate * 0.12)); // ~120 ms batches
+    this.flushFrames = Math.max(512, Math.round(sampleRate * 0.025)); // ~25 ms batches (~40 Hz)
 
     this.buffer = new Float32Array(this.flushFrames * this.channels);
     this.bufferedFrames = 0;
 
     this.currentPeak = 0;
+    this.batchMaxPeak = 0;
     this.peakFrameCounter = 0;
     this.pendingPeaks = [];
 
@@ -39,15 +40,17 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
 
     const pcm = this.buffer.slice(0, this.bufferedFrames * this.channels);
     const peaks = this.pendingPeaks.slice();
+    const liveLevel = Math.min(1, Math.max(this.batchMaxPeak, this.currentPeak));
     this.bufferedFrames = 0;
     this.pendingPeaks = [];
+    this.batchMaxPeak = 0;
 
     this.port.postMessage(
       {
         type: 'chunk',
         pcm,
         peaks,
-        liveLevel: this.currentPeak,
+        liveLevel,
       },
       [pcm.buffer],
     );
@@ -77,6 +80,9 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
 
       if (absVal > this.currentPeak) {
         this.currentPeak = absVal;
+      }
+      if (absVal > this.batchMaxPeak) {
+        this.batchMaxPeak = absVal;
       }
 
       this.peakFrameCounter += 1;

@@ -5,12 +5,17 @@ import {
   ChevronUp,
   Cloud,
   Copy,
+  ExternalLink,
+  FolderOpen,
   HardDrive,
+  Link2,
   Loader2,
   Mic,
   Palette,
   RefreshCw,
+  Share2,
   Sliders,
+  Users,
   Volume2,
   X,
 } from 'lucide-react';
@@ -46,6 +51,7 @@ import {
   WAV_BIT_DEPTH_OPTIONS,
 } from '../audio/qualityPresets';
 import type { GoogleAuthState } from '../drive/googleAuth';
+import { getDriveFolderWebUrl } from '../drive/shareUtils';
 import { formatBytes, formatGainDb, formatSampleRate } from '../utils/format';
 import './SettingsSheet.css';
 
@@ -60,6 +66,11 @@ interface SettingsSheetProps {
   onConnectDrive: () => void;
   onSignOutDrive: () => void;
   onSyncAll: () => void;
+  onOpenShareLibrary: () => void;
+  onJoinSharedFolder: (input: string) => Promise<void>;
+  onPickSharedFolder: () => Promise<void>;
+  onSwitchToPersonalLibrary: () => Promise<void>;
+  onUnlinkSharedBook: (folderId: string) => void;
   onClearSyncedCache: () => Promise<number>;
   onToast: (message: string) => void;
 }
@@ -75,6 +86,11 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   onConnectDrive,
   onSignOutDrive,
   onSyncAll,
+  onOpenShareLibrary,
+  onJoinSharedFolder,
+  onPickSharedFolder,
+  onSwitchToPersonalLibrary,
+  onUnlinkSharedBook,
   onClearSyncedCache,
   onToast,
 }) => {
@@ -89,6 +105,8 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
 
   const [caps, setCaps] = useState<CodecCapabilities | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [joinInput, setJoinInput] = useState('');
+  const [joiningFolder, setJoiningFolder] = useState(false);
   const [storageUsage, setStorageUsage] = useState<{
     usage: number;
     quota: number;
@@ -894,6 +912,26 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   </button>
                   <button
                     type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={onOpenShareLibrary}
+                    id="settings-share-library-btn"
+                  >
+                    <Share2 size={14} />
+                    Share Library
+                  </button>
+                  {settings.driveRootFolderId && (
+                    <a
+                      href={getDriveFolderWebUrl(settings.driveRootFolderId)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-ghost btn-sm"
+                    >
+                      <ExternalLink size={14} />
+                      Open Folder
+                    </a>
+                  )}
+                  <button
+                    type="button"
                     className="btn btn-ghost btn-sm"
                     onClick={onSignOutDrive}
                     disabled={isSyncing}
@@ -920,6 +958,145 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
               <span className="field-hint">{syncStatusMessage}</span>
             )}
 
+            {/* Family Sharing & Collaboration Controls */}
+            <div className="collab-box" data-testid="settings-collab-box">
+              <div className="collab-box__head">
+                <span className="collab-box__title">
+                  <Users size={15} />
+                  Family &amp; Collaborator Sharing
+                </span>
+                <span
+                  className={`badge ${settings.driveLibraryMode === 'shared' ? 'badge-sage' : ''}`}
+                >
+                  {settings.driveLibraryMode === 'shared'
+                    ? settings.driveAccessRole === 'reader'
+                      ? 'Shared · Listener'
+                      : 'Shared · Co-Narrator'
+                    : 'Personal Library'}
+                </span>
+              </div>
+
+              {settings.driveLibraryMode === 'shared' && (
+                <div className="collab-active-row">
+                  <span className="field-hint">
+                    Synced with shared folder{' '}
+                    <strong>
+                      {settings.driveSharedFolderName || 'Shared Audiobooks'}
+                    </strong>
+                    .
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    id="switch-personal-library-btn"
+                    onClick={() => void onSwitchToPersonalLibrary()}
+                    disabled={isSyncing}
+                  >
+                    Switch to My Personal Library
+                  </button>
+                </div>
+              )}
+
+              <div className="field">
+                <label htmlFor="join-folder-input" className="field-label">
+                  Join a Shared Library or Book
+                </label>
+                <div className="collab-join-row">
+                  <input
+                    id="join-folder-input"
+                    type="text"
+                    className="input"
+                    value={joinInput}
+                    onChange={(e) => setJoinInput(e.target.value)}
+                    placeholder="Paste StoryTape invite link or Google Drive folder URL"
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    id="settings-join-folder-btn"
+                    disabled={!joinInput.trim() || joiningFolder || isSyncing}
+                    onClick={async () => {
+                      setJoiningFolder(true);
+                      try {
+                        await onJoinSharedFolder(joinInput);
+                        setJoinInput('');
+                      } finally {
+                        setJoiningFolder(false);
+                      }
+                    }}
+                  >
+                    <Link2 size={14} />
+                    {joiningFolder ? 'Joining…' : 'Join'}
+                  </button>
+                </div>
+              </div>
+
+              {authState.status === 'connected' && (
+                <div className="drive-actions-row">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    id="settings-google-picker-btn"
+                    onClick={() => void onPickSharedFolder()}
+                    disabled={isSyncing}
+                  >
+                    <FolderOpen size={14} />
+                    Browse Shared Folders (Google Picker)
+                  </button>
+                </div>
+              )}
+
+              {(settings.sharedBookFolders?.length ?? 0) > 0 && (
+                <div className="field">
+                  <span className="field-label">Linked Shared Books</span>
+                  <div className="shared-books-list">
+                    {settings.sharedBookFolders!.map((link) => (
+                      <div key={link.folderId} className="shared-book-row">
+                        <div className="shared-book-row__info">
+                          <span className="shared-book-row__title">
+                            {link.title}
+                          </span>
+                          <span className="field-hint">
+                            {link.role === 'reader' ? 'Listener' : 'Co-Narrator'}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => onUnlinkSharedBook(link.folderId)}
+                        >
+                          Unlink
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="field">
+                <label htmlFor="drive-api-key-input" className="field-label">
+                  Google Picker API Key{' '}
+                  <span style={{ fontWeight: 400, color: 'var(--ink-muted)' }}>
+                    (optional, for browsing shared folders)
+                  </span>
+                </label>
+                <input
+                  id="drive-api-key-input"
+                  type="text"
+                  className="input font-mono"
+                  style={{ fontSize: 12.5 }}
+                  value={settings.googleApiKey ?? ''}
+                  onChange={(e) =>
+                    onUpdateSettings({
+                      ...settings,
+                      googleApiKey: e.target.value.trim(),
+                    })
+                  }
+                  placeholder="AIzaSy... (from Google Cloud Credentials)"
+                />
+              </div>
+            </div>
+
             <div>
               <button
                 type="button"
@@ -928,7 +1105,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                 onClick={() => setGuideOpen((v) => !v)}
               >
                 {guideOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                2-Minute Google Drive Setup Guide
+                2-Minute Google Drive &amp; Family Sharing Setup Guide
               </button>
 
               {guideOpen && (
@@ -936,12 +1113,15 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   <ol>
                     <li>
                       Open <strong>Google Cloud Console</strong>, create a free
-                      project, and enable the <strong>Google Drive API</strong>.
+                      project, and enable the <strong>Google Drive API</strong>{' '}
+                      (and optionally <strong>Google Picker API</strong> for
+                      browsing shared folders).
                     </li>
                     <li>
                       Configure <strong>OAuth consent screen</strong> (External,
-                      Testing mode) and add your Google email under{' '}
-                      <strong>Test users</strong>.
+                      Testing mode) and add your Google email — plus any{' '}
+                      <strong>family collaborators’ Gmail addresses</strong> —
+                      under <strong>Test users</strong>.
                     </li>
                     <li>
                       Create an <strong>OAuth 2.0 Client ID</strong> (Web
@@ -963,7 +1143,10 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   </div>
                   <span>
                     Paste the generated Client ID above (or store it in GitHub
-                    Actions variable <code>VITE_GOOGLE_CLIENT_ID</code>).
+                    Actions variable <code>VITE_GOOGLE_CLIENT_ID</code>). When
+                    you tap <strong>Share Library</strong> or{' '}
+                    <strong>Share</strong> on a book, StoryTape shares the Drive
+                    folder and builds a 1-tap invite link for your collaborator.
                   </span>
                 </div>
               )}
