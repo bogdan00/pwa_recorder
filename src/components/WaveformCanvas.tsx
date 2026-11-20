@@ -194,6 +194,9 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
     currentMs: 0,
   });
   const momentumRafRef = useRef<number | null>(null);
+  const lastMomentumSeekRef = useRef<{ ms: number; durationMs: number } | null>(
+    null,
+  );
 
   const canScrub =
     (phase === 'paused' || phase === 'playing') && durationMs > 0;
@@ -203,15 +206,25 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
       window.cancelAnimationFrame(momentumRafRef.current);
       momentumRafRef.current = null;
     }
+    lastMomentumSeekRef.current = null;
   }, []);
 
   useEffect(() => stopMomentum, [stopMomentum]);
 
+  // Cancel scrub momentum immediately on phase change, trim/undo duration change,
+  // or any external seek (-5s, +5s, End, Stop here, Undo trim).
   useEffect(() => {
-    if (phase !== 'paused') {
+    if (momentumRafRef.current === null) return;
+    const lastSeek = lastMomentumSeekRef.current;
+    if (
+      phase !== 'paused' ||
+      !lastSeek ||
+      lastSeek.durationMs !== durationMs ||
+      Math.abs(playheadMs - lastSeek.ms) > 5
+    ) {
       stopMomentum();
     }
-  }, [phase, stopMomentum]);
+  }, [phase, durationMs, playheadMs, stopMomentum]);
 
   // Draw one frame using only cached dimensions, cached theme colors, and live engine/prop data
   const drawFrame = useCallback((now: number, isRafTick: boolean) => {
@@ -690,20 +703,35 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
 
     let lastTick = performance.now();
     let current = drag.currentMs;
+    const startDurationMs = durationMs;
+    lastMomentumSeekRef.current = { ms: current, durationMs: startDurationMs };
 
     const glide = (now: number) => {
+      const p = propsRef.current;
+      const live = p.engine?.getLiveRenderState();
+      const livePhase = live ? live.phase : p.phase;
+      const liveDurationMs = live ? live.durationMs : p.durationMs;
+
+      if (livePhase !== 'paused' || liveDurationMs !== startDurationMs) {
+        momentumRafRef.current = null;
+        lastMomentumSeekRef.current = null;
+        return;
+      }
+
       const dt = Math.min(32, Math.max(1, now - lastTick));
       lastTick = now;
 
-      const deltaMs = -((velocity * dt) / pixelsPerSecond) * 1000;
-      current = Math.max(0, Math.min(durationMs, current + deltaMs));
+      const deltaMs = -((velocity * dt) / p.pixelsPerSecond) * 1000;
+      current = Math.max(0, Math.min(startDurationMs, current + deltaMs));
+      lastMomentumSeekRef.current = { ms: current, durationMs: startDurationMs };
       onSeekMs(current);
 
       velocity *= Math.pow(0.92, dt / 16);
-      if (Math.abs(velocity) > 0.02 && current > 0 && current < durationMs) {
+      if (Math.abs(velocity) > 0.02 && current > 0 && current < startDurationMs) {
         momentumRafRef.current = window.requestAnimationFrame(glide);
       } else {
         momentumRafRef.current = null;
+        lastMomentumSeekRef.current = null;
       }
     };
 
