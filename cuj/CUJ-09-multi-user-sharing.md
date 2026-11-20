@@ -18,13 +18,13 @@ Family members can share either their entire StoryTape Family Library or an indi
    - **Expected:** Automatically runs a pre-sync so the Google Drive folder exists before inviting collaborators or generating a share link, without manual extra steps.
    - Invite a collaborator by Google email via the Drive Permissions API as either **Co-Narrator** (`writer`) or **Listener** (`reader`).
    - **Expected:** New collaborator appears in the active collaborators list with their email and assigned role; revoking access removes their Drive permission and updates the list immediately.
-   - Toggle **"Anyone with link can listen"** (read-only link access), copy or natively share (`navigator.share`) the 1-tap StoryTape join link (`#/join?folderId=...&name=...&scope=library|book&role=...&clientId=...`), and tap **Open in Google Drive**.
-   - **Expected:** Link-sharing toggle creates/removes the Drive `anyone` (`reader`) permission, generated join link encodes the folder ID, display name, scope (`library` or `book`), role, and OAuth Client ID, copy/native share feedback confirms success, and the Drive folder link opens cleanly.
+   - Toggle **"Anyone with link can listen"** (read-only link access), copy or natively share (`navigator.share`) the 1-tap StoryTape join link (`#/join?folderId=...&name=...&scope=library|book&role=...`), and tap **Open in Google Drive**.
+   - **Expected:** Link-sharing toggle creates/removes the Drive `anyone` (`reader`) permission, generated join link encodes the folder ID, display name, scope (`library` or `book`), and role (without exposing any OAuth Client ID), copy/native share feedback confirms success, and the Drive folder link opens cleanly.
 
 2. **Guided Collaborator Join Experience (`JoinShareModal` & Settings)**
-   - Open a StoryTape join link (`#/join?folderId=...&name=...&scope=library|book&role=...&clientId=...`) as a second user.
+   - Open a StoryTape join link (`#/join?folderId=...&name=...&scope=library|book&role=...`) as a second user.
    - **Expected:**
-     - `JoinShareModal` opens automatically and pre-fills the shared OAuth Client ID if not already configured locally.
+     - `JoinShareModal` opens automatically with zero manual credential/Client ID entry.
      - Guides the collaborator through connecting Google Drive and verifies access to the target folder.
      - When Google's `drive.file` scope requires explicit folder authorization, presents a guided Google Picker / Drive link unlock flow so access succeeds cleanly.
    - Complete joining for both scopes:

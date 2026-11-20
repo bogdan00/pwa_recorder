@@ -29,7 +29,6 @@ export interface JoinShareModalProps {
   isDriveConnected: boolean;
   isJoining: boolean;
   onClose: () => void;
-  onUpdateClientId: (clientId: string) => void;
   onConnectDrive: () => void;
   onJoinFolder: (options: {
     folderId: string;
@@ -47,7 +46,6 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
   isDriveConnected,
   isJoining,
   onClose,
-  onUpdateClientId,
   onConnectDrive,
   onJoinFolder,
   onToast,
@@ -55,7 +53,6 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
   const [needsPicker, setNeedsPicker] = useState(false);
   const [pickingFolder, setPickingFolder] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
-  const [editingClientId, setEditingClientId] = useState(false);
 
   const busy = isJoining || pickingFolder;
 
@@ -64,7 +61,6 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
     setNeedsPicker(false);
     setPickingFolder(false);
     setJoinError(null);
-    setEditingClientId(false);
   }, [open, invite?.folderId, invite?.scope, invite?.role]);
 
   useEffect(() => {
@@ -80,14 +76,6 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
 
   const isLibrary = invite.scope === 'library';
   const isCoNarrator = invite.role === 'writer';
-  const hasInviteClientId = Boolean(invite.clientId?.trim());
-  const effectiveClientId = (
-    settings.googleClientId ||
-    invite.clientId ||
-    ''
-  ).trim();
-  const showClientIdInput =
-    !hasInviteClientId && (!settings.googleClientId.trim() || editingClientId);
 
   const roleDescription = isLibrary
     ? isCoNarrator
@@ -228,40 +216,6 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
             <p className="join-invite-card__desc">{roleDescription}</p>
           </div>
 
-          {/* Client ID status / input */}
-          {hasInviteClientId && (
-            <div className="join-client-pill">
-              <CheckCircle2 size={14} />
-              <span>Google Client ID pre-filled from invite link</span>
-            </div>
-          )}
-
-          {showClientIdInput && (
-            <div className="join-client-box">
-              <div className="field">
-                <label htmlFor="join-client-id-input" className="field-label">
-                  Google OAuth Client ID
-                </label>
-                <input
-                  id="join-client-id-input"
-                  type="text"
-                  className="input"
-                  value={settings.googleClientId}
-                  onChange={(e) => {
-                    setEditingClientId(true);
-                    onUpdateClientId(e.target.value);
-                  }}
-                  placeholder="1234567890-xxxx.apps.googleusercontent.com"
-                  disabled={busy}
-                />
-                <span className="field-hint">
-                  Ask the person who invited you for their StoryTape Google
-                  OAuth Client ID (or use an invite link that includes it).
-                </span>
-              </div>
-            </div>
-          )}
-
           {/* Two-step progress indicator */}
           <div className="join-steps" aria-label="Join steps">
             <span
@@ -301,17 +255,12 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
                   id="join-connect-drive-btn"
                   className="btn btn-primary"
                   onClick={onConnectDrive}
-                  disabled={!effectiveClientId || busy}
+                  disabled={busy}
                 >
                   <Cloud size={16} />
                   Connect Google Drive to Join
                 </button>
               </div>
-              {!effectiveClientId && (
-                <span className="field-hint">
-                  Enter a Google OAuth Client ID above to enable sign-in.
-                </span>
-              )}
             </div>
           ) : (
             /* Step 2 — Link & Sync Shared Folder */

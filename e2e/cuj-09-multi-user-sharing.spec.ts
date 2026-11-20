@@ -543,11 +543,9 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
 
     await page.goto('./');
 
-    // Configure Google Client ID & default narrator in Settings
+    // Connect Google Drive directly & set default narrator in Settings (no Client ID input)
     await page.locator('#open-settings-btn').click();
-    await page
-      .locator('#drive-client-id-input')
-      .fill('11111-family.apps.googleusercontent.com');
+    await expect(page.locator('#drive-client-id-input')).toHaveCount(0);
     await page.locator('#default-narrator-input').fill('Dad');
     await page.getByRole('button', { name: 'Connect Google Drive' }).click();
     await expect(page.getByText('dad@example.com')).toBeVisible();
@@ -585,6 +583,7 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     await page.locator('#share-book-btn').click();
     const shareSheet = page.getByTestId('share-sheet');
     await expect(shareSheet).toBeVisible();
+    await expect(shareSheet).not.toContainText('Testing mode');
 
     // Wait reactively for either prepare button or invite input
     await expect(
@@ -615,15 +614,13 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     await anyoneSwitch.click();
     await expect(anyoneSwitch).toHaveAttribute('aria-checked', 'true');
 
-    // Verify generated StoryTape join link contains folderId, scope=book, and clientId
+    // Verify generated StoryTape join link contains folderId and scope=book without exposing clientId
     const inviteLinkInput = page.getByRole('textbox', {
       name: 'StoryTape invite link',
     });
     await expect(inviteLinkInput).toHaveValue(/#\/join\?folderId=/);
     await expect(inviteLinkInput).toHaveValue(/scope=book/);
-    await expect(inviteLinkInput).toHaveValue(
-      /clientId=11111-family\.apps\.googleusercontent\.com/,
-    );
+    await expect(inviteLinkInput).not.toHaveValue(/clientId=/);
 
     // Trigger native Share Invite Link (Web Share API)
     await page.locator('#share-link-native-btn').click();
@@ -755,17 +752,18 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
       state,
     );
 
-    // 1. Mom opens the invite link directly
+    // 1. Mom opens the invite link directly (no Client ID needed in URL or UI)
     await page.goto(
-      `./#/join?folderId=${sharedLibId}&name=Family%20Audiobooks&scope=library&role=writer&clientId=22222-shared.apps.googleusercontent.com`,
+      `./#/join?folderId=${sharedLibId}&name=Family%20Audiobooks&scope=library&role=writer`,
     );
 
     const joinModal = page.getByTestId('join-share-modal');
     await expect(joinModal).toBeVisible();
     await expect(joinModal).toContainText('Family Audiobooks');
     await expect(joinModal).toContainText('Co-Narrator');
+    await expect(page.locator('#join-client-id-input')).toHaveCount(0);
 
-    // Step 1: Connect Google Drive directly from the modal (Client ID pre-filled from link!)
+    // Step 1: Connect Google Drive directly from the modal
     await page.locator('#join-connect-drive-btn').click();
     await expect(page.locator('#join-confirm-btn')).toBeVisible();
 
@@ -925,11 +923,8 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
 
     await page.goto('./');
 
-    // Connect Drive in Settings & paste a single-book invite link
+    // Connect Drive directly in Settings & paste a single-book invite link
     await page.locator('#open-settings-btn').click();
-    await page
-      .locator('#drive-client-id-input')
-      .fill('33333-listener.apps.googleusercontent.com');
     await page.getByRole('button', { name: 'Connect Google Drive' }).click();
     await expect(page.getByText('grandma@example.com')).toBeVisible();
 

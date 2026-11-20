@@ -316,15 +316,11 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     });
     await recordAndSaveChapter(page, { name: 'Chapter One', minDurationSec: 0.6 });
 
-    // Open Settings -> check setup guide origin -> configure Client ID -> Connect Drive
+    // Open Settings -> verify GCP Client ID & setup guide are not shown -> Connect Drive directly
     await page.getByLabel('Back to library').click();
     await page.locator('#open-settings-btn').click();
-    await page.getByRole('button', { name: /2-Minute Google Drive.*Setup Guide/i }).click();
-    await expect(page.locator('.origin-copy-box')).toContainText('http://127.0.0.1:');
-
-    await page
-      .locator('#drive-client-id-input')
-      .fill('12345-test.apps.googleusercontent.com');
+    await expect(page.locator('#drive-client-id-input')).toHaveCount(0);
+    await expect(page.getByText(/Google Cloud Console/i)).toHaveCount(0);
     await page.getByRole('button', { name: 'Connect Google Drive' }).click();
 
     // Verify signed in & sync completes

@@ -969,17 +969,8 @@ const StoryTapeShell: React.FC<AppProps> = ({
             : settings.driveAccessRole
         }
         isDriveConnected={authState.status === 'connected'}
-        googleClientId={settings.googleClientId}
         onClose={() => setShareTarget(null)}
-        onConnectDrive={() => {
-          if (!settings.googleClientId.trim()) {
-            setShareTarget(null);
-            setSettingsOpen(true);
-            showToast('Add your Google OAuth Client ID in Settings first');
-            return;
-          }
-          handleConnectDrive({ skipAutoSync: true });
-        }}
+        onConnectDrive={() => handleConnectDrive({ skipAutoSync: true })}
         onPrepareFolder={async () => {
           if (shareTarget?.scope === 'book' && shareSheetBook) {
             const res = await ensureShareableBookFolder(
@@ -1020,9 +1011,6 @@ const StoryTapeShell: React.FC<AppProps> = ({
           setPendingJoinInvite(null);
           clearJoinHash();
         }}
-        onUpdateClientId={(clientId) =>
-          handleUpdateSettings({ ...settingsRef.current, googleClientId: clientId })
-        }
         onConnectDrive={() => handleConnectDrive({ skipAutoSync: true })}
         onJoinFolder={handleJoinFolder}
         onToast={(msg) => showToast(msg)}

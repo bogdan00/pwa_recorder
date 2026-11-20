@@ -1,10 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
-  ChevronDown,
-  ChevronUp,
   Cloud,
-  Copy,
   ExternalLink,
   FolderOpen,
   HardDrive,
@@ -104,7 +101,6 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   const testerRef = useRef<MicLevelTester | null>(null);
 
   const [caps, setCaps] = useState<CodecCapabilities | null>(null);
-  const [guideOpen, setGuideOpen] = useState(false);
   const [joinInput, setJoinInput] = useState('');
   const [joiningFolder, setJoiningFolder] = useState(false);
   const [storageUsage, setStorageUsage] = useState<{
@@ -239,18 +235,6 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
       setDeviceError(
         err instanceof Error ? err.message : 'Unable to start mic test.',
       );
-    }
-  };
-
-  const currentOrigin =
-    typeof window !== 'undefined' ? window.location.origin : 'https://bogdan00.github.io';
-
-  const handleCopyOrigin = async () => {
-    try {
-      await navigator.clipboard.writeText(currentOrigin);
-      onToast(`Copied ${currentOrigin}`);
-    } catch {
-      onToast(currentOrigin);
     }
   };
 
@@ -851,26 +835,6 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
             )}
 
             <div className="field">
-              <label htmlFor="drive-client-id-input" className="field-label">
-                Google OAuth 2.0 Web Client ID
-              </label>
-              <input
-                id="drive-client-id-input"
-                type="text"
-                className="input font-mono"
-                style={{ fontSize: 13 }}
-                value={settings.googleClientId}
-                onChange={(e) =>
-                  onUpdateSettings({
-                    ...settings,
-                    googleClientId: e.target.value.trim(),
-                  })
-                }
-                placeholder="1234567890-abc....apps.googleusercontent.com"
-              />
-            </div>
-
-            <div className="field">
               <label htmlFor="drive-root-folder-input" className="field-label">
                 Drive Root Folder Name
               </label>
@@ -944,7 +908,6 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   type="button"
                   className="btn btn-primary btn-sm"
                   onClick={onConnectDrive}
-                  disabled={!settings.googleClientId.trim()}
                 >
                   <Cloud size={15} />
                   {authState.status === 'expired'
@@ -1070,84 +1033,6 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                       </div>
                     ))}
                   </div>
-                </div>
-              )}
-
-              <div className="field">
-                <label htmlFor="drive-api-key-input" className="field-label">
-                  Google Picker API Key{' '}
-                  <span style={{ fontWeight: 400, color: 'var(--ink-muted)' }}>
-                    (optional, for browsing shared folders)
-                  </span>
-                </label>
-                <input
-                  id="drive-api-key-input"
-                  type="text"
-                  className="input font-mono"
-                  style={{ fontSize: 12.5 }}
-                  value={settings.googleApiKey ?? ''}
-                  onChange={(e) =>
-                    onUpdateSettings({
-                      ...settings,
-                      googleApiKey: e.target.value.trim(),
-                    })
-                  }
-                  placeholder="AIzaSy... (from Google Cloud Credentials)"
-                />
-              </div>
-            </div>
-
-            <div>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                style={{ paddingLeft: 0 }}
-                onClick={() => setGuideOpen((v) => !v)}
-              >
-                {guideOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                2-Minute Google Drive &amp; Family Sharing Setup Guide
-              </button>
-
-              {guideOpen && (
-                <div className="drive-guide">
-                  <ol>
-                    <li>
-                      Open <strong>Google Cloud Console</strong>, create a free
-                      project, and enable the <strong>Google Drive API</strong>{' '}
-                      (and optionally <strong>Google Picker API</strong> for
-                      browsing shared folders).
-                    </li>
-                    <li>
-                      Configure <strong>OAuth consent screen</strong> (External,
-                      Testing mode) and add your Google email — plus any{' '}
-                      <strong>family collaborators’ Gmail addresses</strong> —
-                      under <strong>Test users</strong>.
-                    </li>
-                    <li>
-                      Create an <strong>OAuth 2.0 Client ID</strong> (Web
-                      application) and add this exact{' '}
-                      <strong>Authorized JavaScript origin</strong>:
-                    </li>
-                  </ol>
-                  <div className="origin-copy-box">
-                    <span>{currentOrigin}</span>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      style={{ minHeight: 30, padding: '4px 10px' }}
-                      onClick={() => void handleCopyOrigin()}
-                    >
-                      <Copy size={13} />
-                      Copy
-                    </button>
-                  </div>
-                  <span>
-                    Paste the generated Client ID above (or store it in GitHub
-                    Actions variable <code>VITE_GOOGLE_CLIENT_ID</code>). When
-                    you tap <strong>Share Library</strong> or{' '}
-                    <strong>Share</strong> on a book, StoryTape shares the Drive
-                    folder and builds a 1-tap invite link for your collaborator.
-                  </span>
                 </div>
               )}
             </div>

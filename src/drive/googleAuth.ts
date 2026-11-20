@@ -167,7 +167,7 @@ class GoogleAuthManager {
   requestSignIn(prompt: '' | 'consent' | 'select_account' = ''): Promise<string> {
     if (!this.clientId) {
       return Promise.reject(
-        new Error('Enter your Google Cloud OAuth Client ID first.'),
+        new Error('Google Drive sign-in is not available in this build.'),
       );
     }
     this.tryInitTokenClient();

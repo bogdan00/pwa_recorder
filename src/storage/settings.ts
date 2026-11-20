@@ -22,12 +22,15 @@ export const DEFAULT_AUDIO_QUALITY: AudioQualitySettings = {
   echoCancellation: false,
 };
 
+const DEFAULT_GOOGLE_CLIENT_ID =
+  '837184798626-09o51gg0dbun11u12dttckjdltfidj1v.apps.googleusercontent.com';
+
 export function getDefaultSettings(): AppSettings {
   const envClientId =
     (typeof import.meta !== 'undefined' &&
       import.meta.env &&
       import.meta.env.VITE_GOOGLE_CLIENT_ID) ||
-    '';
+    DEFAULT_GOOGLE_CLIENT_ID;
   const envApiKey =
     (typeof import.meta !== 'undefined' &&
       import.meta.env &&

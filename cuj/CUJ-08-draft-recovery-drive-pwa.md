@@ -16,9 +16,8 @@ A parent never loses an in-progress recording if the mobile OS suspends/reloads 
    - Return to Library.
    - **Expected:** **Unfinished Recording Found** banner appears showing book name and duration; tapping **Resume** reopens Recording Studio in `PAUSED` state with the full recovered duration and waveform ready to continue or save!
 
-2. **Google Drive OAuth Setup Guide & Two-Way Sync**
-   - Open Settings → **Google Drive Folder**, expand **2-Minute Google Drive Setup Guide**, and verify the displayed Authorized JavaScript Origin matches `window.location.origin`.
-   - Configure Client ID, connect Drive (with mocked GIS token callback & intercepted Drive v3 API routes), and tap **Sync All Now**.
+2. **Google Drive Sign-In & Two-Way Sync**
+   - Open Settings → **Google Drive Folder** (no manual Client ID or GCP setup guide shown), tap **Connect Google Drive** (with mocked GIS token callback & intercepted Drive v3 API routes), and verify automatic sync.
    - **Expected:**
      - Local book folder, `cover.jpg` (if present), `01 - <Chapter>.ext` (resumable upload), and `project.json` are pushed to Drive, flipping local book & chapter sync badges to `Synced`.
      - A remote book present in Drive is pulled into the Library with its chapter marked `cloud_only`.

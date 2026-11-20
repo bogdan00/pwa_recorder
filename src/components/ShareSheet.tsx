@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ChevronDown,
-  ChevronUp,
   Cloud,
   Copy,
   ExternalLink,
@@ -39,7 +37,6 @@ export interface ShareSheetProps {
   folderId?: string;
   accessRole?: ShareAccessRole;
   isDriveConnected: boolean;
-  googleClientId: string;
   onClose: () => void;
   onConnectDrive: () => void;
   onPrepareFolder: () => Promise<{ folderId: string; title: string }>;
@@ -92,7 +89,6 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
   folderId,
   accessRole,
   isDriveConnected,
-  googleClientId,
   onClose,
   onConnectDrive,
   onPrepareFolder,
@@ -118,7 +114,6 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
 
   const [togglingAnyone, setTogglingAnyone] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
-  const [tipOpen, setTipOpen] = useState(false);
 
   const activeFolderId = folderId || preparedFolder?.folderId || '';
   const activeTitle =
@@ -239,9 +234,8 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
       name: activeTitle,
       scope,
       role: selectedRole,
-      clientId: googleClientId,
     });
-  }, [activeFolderId, activeTitle, scope, selectedRole, googleClientId]);
+  }, [activeFolderId, activeTitle, scope, selectedRole]);
 
   const anyonePermission = useMemo(
     () => permissions.find((p) => p.type === 'anyone') ?? null,
@@ -900,33 +894,6 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
                   </ul>
                 )}
               </section>
-
-              {/* Helpful Collaborator Tip */}
-              <div className="share-tip-box">
-                <button
-                  type="button"
-                  className="share-tip-toggle"
-                  aria-expanded={tipOpen}
-                  onClick={() => setTipOpen((v) => !v)}
-                >
-                  <span className="share-tip-toggle__left">
-                    <Info size={15} />
-                    <span>Google Cloud Testing mode tip</span>
-                  </span>
-                  {tipOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                </button>
-                {tipOpen && (
-                  <div className="share-tip-body">
-                    If your Google Cloud OAuth app is still in{' '}
-                    <strong>Testing</strong> mode, remember to also add invited
-                    family Google accounts under{' '}
-                    <strong>
-                      Google Cloud Console → OAuth consent screen → Test users
-                    </strong>{' '}
-                    so Google lets them sign in to StoryTape.
-                  </div>
-                )}
-              </div>
             </>
           )}
         </div>
