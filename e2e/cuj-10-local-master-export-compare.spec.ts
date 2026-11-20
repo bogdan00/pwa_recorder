@@ -198,4 +198,55 @@ test.describe('CUJ-10: Local Lossless Master Archival, Multi-Bitrate Export & Qu
     await page.getByTestId('confirm-dialog-confirm').click();
     await expect(clearBtn).toHaveCount(0);
   });
+
+  test('launches A/B Quality Lab directly from Settings Test Mic, runs blind threshold test, applies bitrate, and supports re-recording inside Quality Lab', async ({
+    page,
+  }) => {
+    await page.goto('./');
+
+    // 1. Open Studio Settings -> run Test Mic until a lossless clip is captured
+    await page.locator('#open-settings-btn').click();
+    await expect(page.getByTestId('settings-sheet')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Test Mic' }).click();
+    await expect(page.getByRole('button', { name: 'Stop Test' })).toBeVisible();
+    await expect(page.locator('.mic-telemetry')).toContainText(/\d{2}:\d{2}/);
+
+    await page.getByRole('button', { name: 'Stop Test' }).click();
+    await expect(page.locator('.mic-telemetry')).toContainText(
+      /Last test clip ready:/i,
+    );
+
+    // 2. Open A/B Quality Lab directly from Settings (no book/chapter needed)
+    const openLabBtn = page.getByTestId('open-mic-quality-lab-btn');
+    await expect(openLabBtn).toContainText(/Open in A\/B Lab/i);
+    await openLabBtn.click();
+
+    await expect(page.getByTestId('quality-lab-view')).toBeVisible();
+    await expect(page.getByTestId('quality-lab-source')).toContainText(
+      'Microphone Test Clip',
+    );
+    await expect(page.getByTestId('quality-lab-source-badge')).toHaveText(
+      'Lossless Master',
+    );
+
+    // 3. Run blind A/B threshold test on the mic test clip and apply sweet spot
+    await expect(page.getByTestId('blind-play-a')).toBeVisible();
+    await page.getByTestId('blind-play-a').click();
+    await page.getByTestId('blind-play-b').click();
+    await page.getByTestId('blind-vote-same').click();
+    await expect(page.getByTestId('threshold-recommendation-card')).toContainText(
+      '64 kbps',
+    );
+    await page.getByTestId('apply-recommended-quality-btn').click();
+
+    // 4. Re-record a fresh test clip right inside Quality Lab using Settings mic
+    const recBtn = page.getByTestId('ql-mic-record-btn');
+    await expect(recBtn).toContainText('Re-record Clip');
+    await recBtn.click();
+    await expect(recBtn).toContainText('Stop Recording');
+    await expect(page.getByTestId('ql-mic-recorder')).toContainText(/00:0[1-9]/);
+    await recBtn.click();
+    await expect(page.getByTestId('blind-play-a')).toBeVisible();
+  });
 });

@@ -32,3 +32,7 @@ A parent can opt in to saving an uncompressed, full-detail local lossless master
 4. **Local Master Storage Reclamation (with Confirmation)**
    - Tap **Free Master** in Quality Lab, **Delete Local Master** in the chapter menu, or **Delete Local Masters** in Studio Settings, and confirm in the dialog.
    - **Expected:** Prompts for confirmation first (Cancel keeps the master intact); on confirm, deletes the `recordingMasters` entry and removes the `Master` badge while the regular chapter recording remains intact and playable.
+
+5. **Settings Test Mic → Quality Lab (Standalone Mic Benchmark)**
+   - Open **Studio Settings → Recording Device**, select a microphone, tap **Test Mic** to capture a brief test sample, tap **Stop Test**, and tap **Open in Quality Lab** (navigates to `#/quality-lab/mic-test`).
+   - **Expected:** Quality Lab opens directly with the uncompressed 32-bit IEEE Float WAV mic test clip pre-loaded (without creating any book or chapter), supports recording new test clips directly inside Quality Lab using the selected Settings microphone, and runs the full **Threshold** blind A/B finder, **A/B Listen**, and **Export** flows with 1-tap **Apply to Recording Settings**.

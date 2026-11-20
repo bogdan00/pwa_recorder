@@ -1,7 +1,10 @@
 import type {
   AudioDeviceSettings,
   AudioQualitySettings,
+  ChannelCountOption,
 } from '../types/models';
+import type { DecodedPcmAudio } from './audioExporter';
+import { encodeWav } from './wavEncoder';
 
 export interface AudioInputDeviceInfo {
   deviceId: string;
@@ -176,13 +179,34 @@ export interface MicTestTelemetry {
   actualDeviceLabel: string;
   actualSampleRate: number;
   actualChannels: number;
+  capturedDurationMs: number;
 }
+
+export interface CapturedMicTestAudio {
+  pcm: DecodedPcmAudio;
+  wavBlob: Blob;
+  deviceLabel: string;
+  capturedAt: number;
+}
+
+const MAX_MIC_TEST_CAPTURE_SEC = 30;
 
 export class MicLevelTester {
   private stream: MediaStream | null = null;
   private audioCtx: AudioContext | null = null;
+  private workletNode: AudioWorkletNode | null = null;
+  private workletSilentGain: GainNode | null = null;
+  private scriptNode: ScriptProcessorNode | null = null;
+  private scriptSilentGain: GainNode | null = null;
   private rafId: number | null = null;
   private stopped = false;
+
+  // Rolling raw 32-bit Float PCM capture for instant A/B Quality Lab testing
+  private captureChunks: Float32Array[] = [];
+  private capturedFrames = 0;
+  private captureSampleRate = 48000;
+  private captureChannels: ChannelCountOption = 1;
+  private captureDeviceLabel = 'System Default Microphone';
 
   async start(
     deviceSettings: AudioDeviceSettings,
@@ -191,6 +215,8 @@ export class MicLevelTester {
   ): Promise<{ usedFallback: boolean; fallbackReason?: string }> {
     this.stop();
     this.stopped = false;
+    this.captureChunks = [];
+    this.capturedFrames = 0;
 
     const acquired = await acquireMicStream(deviceSettings, quality);
     if (this.stopped) {
@@ -213,11 +239,17 @@ export class MicLevelTester {
       await this.audioCtx.resume();
     }
 
-    const source = this.audioCtx.createMediaStreamSource(this.stream);
+    const ctx = this.audioCtx;
+    const targetChannels: ChannelCountOption = quality.channels === 2 ? 2 : 1;
+    this.captureSampleRate = ctx.sampleRate;
+    this.captureChannels = targetChannels;
+    this.captureDeviceLabel = acquired.actualDeviceLabel;
+
+    const source = ctx.createMediaStreamSource(this.stream);
     let tail: AudioNode = source;
 
     if (quality.highPassFilter) {
-      const hpf = this.audioCtx.createBiquadFilter();
+      const hpf = ctx.createBiquadFilter();
       hpf.type = 'highpass';
       hpf.frequency.value = 80;
       hpf.Q.value = 0.707;
@@ -225,13 +257,13 @@ export class MicLevelTester {
       tail = hpf;
     }
 
-    const gainNode = this.audioCtx.createGain();
+    const gainNode = ctx.createGain();
     gainNode.gain.value = quality.inputGain;
     tail.connect(gainNode);
     tail = gainNode;
 
     if (quality.softLimiter) {
-      const comp = this.audioCtx.createDynamicsCompressor();
+      const comp = ctx.createDynamicsCompressor();
       comp.threshold.value = -3;
       comp.knee.value = 6;
       comp.ratio.value = 12;
@@ -241,14 +273,29 @@ export class MicLevelTester {
       tail = comp;
     }
 
-    const analyser = this.audioCtx.createAnalyser();
+    const analyser = ctx.createAnalyser();
     analyser.fftSize = 1024;
     tail.connect(analyser);
 
+    // Attach off-main-thread PCM capture (AudioWorklet with ScriptProcessor fallback)
+    const attachedWorklet = await this.tryAttachCaptureWorklet(
+      ctx,
+      tail,
+      targetChannels,
+    );
+    if (!attachedWorklet && !this.stopped) {
+      this.attachCaptureScriptFallback(ctx, tail, targetChannels);
+    }
+
+    if (this.stopped) {
+      this.teardownAudioGraph();
+      return { usedFallback: false };
+    }
+
     const timeData = new Float32Array(analyser.fftSize);
     const actualSampleRate =
-      acquired.actualSampleRate || this.audioCtx.sampleRate;
-    const actualChannels = acquired.actualChannels || quality.channels;
+      acquired.actualSampleRate || ctx.sampleRate;
+    const actualChannels = acquired.actualChannels || targetChannels;
 
     const tick = () => {
       if (this.stopped) return;
@@ -259,6 +306,9 @@ export class MicLevelTester {
         if (a > peak) peak = a;
       }
       const db = peak > 1e-4 ? Math.max(-60, 20 * Math.log10(peak)) : -60;
+      const capturedDurationMs = Math.round(
+        (this.capturedFrames / Math.max(1, this.captureSampleRate)) * 1000,
+      );
       onTelemetry({
         level: Math.min(1, peak),
         db,
@@ -266,6 +316,7 @@ export class MicLevelTester {
         actualDeviceLabel: acquired.actualDeviceLabel,
         actualSampleRate,
         actualChannels,
+        capturedDurationMs,
       });
       this.rafId = window.requestAnimationFrame(tick);
     };
@@ -277,11 +328,192 @@ export class MicLevelTester {
     };
   }
 
-  stop(): void {
-    this.stopped = true;
-    if (this.rafId !== null) {
-      window.cancelAnimationFrame(this.rafId);
-      this.rafId = null;
+  private pushInterleavedChunk(interleaved: Float32Array): void {
+    if (this.stopped || interleaved.length === 0) return;
+    const frames = Math.floor(interleaved.length / this.captureChannels);
+    if (frames <= 0) return;
+    this.captureChunks.push(interleaved);
+    this.capturedFrames += frames;
+
+    // Keep rolling window capped at MAX_MIC_TEST_CAPTURE_SEC so long mic checks never bloat RAM
+    const maxFrames = this.captureSampleRate * MAX_MIC_TEST_CAPTURE_SEC;
+    while (this.capturedFrames > maxFrames && this.captureChunks.length > 1) {
+      const oldest = this.captureChunks.shift()!;
+      this.capturedFrames -= Math.floor(oldest.length / this.captureChannels);
+    }
+  }
+
+  private async tryAttachCaptureWorklet(
+    ctx: AudioContext,
+    sourceNode: AudioNode,
+    channels: ChannelCountOption,
+  ): Promise<boolean> {
+    if (!ctx.audioWorklet || typeof AudioWorkletNode === 'undefined') {
+      return false;
+    }
+    try {
+      const base =
+        (typeof import.meta !== 'undefined' &&
+          import.meta.env &&
+          import.meta.env.BASE_URL) ||
+        '/';
+      const workletUrl = `${base.endsWith('/') ? base : `${base}/`}audio/pcm-capture-worklet.js`;
+      await ctx.audioWorklet.addModule(workletUrl);
+      if (this.stopped) return false;
+
+      const node = new AudioWorkletNode(ctx, 'pcm-capture-processor', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        channelCount: channels,
+        channelCountMode: 'explicit',
+        processorOptions: { channels },
+      });
+
+      node.port.onmessage = (event) => {
+        const msg = event.data;
+        if (!msg || msg.type !== 'chunk' || this.stopped) return;
+        const pcm =
+          msg.pcm instanceof Float32Array ? msg.pcm : new Float32Array(msg.pcm);
+        this.pushInterleavedChunk(pcm);
+      };
+
+      const silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
+      sourceNode.connect(node);
+      node.connect(silentGain);
+      silentGain.connect(ctx.destination);
+
+      this.workletNode = node;
+      this.workletSilentGain = silentGain;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private attachCaptureScriptFallback(
+    ctx: AudioContext,
+    sourceNode: AudioNode,
+    channels: ChannelCountOption,
+  ): void {
+    if (typeof ctx.createScriptProcessor !== 'function') return;
+    try {
+      const processor = ctx.createScriptProcessor(4096, channels, channels);
+      const silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
+
+      processor.onaudioprocess = (event) => {
+        if (this.stopped) return;
+        const ch0 = event.inputBuffer.getChannelData(0);
+        const ch1 =
+          channels === 2
+            ? event.inputBuffer.numberOfChannels > 1
+              ? event.inputBuffer.getChannelData(1)
+              : ch0
+            : null;
+        const frames = ch0.length;
+        const interleaved = new Float32Array(frames * channels);
+        for (let i = 0; i < frames; i += 1) {
+          interleaved[i * channels] = ch0[i];
+          if (channels === 2 && ch1) {
+            interleaved[i * channels + 1] = ch1[i];
+          }
+        }
+        this.pushInterleavedChunk(interleaved);
+      };
+
+      sourceNode.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(ctx.destination);
+      this.scriptNode = processor;
+      this.scriptSilentGain = silentGain;
+    } catch {
+      // Ignore if environment lacks ScriptProcessorNode
+    }
+  }
+
+  /**
+   * Builds an uncompressed 32-bit IEEE Float WAV & planar PCM snapshot
+   * from the most recent Test Mic capture (returns null if < 150ms captured).
+   */
+  getCapturedAudio(): CapturedMicTestAudio | null {
+    if (this.captureChunks.length === 0 || this.capturedFrames <= 0) {
+      return null;
+    }
+    const durationMs = Math.round(
+      (this.capturedFrames / Math.max(1, this.captureSampleRate)) * 1000,
+    );
+    if (durationMs < 150) return null;
+
+    const numChannels = this.captureChannels;
+    const totalFrames = this.capturedFrames;
+    const channels = Array.from(
+      { length: numChannels },
+      () => new Float32Array(totalFrames),
+    );
+
+    let frameOffset = 0;
+    for (const chunk of this.captureChunks) {
+      const chunkFrames = Math.floor(chunk.length / numChannels);
+      for (let f = 0; f < chunkFrames && frameOffset < totalFrames; f += 1) {
+        for (let ch = 0; ch < numChannels; ch += 1) {
+          channels[ch][frameOffset] = chunk[f * numChannels + ch];
+        }
+        frameOffset += 1;
+      }
+    }
+
+    const pcm: DecodedPcmAudio = {
+      channels,
+      sampleRate: this.captureSampleRate,
+      bitDepth: 32,
+      durationMs,
+    };
+    const wavBlob = encodeWav(channels, this.captureSampleRate, 32);
+
+    return {
+      pcm,
+      wavBlob,
+      deviceLabel: this.captureDeviceLabel,
+      capturedAt: Date.now(),
+    };
+  }
+
+  private teardownAudioGraph(): void {
+    if (this.workletNode) {
+      try {
+        this.workletNode.port.postMessage({ type: 'setActive', active: false });
+        this.workletNode.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.workletNode = null;
+    }
+    if (this.workletSilentGain) {
+      try {
+        this.workletSilentGain.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.workletSilentGain = null;
+    }
+    if (this.scriptNode) {
+      try {
+        this.scriptNode.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.scriptNode.onaudioprocess = null;
+      this.scriptNode = null;
+    }
+    if (this.scriptSilentGain) {
+      try {
+        this.scriptSilentGain.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.scriptSilentGain = null;
     }
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop());
@@ -291,5 +523,14 @@ export class MicLevelTester {
       void this.audioCtx.close().catch(() => {});
       this.audioCtx = null;
     }
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.rafId !== null) {
+      window.cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    this.teardownAudioGraph();
   }
 }

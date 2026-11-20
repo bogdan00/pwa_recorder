@@ -9,15 +9,18 @@ import {
   FlaskConical,
   Headphones,
   Loader2,
+  Mic,
   Pause,
   Play,
   RefreshCw,
   Share2,
   Sliders,
   Sparkles,
+  Square,
   Trash2,
 } from 'lucide-react';
 import type {
+  AudioDeviceSettings,
   AudioFormatOption,
   AudioQualitySettings,
   BitrateKbpsOption,
@@ -31,6 +34,11 @@ import {
   AbComparePlayer,
   type CompareTrackSlot,
 } from '../audio/abComparePlayer';
+import {
+  type CapturedMicTestAudio,
+  MicLevelTester,
+  type MicTestTelemetry,
+} from '../audio/audioDevices';
 import {
   type BlindChoice,
   type BlindTierResult,
@@ -66,14 +74,19 @@ import './QualityCompareView.css';
 type QualityLabTab = 'threshold' | 'ab' | 'export';
 
 interface QualityCompareViewProps {
-  project: BookProject;
-  recording: Recording;
+  project?: BookProject;
+  recording?: Recording;
+  micTestMode?: boolean;
+  audioDevice?: AudioDeviceSettings;
+  initialMicCapture?: CapturedMicTestAudio | null;
+  onMicCaptureChange?: (capture: CapturedMicTestAudio) => void;
+  onOpenSettings?: () => void;
   audioQuality: AudioQualitySettings;
   hasMiniPlayer: boolean;
   onBack: () => void;
   onApplyRecommendedQuality: (nextQuality: AudioQualitySettings) => void;
-  onDeleteLocalMaster: (recordingId: string) => Promise<void>;
-  onResolveCloudBlob: (recording: Recording) => Promise<Blob | null>;
+  onDeleteLocalMaster?: (recordingId: string) => Promise<void>;
+  onResolveCloudBlob?: (recording: Recording) => Promise<Blob | null>;
   onToast: (message: string) => void;
 }
 
@@ -115,9 +128,19 @@ interface BlindRevealInfo {
   extension: string;
 }
 
+const MIC_TEST_META = {
+  orderIndex: 0,
+  name: 'Mic Test',
+};
+
 export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
   project,
   recording,
+  micTestMode = false,
+  audioDevice,
+  initialMicCapture = null,
+  onMicCaptureChange,
+  onOpenSettings,
   audioQuality,
   hasMiniPlayer,
   onBack,
@@ -129,12 +152,27 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
   const [activeTab, setActiveTab] = useState<QualityLabTab>('threshold');
   const [caps, setCaps] = useState<CodecCapabilities | null>(null);
 
+  // Mic Test Mode live recorder state
+  const [micCapture, setMicCapture] = useState<CapturedMicTestAudio | null>(
+    initialMicCapture,
+  );
+  const [recordingMicClip, setRecordingMicClip] = useState(false);
+  const [micTelemetry, setMicTelemetry] = useState<MicTestTelemetry | null>(null);
+  const [micError, setMicError] = useState<string | null>(null);
+  const micTesterRef = useRef<MicLevelTester | null>(null);
+
   // Decoded source audio (local lossless master preferred; falls back to chapter audio)
-  const [loadingSource, setLoadingSource] = useState(true);
+  const [loadingSource, setLoadingSource] = useState(!micTestMode);
   const [sourceError, setSourceError] = useState<string | null>(null);
-  const [usingLocalMaster, setUsingLocalMaster] = useState(false);
-  const [sourceBlob, setSourceBlob] = useState<Blob | null>(null);
-  const [fullPcm, setFullPcm] = useState<DecodedPcmAudio | null>(null);
+  const [usingLocalMaster, setUsingLocalMaster] = useState(
+    Boolean(micTestMode && initialMicCapture),
+  );
+  const [sourceBlob, setSourceBlob] = useState<Blob | null>(
+    micTestMode && initialMicCapture ? initialMicCapture.wavBlob : null,
+  );
+  const [fullPcm, setFullPcm] = useState<DecodedPcmAudio | null>(
+    micTestMode && initialMicCapture ? initialMicCapture.pcm : null,
+  );
   const [windowStartSec, setWindowStartSec] = useState(0);
 
   // Shared synchronized A/B audio player
@@ -181,6 +219,14 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
   // Master deletion confirmation
   const [deletingMaster, setDeletingMaster] = useState(false);
 
+  const effectiveMeta = useMemo(
+    () =>
+      recording
+        ? { orderIndex: recording.orderIndex, name: recording.name }
+        : MIC_TEST_META,
+    [recording],
+  );
+
   // Stable refs for parent callbacks so parent re-renders (e.g., toasts) never re-trigger audio decode/encode effects
   const onResolveCloudBlobRef = useRef(onResolveCloudBlob);
   onResolveCloudBlobRef.current = onResolveCloudBlob;
@@ -188,20 +234,61 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
   onToastRef.current = onToast;
   const recordingRef = useRef(recording);
   recordingRef.current = recording;
+  const effectiveMetaRef = useRef(effectiveMeta);
+  effectiveMetaRef.current = effectiveMeta;
 
-  // Initialize A/B engine & probe codec caps
+  // Initialize A/B engine & probe codec caps; clean up mic tester on unmount
   useEffect(() => {
     const ab = new AbComparePlayer();
     playerRef.current = ab;
     void probeAudioCapabilities().then(setCaps);
     return () => {
+      micTesterRef.current?.stop();
+      micTesterRef.current = null;
       ab.dispose();
       playerRef.current = null;
     };
   }, []);
 
-  // Load source audio (local master if available, else regular chapter blob)
+  // Sync updated initialMicCapture from Settings (e.g. if user opens Settings while in Mic Test Lab)
   useEffect(() => {
+    if (!micTestMode || !initialMicCapture) return;
+    setMicCapture(initialMicCapture);
+  }, [micTestMode, initialMicCapture]);
+
+  // Apply mic capture directly as lossless 32-bit Float master in Mic Test mode
+  useEffect(() => {
+    if (!micTestMode) return;
+    setLoadingSource(false);
+    setSourceError(null);
+    setBlindCandidate(null);
+    setAbCandidate(null);
+    setBatchResults([]);
+    setSingleResult(null);
+    setTierResults({});
+    setLastReveal(null);
+
+    if (!micCapture) {
+      setSourceBlob(null);
+      setUsingLocalMaster(false);
+      setFullPcm(null);
+      return;
+    }
+
+    setSourceBlob(micCapture.wavBlob);
+    setUsingLocalMaster(true);
+    setFullPcm(micCapture.pcm);
+    const defaultSr = closestSampleRateOption(
+      Math.min(48000, micCapture.pcm.sampleRate),
+    );
+    setBlindSampleRate(defaultSr);
+    setAbSampleRate(defaultSr);
+    setExportSampleRate(closestSampleRateOption(micCapture.pcm.sampleRate));
+  }, [micTestMode, micCapture]);
+
+  // Load source audio in Chapter mode (local master if available, else regular chapter blob)
+  useEffect(() => {
+    if (micTestMode || !recording) return;
     let cancelled = false;
     setLoadingSource(true);
     setSourceError(null);
@@ -214,6 +301,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
     (async () => {
       try {
         const rec = recordingRef.current;
+        if (!rec) return;
         const masterBlob = await getRecordingMaster(rec.id);
         let blob: Blob | null = masterBlob ?? null;
         let isMaster = Boolean(masterBlob);
@@ -221,7 +309,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
         if (!blob) {
           blob = (await getRecordingBlob(rec.id)) ?? null;
         }
-        if (!blob) {
+        if (!blob && onResolveCloudBlobRef.current) {
           blob = await onResolveCloudBlobRef.current(rec);
         }
         if (!blob) {
@@ -255,7 +343,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [recording.id, recording.hasLocalMaster]);
+  }, [micTestMode, recording?.id, recording?.hasLocalMaster]);
 
   // Extract looped comparison passage (full track if <= 20s, else 12s window)
   const comparePcm = useMemo(() => {
@@ -268,8 +356,8 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
   // Reference byte count for the active comparison passage (used for accurate % savings)
   const fullReferenceBytes = useMemo(() => {
     if (sourceBlob) return sourceBlob.size;
-    return recording.localMasterBytes ?? recording.fileSizeBytes;
-  }, [sourceBlob, recording.localMasterBytes, recording.fileSizeBytes]);
+    return recording?.localMasterBytes ?? recording?.fileSizeBytes ?? 1;
+  }, [sourceBlob, recording?.localMasterBytes, recording?.fileSizeBytes]);
 
   const compareReferenceBytes = useMemo(() => {
     if (!fullPcm || !comparePcm) return fullReferenceBytes;
@@ -336,7 +424,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
         const res = await transcodePcm(
           comparePcm,
           spec,
-          recordingRef.current,
+          effectiveMetaRef.current,
           compareReferenceBytes,
         );
         if (cancelled) return;
@@ -388,7 +476,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
         const res = await transcodePcm(
           comparePcm,
           spec,
-          recordingRef.current,
+          effectiveMetaRef.current,
           compareReferenceBytes,
         );
         if (cancelled) return;
@@ -420,6 +508,56 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
     loadComparePair,
     stopPlayback,
   ]);
+
+  // Record / stop a fresh 32-bit Float test clip directly inside Quality Lab (Mic Test mode)
+  const handleToggleMicRecord = async () => {
+    if (recordingMicClip) {
+      const tester = micTesterRef.current;
+      micTesterRef.current = null;
+      setRecordingMicClip(false);
+      setMicTelemetry(null);
+      if (tester) {
+        tester.stop();
+        const captured = tester.getCapturedAudio();
+        if (captured) {
+          setMicCapture(captured);
+          onMicCaptureChange?.(captured);
+          onToast(
+            `Captured ${formatDurationMs(captured.pcm.durationMs)} lossless test clip`,
+          );
+        } else {
+          setMicError('Recording was too short — speak for at least half a second.');
+        }
+      }
+      return;
+    }
+
+    stopPlayback();
+    setMicError(null);
+    const tester = new MicLevelTester();
+    micTesterRef.current = tester;
+    setRecordingMicClip(true);
+    try {
+      const dev: AudioDeviceSettings = audioDevice ?? {
+        deviceId: 'default',
+        deviceLabel: 'System Default Microphone',
+      };
+      const res = await tester.start(dev, audioQuality, (t) =>
+        setMicTelemetry(t),
+      );
+      if (res.usedFallback && res.fallbackReason) {
+        onToast(res.fallbackReason);
+      }
+    } catch (err) {
+      micTesterRef.current?.stop();
+      micTesterRef.current = null;
+      setRecordingMicClip(false);
+      setMicTelemetry(null);
+      setMicError(
+        err instanceof Error ? err.message : 'Could not access microphone.',
+      );
+    }
+  };
 
   // Stop playback when switching tabs
   const handleTabChange = (tab: QualityLabTab) => {
@@ -461,7 +599,10 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
     }
 
     // Scale candidate size to full recording duration for accurate display
-    const fullDurationMin = Math.max(0.001, (fullPcm?.durationMs ?? recording.durationMs) / 60_000);
+    const fullDurationMin = Math.max(
+      0.001,
+      (fullPcm?.durationMs ?? recording?.durationMs ?? 1000) / 60_000,
+    );
     const estFullBytes = Math.round(blindCandidate.bytesPerMinute * fullDurationMin);
 
     setTierResults((prev) => {
@@ -530,7 +671,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
     );
   };
 
-  // Single full-chapter export
+  // Single full-chapter / mic-clip export
   const handleSingleExport = async (action: 'download' | 'share') => {
     if (!fullPcm) return;
     setSingleExporting(true);
@@ -545,7 +686,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
       const result = await transcodePcm(
         fullPcm,
         spec,
-        recording,
+        effectiveMeta,
         fullReferenceBytes,
       );
       setSingleResult(result);
@@ -554,11 +695,14 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
         triggerBlobDownload(result.encoded.blob, result.fileName);
         onToast(`Exported ${result.fileName}`);
       } else {
+        const shareTitle = project && recording
+          ? `${project.title} — ${recording.name}`
+          : 'StoryTape Mic Test';
         const outcome = await shareAudioChapter({
           blob: result.encoded.blob,
           fileName: result.fileName,
-          title: `${project.title} — ${recording.name}`,
-          text: `Exported ${recording.name} (${result.fileName})`,
+          title: shareTitle,
+          text: `Exported ${effectiveMeta.name} (${result.fileName})`,
         });
         if (outcome === 'shared') onToast(`Shared ${result.fileName}`);
         else if (outcome === 'downloaded') onToast(`Downloaded ${result.fileName}`);
@@ -573,7 +717,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
   const handleDownloadLosslessMaster = () => {
     if (!sourceBlob || !fullPcm) return;
     const fileName = buildExportFileName(
-      recording,
+      effectiveMeta,
       {
         extension: 'wav',
         sampleRate: fullPcm.sampleRate,
@@ -616,7 +760,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
             bitrateMode: 'variable',
             wavBitDepth: 16,
           },
-          recording,
+          effectiveMeta,
           fullReferenceBytes,
         );
         results.push(res);
@@ -632,6 +776,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
   };
 
   const handleDeleteMasterClick = async () => {
+    if (!recording || !onDeleteLocalMaster) return;
     setDeletingMaster(true);
     try {
       stopPlayback();
@@ -643,8 +788,14 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
 
   const abEffectiveFmt = resolveEffectiveFormat(abFormat, caps);
   const exportEffectiveFmt = resolveEffectiveFormat(exportFormat, caps);
-  const fullDurationSec = (fullPcm?.durationMs ?? recording.durationMs) / 1000;
+  const fullDurationSec =
+    (fullPcm?.durationMs ?? recording?.durationMs ?? 0) / 1000;
   const maxWindowStart = Math.max(0, Math.floor(fullDurationSec - COMPARE_WINDOW_SEC));
+  const activeMicLabel =
+    micTelemetry?.actualDeviceLabel ||
+    micCapture?.deviceLabel ||
+    audioDevice?.deviceLabel ||
+    'System Default Microphone';
 
   return (
     <div
@@ -657,13 +808,16 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
             type="button"
             className="btn btn-ghost btn-sm"
             onClick={() => {
+              micTesterRef.current?.stop();
+              micTesterRef.current = null;
+              setRecordingMicClip(false);
               stopPlayback();
               onBack();
             }}
-            aria-label="Back to book"
+            aria-label={micTestMode ? 'Back to library' : 'Back to book'}
           >
             <ArrowLeft size={17} />
-            Book
+            {micTestMode ? 'Library' : 'Book'}
           </button>
 
           <span className="quality-lab-topbar__title">
@@ -671,7 +825,23 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
             Quality Lab
           </span>
 
-          {recording.hasLocalMaster ? (
+          {micTestMode && onOpenSettings ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                if (recordingMicClip) {
+                  void handleToggleMicRecord();
+                }
+                stopPlayback();
+                onOpenSettings();
+              }}
+              aria-label="Open Studio Settings"
+            >
+              <Sliders size={14} />
+              Settings
+            </button>
+          ) : recording?.hasLocalMaster && onDeleteLocalMaster ? (
             <button
               type="button"
               className="btn btn-ghost btn-sm quality-lab-topbar__delete"
@@ -694,14 +864,24 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
         <section className="ql-source-card" data-testid="quality-lab-source">
           <div className="ql-source-card__top">
             <div className="ql-source-card__titles">
-              <h1 className="ql-source-card__chapter">{recording.name}</h1>
-              <span className="ql-source-card__book">{project.title}</span>
+              <h1 className="ql-source-card__chapter">
+                {micTestMode ? 'Microphone Test Clip' : recording?.name || 'Recording'}
+              </h1>
+              <span className="ql-source-card__book">
+                {micTestMode ? activeMicLabel : project?.title || ''}
+              </span>
             </div>
             <span
               className={`badge ${usingLocalMaster ? 'badge-sage' : 'badge-amber'}`}
               data-testid="quality-lab-source-badge"
             >
-              {usingLocalMaster ? 'Lossless Master' : 'Chapter Source'}
+              {micTestMode
+                ? fullPcm
+                  ? 'Lossless Master'
+                  : 'Ready to Record'
+                : usingLocalMaster
+                  ? 'Lossless Master'
+                  : 'Chapter Source'}
             </span>
           </div>
 
@@ -714,14 +894,68 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
               <span>
                 {usingLocalMaster
                   ? `${fullPcm.bitDepth === 32 ? '32-bit Float' : `${fullPcm.bitDepth ?? 24}-bit`} WAV`
-                  : `${recording.extension.toUpperCase()}${recording.bitrateKbps ? ` ${recording.bitrateKbps}k` : ''}`}
+                  : `${(recording?.extension ?? 'm4a').toUpperCase()}${recording?.bitrateKbps ? ` ${recording.bitrateKbps}k` : ''}`}
               </span>
               <span>·</span>
               <span>{formatBytes(fullReferenceBytes)}</span>
             </div>
           )}
 
-          {!loadingSource && !usingLocalMaster && (
+          {/* Embedded Mic Test Recorder Bar in Mic Test Mode */}
+          {micTestMode && (
+            <div className="ql-mic-recorder" data-testid="ql-mic-recorder">
+              <div className="ql-mic-recorder__row">
+                <span className="font-mono ql-muted-mono">
+                  {recordingMicClip
+                    ? `${micTelemetry ? `${micTelemetry.db.toFixed(0)} dB` : 'Listening…'} · ${formatDurationMs(micTelemetry?.capturedDurationMs ?? 0)}`
+                    : fullPcm
+                      ? 'Record a fresh sample anytime using your Settings mic'
+                      : 'Speak a short test sentence to benchmark bitrates'}
+                </span>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${recordingMicClip ? 'btn-danger' : 'btn-primary'}`}
+                  onClick={() => void handleToggleMicRecord()}
+                  data-testid="ql-mic-record-btn"
+                >
+                  {recordingMicClip ? (
+                    <>
+                      <Square size={13} fill="currentColor" />
+                      Stop Recording
+                    </>
+                  ) : (
+                    <>
+                      <Mic size={14} />
+                      {fullPcm ? 'Re-record Clip' : 'Record Test Clip'}
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {recordingMicClip && (
+                <div className="ql-mic-recorder__meter" aria-hidden="true">
+                  <div
+                    className={`ql-mic-recorder__fill ${
+                      micTelemetry?.clipping
+                        ? 'ql-mic-recorder__fill--clip'
+                        : (micTelemetry?.level ?? 0) > 0.72
+                          ? 'ql-mic-recorder__fill--hot'
+                          : ''
+                    }`}
+                    style={{
+                      width: `${Math.min(100, Math.round((micTelemetry?.level ?? 0) * 100))}%`,
+                    }}
+                  />
+                </div>
+              )}
+
+              {micError && (
+                <span className="badge badge-danger">{micError}</span>
+              )}
+            </div>
+          )}
+
+          {!micTestMode && !loadingSource && !usingLocalMaster && (
             <p className="ql-source-card__hint">
               Comparing from the saved chapter file. Turn on{' '}
               <strong>Save Local Lossless Master</strong> in Studio Settings for
@@ -801,6 +1035,16 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
         ) : sourceError ? (
           <div className="ql-error-box" role="alert">
             {sourceError}
+          </div>
+        ) : !fullPcm ? (
+          <div className="ql-empty-mic-card" data-testid="ql-empty-mic-card">
+            <Mic size={24} color="var(--accent-amber)" />
+            <span>
+              Tap <strong>Record Test Clip</strong> above (or run{' '}
+              <strong>Test Mic</strong> in Studio Settings) to capture an
+              uncompressed 32-bit Float sample from{' '}
+              <strong>{activeMicLabel}</strong> and compare bitrates side by side.
+            </span>
           </div>
         ) : (
           <>

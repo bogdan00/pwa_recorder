@@ -4,6 +4,7 @@ import {
   Cloud,
   Download,
   ExternalLink,
+  FlaskConical,
   FolderOpen,
   HardDrive,
   Link2,
@@ -30,6 +31,7 @@ import type {
 } from '../types/models';
 import {
   type AudioInputDeviceInfo,
+  type CapturedMicTestAudio,
   listAudioInputDevices,
   MicLevelTester,
   type MicTestTelemetry,
@@ -55,7 +57,12 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ThemePickerGrid } from '../components/ThemeSwitcherSheet';
 import { getLocalMastersSummary } from '../storage/db';
 import { APP_VERSION } from '../utils/appVersion';
-import { formatBytes, formatGainDb, formatSampleRate } from '../utils/format';
+import {
+  formatBytes,
+  formatDurationMs,
+  formatGainDb,
+  formatSampleRate,
+} from '../utils/format';
 import './SettingsSheet.css';
 
 interface SettingsSheetProps {
@@ -65,6 +72,9 @@ interface SettingsSheetProps {
   pwaInstallState?: PwaInstallState;
   isSyncing: boolean;
   syncStatusMessage: string | null;
+  lastMicCapture?: CapturedMicTestAudio | null;
+  onMicTestCaptured?: (capture: CapturedMicTestAudio) => void;
+  onOpenMicQualityLab?: (capture?: CapturedMicTestAudio | null) => void;
   onClose: () => void;
   onUpdateSettings: (next: AppSettings) => void;
   onInstallApp?: () => void;
@@ -88,6 +98,9 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   pwaInstallState,
   isSyncing,
   syncStatusMessage,
+  lastMicCapture = null,
+  onMicTestCaptured,
+  onOpenMicQualityLab,
   onClose,
   onUpdateSettings,
   onInstallApp,
@@ -148,12 +161,21 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
     }
   }, []);
 
-  const stopMicTest = useCallback(() => {
-    testerRef.current?.stop();
-    testerRef.current = null;
+  const stopMicTest = useCallback((): CapturedMicTestAudio | null => {
+    const tester = testerRef.current;
+    let captured: CapturedMicTestAudio | null = null;
+    if (tester) {
+      tester.stop();
+      captured = tester.getCapturedAudio();
+      if (captured && onMicTestCaptured) {
+        onMicTestCaptured(captured);
+      }
+      testerRef.current = null;
+    }
     setTestingMic(false);
     setTelemetry(null);
-  }, []);
+    return captured;
+  }, [onMicTestCaptured]);
 
   useEffect(() => {
     if (!open) {
@@ -442,8 +464,14 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
               <div className="mic-telemetry">
                 <span>
                   {telemetry
-                    ? `${telemetry.db.toFixed(0)} dB${telemetry.clipping ? ' · CLIP' : ''}`
-                    : 'Tap Test Mic to verify level & gain'}
+                    ? `${telemetry.db.toFixed(0)} dB${telemetry.clipping ? ' · CLIP' : ''}${
+                        telemetry.capturedDurationMs >= 200
+                          ? ` · ${formatDurationMs(telemetry.capturedDurationMs)}`
+                          : ''
+                      }`
+                    : lastMicCapture
+                      ? `Last test clip ready: ${formatDurationMs(lastMicCapture.pcm.durationMs)} (${formatSampleRate(lastMicCapture.pcm.sampleRate)} 32f)`
+                      : 'Tap Test Mic to verify level & capture a lossless A/B sample'}
                 </span>
                 {telemetry && (
                   <span>
@@ -452,6 +480,35 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   </span>
                 )}
               </div>
+
+              {onOpenMicQualityLab && (
+                <div className="mic-tester-lab-row">
+                  <span className="field-hint">
+                    Compare bitrates blind using this mic
+                  </span>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${
+                      lastMicCapture || (telemetry?.capturedDurationMs ?? 0) >= 200
+                        ? 'btn-amber'
+                        : 'btn-secondary'
+                    }`}
+                    data-testid="open-mic-quality-lab-btn"
+                    onClick={() => {
+                      const fresh = testingMic ? stopMicTest() : null;
+                      const clip = fresh ?? lastMicCapture ?? null;
+                      onOpenMicQualityLab(clip);
+                    }}
+                  >
+                    <FlaskConical size={14} />
+                    {testingMic && (telemetry?.capturedDurationMs ?? 0) >= 200
+                      ? `Open in A/B Lab (${formatDurationMs(telemetry!.capturedDurationMs)})`
+                      : lastMicCapture
+                        ? `Open in A/B Lab (${formatDurationMs(lastMicCapture.pcm.durationMs)})`
+                        : 'A/B Quality Lab'}
+                  </button>
+                </div>
+              )}
             </div>
 
             {deviceError && (

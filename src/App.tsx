@@ -76,12 +76,14 @@ import {
   type SavedStudioRecording,
 } from './views/RecordingStudioView';
 import { SettingsSheet } from './views/SettingsSheet';
+import type { CapturedMicTestAudio } from './audio/audioDevices';
 import type { RecordingEngine } from './audio/recordingEngine';
 
 type Route =
   | { view: 'library' }
   | { view: 'book'; projectId: string }
   | { view: 'compare'; projectId: string; recordingId: string }
+  | { view: 'mic-compare' }
   | { view: 'record'; projectId: string; draftId?: string | null };
 
 type ShareTarget =
@@ -100,6 +102,9 @@ function parseHashRoute(): Route {
   const [pathPart, queryPart] = hash.split('?');
   const parts = pathPart.split('/').filter(Boolean);
 
+  if (parts[0] === 'quality-lab' && parts[1] === 'mic-test') {
+    return { view: 'mic-compare' };
+  }
   if (parts[0] === 'book' && parts[1] && parts[2] === 'compare' && parts[3]) {
     return {
       view: 'compare',
@@ -128,6 +133,9 @@ function parseJoinInviteFromHash(): JoinShareInvite | null {
 }
 
 function serializeRoute(route: Route): string {
+  if (route.view === 'mic-compare') {
+    return '#/quality-lab/mic-test';
+  }
   if (route.view === 'compare') {
     return `#/book/${encodeURIComponent(route.projectId)}/compare/${encodeURIComponent(route.recordingId)}`;
   }
@@ -193,6 +201,8 @@ const StoryTapeShell: React.FC<AppProps> = ({
     onConfirm: () => Promise<void> | void;
   } | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [micTestCapture, setMicTestCapture] =
+    useState<CapturedMicTestAudio | null>(null);
 
   const toastTimersRef = useRef<Map<string, number>>(new Map());
   const settingsRef = useRef(settings);
@@ -916,7 +926,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
   };
 
   const activeBook =
-    route.view !== 'library'
+    route.view !== 'library' && route.view !== 'mic-compare'
       ? projects.find((p) => p.id === route.projectId) ?? null
       : null;
 
@@ -935,6 +945,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
   const hasMiniPlayer =
     route.view !== 'record' &&
     route.view !== 'compare' &&
+    route.view !== 'mic-compare' &&
     Boolean(player.project && player.currentRecording && !player.isExpanded);
 
   return (
@@ -984,6 +995,24 @@ const StoryTapeShell: React.FC<AppProps> = ({
           onToast={(msg) => showToast(msg)}
           onRecordingSaved={(saved) => handleRecordingSaved(activeBook, saved)}
           engineFactory={engineFactory}
+        />
+      ) : route.view === 'mic-compare' ? (
+        <QualityCompareView
+          micTestMode
+          audioDevice={settings.audioDevice}
+          initialMicCapture={micTestCapture}
+          onMicCaptureChange={setMicTestCapture}
+          onOpenSettings={() => setSettingsOpen(true)}
+          audioQuality={settings.audioQuality}
+          hasMiniPlayer={hasMiniPlayer}
+          onBack={() => navigate({ view: 'library' })}
+          onApplyRecommendedQuality={(nextQuality) =>
+            handleUpdateSettings({
+              ...settingsRef.current,
+              audioQuality: nextQuality,
+            })
+          }
+          onToast={(msg) => showToast(msg)}
         />
       ) : route.view === 'compare' && activeBook && activeCompareRecording ? (
         <QualityCompareView
@@ -1125,7 +1154,13 @@ const StoryTapeShell: React.FC<AppProps> = ({
       )}
 
       {/* Persistent Minimalistic Audiobook Player */}
-      <MiniPlayerBar hidden={route.view === 'record' || route.view === 'compare'} />
+      <MiniPlayerBar
+        hidden={
+          route.view === 'record' ||
+          route.view === 'compare' ||
+          route.view === 'mic-compare'
+        }
+      />
       <AudioPlayerSheet />
 
       {/* Book Create / Edit Metadata Sheet */}
@@ -1215,6 +1250,14 @@ const StoryTapeShell: React.FC<AppProps> = ({
         pwaInstallState={pwaInstallState}
         isSyncing={isSyncing}
         syncStatusMessage={syncStatusMessage}
+        lastMicCapture={micTestCapture}
+        onMicTestCaptured={setMicTestCapture}
+        onOpenMicQualityLab={(clip) => {
+          if (clip) setMicTestCapture(clip);
+          player.pauseForRecording();
+          setSettingsOpen(false);
+          navigate({ view: 'mic-compare' });
+        }}
         onClose={() => setSettingsOpen(false)}
         onUpdateSettings={handleUpdateSettings}
         onInstallApp={handleInstallApp}
