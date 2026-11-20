@@ -115,5 +115,5 @@ Before pushing any change to `main`, **all checks must pass**:
 npm run precheck   # typecheck -> vitest unit tests -> production build -> parallel Playwright CUJ E2E
 ```
 
-- **Local Git hook**: [`.githooks/pre-push`](./.githooks/pre-push) automatically runs `npm run precheck` on every `git push` (configured via `prepare` → `git config core.hooksPath .githooks`). Never bypass the hook with `--no-verify`.
-- **GitHub Actions CI**: [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) runs `typecheck`, Vitest, production build, and parallel Playwright CUJ E2E tests before deploying to GitHub Pages.
+- **Local Git hook**: [`.githooks/pre-push`](./.githooks/pre-push) automatically runs `npm run precheck` on every `git push` (configured via `prepare` → `git config core.hooksPath .githooks`), using a fast `repoInvariants.test.ts`-only path for docs-only pushes (`README.md`, `AGENTS.md`, `cuj/**`, `adr/**`). Never bypass the hook with `--no-verify`.
+- **GitHub Actions CI**: [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) runs `typecheck`, Vitest, production build, and parallel Playwright CUJ E2E tests before deploying to GitHub Pages (skipping docs-only commits via `paths-ignore`).

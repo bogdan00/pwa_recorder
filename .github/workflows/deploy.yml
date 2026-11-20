@@ -3,8 +3,18 @@ name: Deploy StoryTape PWA to GitHub Pages
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'cuj/**'
+      - 'adr/**'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'cuj/**'
+      - 'adr/**'
   workflow_dispatch:
 
 permissions:

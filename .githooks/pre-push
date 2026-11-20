@@ -4,6 +4,76 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
+ZERO_SHA="0000000000000000000000000000000000000000"
+CHANGED_FILES=()
+SAW_REF=0
+NEED_FULL_PRECHECK=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "${local_sha:-}" ] && continue
+  SAW_REF=1
+
+  # Branch deletion on remote: nothing to verify
+  if [ "$local_sha" = "$ZERO_SHA" ]; then
+    continue
+  fi
+
+  if [ "$remote_sha" = "$ZERO_SHA" ]; then
+    # New remote branch: diff against origin/main if available, else fall back to full precheck
+    if git rev-parse --verify origin/main >/dev/null 2>&1; then
+      while IFS= read -r f; do
+        [ -n "$f" ] && CHANGED_FILES+=("$f")
+      done < <(git diff --name-only origin/main..."$local_sha")
+    else
+      NEED_FULL_PRECHECK=1
+    fi
+  else
+    while IFS= read -r f; do
+      [ -n "$f" ] && CHANGED_FILES+=("$f")
+    done < <(git diff --name-only "$remote_sha" "$local_sha")
+  fi
+done
+
+if [ "$SAW_REF" -eq 0 ] || [ "${#CHANGED_FILES[@]}" -eq 0 ]; then
+  if [ "$SAW_REF" -eq 1 ] && [ "$NEED_FULL_PRECHECK" -eq 0 ]; then
+    echo "No file changes to verify for this push."
+    exit 0
+  fi
+  NEED_FULL_PRECHECK=1
+fi
+
+is_docs_only_file() {
+  case "$1" in
+    README.md|AGENTS.md|cuj/*|adr/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ "$NEED_FULL_PRECHECK" -eq 0 ]; then
+  for f in "${CHANGED_FILES[@]}"; do
+    if ! is_docs_only_file "$f"; then
+      NEED_FULL_PRECHECK=1
+      break
+    fi
+  done
+fi
+
+if [ "$NEED_FULL_PRECHECK" -eq 0 ]; then
+  echo ""
+  echo "================================================================="
+  echo "  StoryTape pre-push verification (docs-only fast path)"
+  echo "  Running: repoInvariants.test.ts (CUJ/ADR registry & link check)"
+  echo "================================================================="
+  echo ""
+
+  npx vitest run src/__tests__/repoInvariants.test.ts
+
+  echo ""
+  echo "Docs-only invariants passed. Skipped full build & Playwright E2E."
+  echo ""
+  exit 0
+fi
+
 echo ""
 echo "================================================================="
 echo "  StoryTape pre-push verification"
