@@ -1,0 +1,102 @@
+# AGENTS.md — StoryTape Engineering & Agent Conventions
+
+This document defines the working agreements, architecture standards, and quality gates for **StoryTape** (`bogdan00/pwa_recorder`), a mobile-first, offline-capable React + TypeScript + Vite Progressive Web App deployed to GitHub Pages at `/pwa_recorder/`.
+
+---
+
+## 1. CUJ-First Development Workflow
+
+1. **Start with the Customer User Journey (CUJ).**
+   - Before implementing a new feature or changing user-visible behavior, create a new CUJ document under [`cuj/`](./cuj/README.md) (`cuj/CUJ-XX-<slug>.md`) or update the relevant existing CUJ.
+   - Register every CUJ in the [`cuj/README.md`](./cuj/README.md) matrix with its priority (`P0`/`P1`) and 1-to-1 E2E spec mapping.
+2. **Write or update automated E2E coverage for every CUJ.**
+   - Every CUJ must have a matching Playwright spec under `e2e/cuj-XX-<slug>.spec.ts` exercising the production bundle (`/pwa_recorder/`) at mobile phone viewport (`390×844` @ 2x DPR, touch enabled).
+3. **Fix defects in application code, never weaken tests.**
+   - If an E2E test uncovers a race condition, stale state, UI glitch, or sync defect, fix the underlying app code and keep the assertion strict.
+4. **Update unit tests alongside domain changes.**
+   - Pure logic (audio timeline, encoding, Drive sync merge, share link parsing, IndexedDB storage) belongs under `src/**/__tests__/*.test.ts(x)` and runs via Vitest.
+
+---
+
+## 2. Testing & E2E Standards
+
+- **Zero fixed sleeps or arbitrary delays.**
+  - Do **not** use `page.waitForTimeout(...)`, `setTimeout(...)`, or blind `recordMs` waits in `e2e/`.
+  - Always wait reactively on observable page conditions: Playwright auto-waiting locators, `expect(locator)`, `expect.poll(...)`, live DOM timer progression (`waitForStudioTimer` in `e2e/helpers.ts`), telemetry output, or IndexedDB state.
+- **Parallelize to the maximum.**
+  - Keep every `test(...)` block self-contained with isolated browser state so `playwright.config.ts` (`fullyParallel: true`, multi-worker execution) runs specs concurrently without cross-test coupling.
+  - Split large CUJs into independent parallel `test(...)` blocks whenever flows don't depend on each other (see `e2e/cuj-08-*.spec.ts` and `e2e/cuj-09-*.spec.ts`).
+- **Keep E2E deterministic offline and in CI.**
+  - Stub external third-party scripts and endpoints (`https://accounts.google.com/**`, `https://apis.google.com/**`, `https://www.googleapis.com/**`) inside tests so online CI runners never overwrite mocks or flake on external networks.
+- **Verify against the production build.**
+  - Playwright serves `dist/` via `vite preview` at `/pwa_recorder/`, matching GitHub Pages subpath behavior. Always run `npm run build` before `npm run test:e2e` (or run `npm run precheck`).
+
+---
+
+## 3. Architecture & Code Organization
+
+Enforce clear separation of concerns across layers—avoid putting audio DSP, IndexedDB transactions, or Drive REST calls directly inside React view components:
+
+- `src/types/models.ts` — Canonical TypeScript interfaces for books, recordings, drafts, settings, playback progress, and Drive manifests.
+- `src/storage/` — Local persistence:
+  - `db.ts`: IndexedDB wrapper. **Always store binary blobs as `{ buffer: ArrayBuffer, type: string }` and reconstruct `Blob` on read** to avoid iOS Safari WebKit / `fake-indexeddb` structured-clone bugs.
+  - `settings.ts`: `localStorage` persistence, theme resolution, and build-time env defaults (`VITE_GOOGLE_CLIENT_ID`, `VITE_GOOGLE_API_KEY`).
+- `src/audio/` & `public/audio/` — Audio capture, timeline, encoding, quality presets, and device selection:
+  - Keep real-time PCM capture off the main thread in `public/audio/pcm-capture-worklet.js` (~25ms flush cadence, 50 peaks/sec).
+  - Route `AudioWorkletNode` (`numberOfOutputs: 1`) through a muted `GainNode(0)` to `ctx.destination` so iOS Safari WebKit and mobile Chrome pull frames reliably. Guard `ctx.audioWorklet.addModule()` so it loads once per `AudioContext`.
+  - Keep `RecordingEngine` lifecycle subscriptions separate from draft-loading effects; never clear active UI listeners inside async `dispose()`.
+- `src/drive/` — Client-side Google Drive integration (zero backend):
+  - `googleAuth.ts`: Google Identity Services OAuth using the narrow `drive.file` scope.
+  - `driveClient.ts`: REST API v3 client (folders, resumable binary uploads, multipart JSON, Permissions API, capabilities inspection).
+  - `googlePicker.ts`: Lazy-loaded Google Picker for unlocking shared Drive folders cleanly under `drive.file`.
+  - `shareUtils.ts`: `#/join?...` invite link builder/parser, Drive URL extraction, clipboard & Web Share API helpers.
+  - `syncService.ts`: Two-way sync engine.
+- `src/player/` — Persistent `PlayerContext` managing audio playback, saved resume progress, sleep timer fade-out, and Media Session API lock-screen controls.
+- `src/views/` & `src/components/` — Screen views and reusable UI components with co-located **Vanilla CSS** stylesheets.
+
+---
+
+## 4. Performance, Sync & Mobile PWA Invariants
+
+### Rendering & Audio Smoothness
+- **No layout thrashing or style recalculation in `requestAnimationFrame` loops.**
+  - Cache CSS theme tokens once via `MutationObserver` on `data-theme` (never call `getComputedStyle()` per frame).
+  - Cache canvas logical dimensions via `ResizeObserver` (never call `getBoundingClientRect()` per frame).
+- **Decouple 60/120fps canvas animation from React state.**
+  - Drive live waveform drawing directly from `RecordingEngine.getLiveRenderState()` inside `rAF` with smooth sub-chunk playhead interpolation; throttle React UI snapshots (`emit()`) during recording/playback to ~15Hz for timer display only.
+- **Batch Canvas 2D draw calls** by fill/stroke style (a handful of `fill()`/`stroke()` calls per frame rather than per-bar draws).
+- **Cancel scrub momentum immediately** whenever recording phase leaves `'paused'`.
+
+### Offline-First & Multi-User Drive Sync
+- **Always pull and merge before pushing** in `syncService.ts`:
+  - Merge chapter lists by `recording.id` so concurrent co-narrators never overwrite each other.
+  - Track deletions via `deletedRecordingIds` tombstones to prevent deleted chapters from resurrecting.
+  - Preserve per-chapter `recordedBy` narrator attribution.
+- **Enforce read-only Listener protection (`accessRole === 'reader'`)**:
+  - Hide or disable record, edit, reorder, and delete UI for read-only shared books/libraries.
+  - Skip all Drive upload/rename/write calls for read-only folders.
+- **Do not gate silent background sync on `navigator.onLine`** (it is unreliable behind proxies/VPNs); attempt silent sync when an access token is valid and fall back gracefully on network failure.
+- **Keep OAuth/GCP credentials out of end-user UI**:
+  - Do not expose OAuth Client ID inputs, API key inputs, or Google Cloud Console setup/Testing-mode instructions in the app UI. Manage OAuth configuration via build defaults / repository variables (`VITE_GOOGLE_CLIENT_ID`).
+
+### Styling, Mobile Ergonomics & GitHub Pages Subpath
+- **Vanilla CSS only** (no TailwindCSS or CSS-in-JS). Use semantic tokens in `src/styles/global.css` supporting both **Warm Night** (`dark`) and **Warm Paper** (`light`) themes.
+- **iOS Safari / Mobile PWA gestures**:
+  - Call `googleAuth.requestSignIn()` and `AudioContext.resume()` synchronously inside click/tap handlers so iOS standalone PWAs don't block popups or audio playback.
+  - Design for `100dvh`, safe-area insets, and thumb-zone controls.
+- **Subpath integrity (`/pwa_recorder/`)**:
+  - Resolve static assets (`icons/`, `audio/pcm-capture-worklet.js`, etc.) relative to `import.meta.env.BASE_URL`.
+  - Preserve `public/privacy.html`, `public/terms.html`, and the Google Search Console verification meta tag in `index.html`.
+
+---
+
+## 5. Pre-Submit Hook & CI Gate
+
+Before pushing any change to `main`, **all checks must pass**:
+
+```bash
+npm run precheck   # typecheck -> vitest unit tests -> production build -> parallel Playwright CUJ E2E
+```
+
+- **Local Git hook**: [`.githooks/pre-push`](./.githooks/pre-push) automatically runs `npm run precheck` on every `git push` (configured via `prepare` → `git config core.hooksPath .githooks`). Never bypass the hook with `--no-verify`.
+- **GitHub Actions CI**: [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) runs `typecheck`, Vitest, production build, and parallel Playwright CUJ E2E tests before deploying to GitHub Pages.
