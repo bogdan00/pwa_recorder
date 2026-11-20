@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { createBook, recordAndSaveChapter } from './helpers';
 
 test.describe('CUJ-05: Minimalistic Audiobook Player, Mini-Player, Speed, Sleep Timer & Continue Listening', () => {

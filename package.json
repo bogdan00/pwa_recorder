@@ -13,7 +13,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "precheck": "npm run typecheck && npm test && npm run build && npm run test:e2e",
+    "precheck": "npm run typecheck && npm test && npm run build && PRECHECK=1 npm run test:e2e",
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {

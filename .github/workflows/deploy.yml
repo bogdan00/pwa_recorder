@@ -3,6 +3,8 @@ name: Deploy StoryTape PWA to GitHub Pages
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -57,15 +59,18 @@ jobs:
           retention-days: 7
 
       - name: Add .nojekyll safeguard
+        if: github.event_name != 'pull_request'
         run: touch dist/.nojekyll
 
       - name: Upload GitHub Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

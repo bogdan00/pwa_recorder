@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { createBook, createTinyPngBuffer } from './helpers';
 
 test.describe('CUJ-01: Book Project Creation, Metadata, Cover Art, Editing & Deletion', () => {

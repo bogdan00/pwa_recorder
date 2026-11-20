@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { createBook, recordAndSaveChapter } from './helpers';
 
 test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV Export) & Microphone Selection', () => {

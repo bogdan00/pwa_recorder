@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
 import fs from 'node:fs';
 import os from 'node:os';
+import type { StoryTapeTestOptions } from './e2e/fixtures';
 
 function resolveChromiumExecutable(): string | undefined {
   if (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH) {
@@ -15,16 +16,19 @@ function resolveChromiumExecutable(): string | undefined {
 
 const PORT = Number(process.env.E2E_PORT || 4173);
 const BASE_URL = `http://127.0.0.1:${PORT}/pwa_recorder/`;
+const isStrictGate = Boolean(process.env.CI || process.env.PRECHECK);
 
-export default defineConfig({
+export default defineConfig<StoryTapeTestOptions>({
   testDir: './e2e',
   fullyParallel: true,
-  forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 1 : 0,
+  forbidOnly: isStrictGate,
+  retries: 0,
   workers: process.env.E2E_WORKERS
     ? Number(process.env.E2E_WORKERS)
-    : Math.max(4, Math.min(10, os.cpus().length)),
-  timeout: 40_000,
+    : process.env.CI
+      ? Math.max(3, Math.min(4, os.cpus().length))
+      : Math.max(4, Math.min(8, os.cpus().length * 2)),
+  timeout: 45_000,
   expect: {
     timeout: 8_000,
   },
@@ -40,6 +44,7 @@ export default defineConfig({
     permissions: ['microphone'],
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    cpuThrottleRate: Number(process.env.E2E_CPU_THROTTLE || '1'),
     launchOptions: {
       executablePath: resolveChromiumExecutable(),
       args: [
@@ -51,10 +56,28 @@ export default defineConfig({
       ],
     },
   },
+  projects: [
+    {
+      name: 'mobile',
+      testMatch: /cuj-.*\.spec\.ts/,
+      use: {
+        cpuThrottleRate: 1,
+      },
+    },
+    {
+      // Deterministically reproduces slow mobile phones & contended CI runners locally
+      // for real-time audio capture, live waveform rAF, scrub momentum, trim, and undo.
+      name: 'mobile-slow-cpu',
+      testMatch: /cuj-(02|03)-.*\.spec\.ts/,
+      use: {
+        cpuThrottleRate: 4,
+      },
+    },
+  ],
   webServer: {
     command: `./node_modules/.bin/vite preview --host 127.0.0.1 --port ${PORT} --strictPort`,
     url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: !isStrictGate,
     timeout: 30_000,
   },
 });

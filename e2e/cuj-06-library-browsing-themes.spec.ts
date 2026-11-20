@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { createBook, recordAndSaveChapter } from './helpers';
 
 test.describe('CUJ-06: Audiobook Library Browsing (Search, Tags, Sort) & Themes', () => {

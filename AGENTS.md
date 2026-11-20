@@ -21,15 +21,21 @@ This document defines the working agreements, architecture standards, and qualit
 ## 2. Testing & E2E Standards
 
 - **Zero fixed sleeps or arbitrary delays.**
-  - Do **not** use `page.waitForTimeout(...)`, `setTimeout(...)`, or blind `recordMs` waits in `e2e/`.
+  - Do **not** use `page.waitForTimeout(...)`, `setTimeout(...)`, or blind `recordMs` waits in `e2e/` (automatically enforced by `src/__tests__/repoInvariants.test.ts`).
   - Always wait reactively on observable page conditions: Playwright auto-waiting locators, `expect(locator)`, `expect.poll(...)`, live DOM timer progression (`waitForStudioTimer` in `e2e/helpers.ts`), telemetry output, or IndexedDB state.
+- **Always use the strict E2E fixture (`e2e/fixtures.ts`) — never raw `@playwright/test`.**
+  - Every `e2e/cuj-*.spec.ts` must import `{ test, expect }` from `./fixtures` (enforced by `src/__tests__/repoInvariants.test.ts`).
+  - `e2e/fixtures.ts` enforces:
+    1. **External network fence**: aborts and fails any unstubbed request outside `127.0.0.1`/`localhost` so missing third-party mocks fail immediately offline instead of only failing on online CI runners.
+    2. **Zero uncaught `pageerror`**: any uncaught runtime exception fails the test automatically.
+    3. **CDP CPU throttling parity**: `playwright.config.ts` runs timing- and animation-sensitive CUJs (`CUJ-02`, `CUJ-03`) under both `mobile` (`1×`) and `mobile-slow-cpu` (`4×` CPU slowdown) with `retries: 0` and fresh preview server (`PRECHECK=1`) so slow-phone and contended-CI races reproduce locally before push.
+- **Unit-test real-time animation & async state races deterministically.**
+  - Any `requestAnimationFrame` loop, scrub momentum, timer, or async audio/sync transition must have a deterministic Vitest unit/component test (e.g., `src/components/__tests__/WaveformCanvas.test.tsx`) in addition to CUJ E2E coverage.
 - **Parallelize to the maximum.**
   - Keep every `test(...)` block self-contained with isolated browser state so `playwright.config.ts` (`fullyParallel: true`, multi-worker execution) runs specs concurrently without cross-test coupling.
   - Split large CUJs into independent parallel `test(...)` blocks whenever flows don't depend on each other (see `e2e/cuj-08-*.spec.ts` and `e2e/cuj-09-*.spec.ts`).
-- **Keep E2E deterministic offline and in CI.**
-  - Stub external third-party scripts and endpoints (`https://accounts.google.com/**`, `https://apis.google.com/**`, `https://www.googleapis.com/**`) inside tests so online CI runners never overwrite mocks or flake on external networks.
 - **Verify against the production build.**
-  - Playwright serves `dist/` via `vite preview` at `/pwa_recorder/`, matching GitHub Pages subpath behavior. Always run `npm run build` before `npm run test:e2e` (or run `npm run precheck`).
+  - Playwright serves `dist/` via `vite preview` at `/pwa_recorder/`, matching GitHub Pages subpath behavior. Always run `npm run precheck` before pushing.
 
 ---
 

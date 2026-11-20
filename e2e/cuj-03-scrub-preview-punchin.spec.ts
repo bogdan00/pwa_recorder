@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { createBook, parseTimerSeconds, waitForStudioTimer } from './helpers';
 
 test.describe('CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In & Undo', () => {
