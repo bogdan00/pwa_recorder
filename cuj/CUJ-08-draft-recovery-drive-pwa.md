@@ -15,7 +15,7 @@ A parent never loses an in-progress recording if the mobile OS suspends/reloads 
 1. **Crash-Safe Draft Recovery**
    - Start a recording (> 2.2s so crash-safe draft chunks flush to IndexedDB), pause, leave via **Keep Draft & Leave** (or hard-reload the page mid-session).
    - Return to Library.
-   - **Expected:** **Unfinished Recording Found** banner appears showing book name and duration; tapping **Resume** reopens Recording Studio in `PAUSED` state with the full recovered duration and waveform ready to continue or save!
+   - **Expected:** **Unfinished Recording Found** banner appears showing book name and duration; tapping **Resume** reopens Recording Studio in `PAUSED` state with the full recovered duration and waveform ready to continue or save, and tapping **Discard** requires explicit confirmation before deleting the draft.
 
 2. **Google Drive Sign-In & Two-Way Sync**
    - Open Settings → **Google Drive Folder** (no manual Client ID or GCP setup guide shown), tap **Connect Google Drive** (with mocked GIS token callback & intercepted Drive v3 API routes), and verify automatic sync.
@@ -25,9 +25,9 @@ A parent never loses an in-progress recording if the mobile OS suspends/reloads 
      - Tapping Play on the `cloud_only` chapter downloads it on demand from Drive, caches it into IndexedDB, and opens playback.
      - *See also [CUJ-09](./CUJ-09-multi-user-sharing.md) for multi-user family sharing, Google Drive collaborator permissions, conflict-safe co-narration merge, and read-only Listener mode.*
 
-3. **Free Synced Local Audio Cache**
-   - In Settings → **Free Cached Audio for Synced Chapters**, tap the button.
-   - **Expected:** Removes local audio blobs for already-synced chapters (flipping them to `cloud_only`) while preserving unsynced local recordings untouched.
+3. **Free Synced Local Audio Cache (with Confirmation)**
+   - In Settings → **Free Cached Audio for Synced Chapters**, tap the button and confirm in the dialog.
+   - **Expected:** Prompts for confirmation first; on confirm, removes local audio blobs for already-synced chapters (flipping them to `cloud_only`) while preserving unsynced local recordings untouched.
 
 4. **GitHub Pages Subpath PWA & OAuth Branding Pages**
    - Verify `/pwa_recorder/manifest.webmanifest` (`start_url`, `scope`, `id` = `/pwa_recorder/`, `display` = `standalone`, icons `192`/`512`/`maskable`).

@@ -51,6 +51,7 @@ import {
 import type { GoogleAuthState } from '../drive/googleAuth';
 import { getDriveFolderWebUrl } from '../drive/shareUtils';
 import type { PwaInstallState } from '../pwa/installPrompt';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ThemePickerGrid } from '../components/ThemeSwitcherSheet';
 import { getLocalMastersSummary } from '../storage/db';
 import { formatBytes, formatGainDb, formatSampleRate } from '../utils/format';
@@ -121,6 +122,14 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
     count: number;
     totalBytes: number;
   }>({ count: 0, totalBytes: 0 });
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string;
+    description: React.ReactNode;
+    confirmLabel: string;
+    tone: 'danger' | 'warning';
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   const refreshDevices = useCallback(async () => {
     setDeviceLoading(true);
@@ -941,7 +950,23 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
-                    onClick={onSignOutDrive}
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: 'Sign Out of Google Drive?',
+                        description: (
+                          <>
+                            Disconnect Google Drive sync on this device? Your
+                            local books and recordings stay safely stored on
+                            this device, and you can reconnect anytime.
+                          </>
+                        ),
+                        confirmLabel: 'Sign Out',
+                        tone: 'warning',
+                        onConfirm: () => {
+                          onSignOutDrive();
+                        },
+                      })
+                    }
                     disabled={isSyncing}
                   >
                     Sign Out
@@ -996,7 +1021,26 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                     type="button"
                     className="btn btn-secondary btn-sm"
                     id="switch-personal-library-btn"
-                    onClick={() => void onSwitchToPersonalLibrary()}
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: 'Switch to Personal Library?',
+                        description: (
+                          <>
+                            Stop syncing with shared folder{' '}
+                            <strong>
+                              {settings.driveSharedFolderName || 'Shared Audiobooks'}
+                            </strong>{' '}
+                            and switch back to your personal Google Drive
+                            library?
+                          </>
+                        ),
+                        confirmLabel: 'Switch Library',
+                        tone: 'warning',
+                        onConfirm: async () => {
+                          await onSwitchToPersonalLibrary();
+                        },
+                      })
+                    }
                     disabled={isSyncing}
                   >
                     Switch to My Personal Library
@@ -1070,7 +1114,23 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                         <button
                           type="button"
                           className="btn btn-ghost btn-sm"
-                          onClick={() => onUnlinkSharedBook(link.folderId)}
+                          onClick={() =>
+                            setPendingConfirm({
+                              title: 'Unlink Shared Book?',
+                              description: (
+                                <>
+                                  Stop syncing <strong>{link.title}</strong> with
+                                  this device? This does not delete the book from
+                                  Google Drive.
+                                </>
+                              ),
+                              confirmLabel: 'Unlink Book',
+                              tone: 'warning',
+                              onConfirm: () => {
+                                onUnlinkSharedBook(link.folderId);
+                              },
+                            })
+                          }
                         >
                           Unlink
                         </button>
@@ -1217,14 +1277,29 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={async () => {
-                      const count = await onClearSyncedCache();
-                      onToast(
-                        count > 0
-                          ? `Freed local audio cache for ${count} synced chapter${count === 1 ? '' : 's'}`
-                          : 'No synced local audio cache to free',
-                      );
-                    }}
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: 'Free Cached Audio?',
+                        description: (
+                          <>
+                            Remove local audio copies for chapters already backed
+                            up to Google Drive? They will re-download
+                            automatically when played while online. Unsynced
+                            recordings and local masters stay untouched.
+                          </>
+                        ),
+                        confirmLabel: 'Free Cached Audio',
+                        tone: 'warning',
+                        onConfirm: async () => {
+                          const count = await onClearSyncedCache();
+                          onToast(
+                            count > 0
+                              ? `Freed local audio cache for ${count} synced chapter${count === 1 ? '' : 's'}`
+                              : 'No synced local audio cache to free',
+                          );
+                        },
+                      })
+                    }
                   >
                     Free Cached Audio for Synced Chapters
                   </button>
@@ -1234,15 +1309,35 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                       type="button"
                       className="btn btn-secondary btn-sm"
                       data-testid="clear-local-masters-btn"
-                      onClick={async () => {
-                        const res = await onClearLocalMasters();
-                        setLocalMastersSummary({ count: 0, totalBytes: 0 });
-                        onToast(
-                          res.count > 0
-                            ? `Deleted ${res.count} local master${res.count === 1 ? '' : 's'} (${formatBytes(res.freedBytes)} freed)`
-                            : 'No local masters to delete',
-                        );
-                      }}
+                      onClick={() =>
+                        setPendingConfirm({
+                          title: 'Delete All Local Masters?',
+                          description: (
+                            <>
+                              Permanently delete{' '}
+                              <strong>
+                                {localMastersSummary.count} local lossless master
+                                {localMastersSummary.count === 1 ? '' : 's'}
+                              </strong>{' '}
+                              ({formatBytes(localMastersSummary.totalBytes)}) from
+                              this device? Your regular chapter recordings and
+                              Google Drive backups will stay intact, but these
+                              uncompressed 32-bit masters cannot be recovered.
+                            </>
+                          ),
+                          confirmLabel: 'Delete All Masters',
+                          tone: 'danger',
+                          onConfirm: async () => {
+                            const res = await onClearLocalMasters();
+                            setLocalMastersSummary({ count: 0, totalBytes: 0 });
+                            onToast(
+                              res.count > 0
+                                ? `Deleted ${res.count} local master${res.count === 1 ? '' : 's'} (${formatBytes(res.freedBytes)} freed)`
+                                : 'No local masters to delete',
+                            );
+                          },
+                        })
+                      }
                     >
                       Delete Local Masters ({localMastersSummary.count} ·{' '}
                       {formatBytes(localMastersSummary.totalBytes)})
@@ -1254,6 +1349,26 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
           </section>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={pendingConfirm !== null}
+        title={pendingConfirm?.title ?? ''}
+        description={pendingConfirm?.description ?? ''}
+        confirmLabel={pendingConfirm?.confirmLabel ?? 'Confirm'}
+        tone={pendingConfirm?.tone ?? 'danger'}
+        isBusy={confirmBusy}
+        onCancel={() => setPendingConfirm(null)}
+        onConfirm={async () => {
+          if (!pendingConfirm) return;
+          setConfirmBusy(true);
+          try {
+            await pendingConfirm.onConfirm();
+            setPendingConfirm(null);
+          } finally {
+            setConfirmBusy(false);
+          }
+        }}
+      />
     </div>
   );
 };

@@ -50,12 +50,15 @@ import { PlayerProvider, usePlayer } from './player/PlayerContext';
 import {
   buildChapterDriveFileName,
   createId,
+  formatBytes,
+  formatDurationMs,
 } from './utils/format';
 import {
   BookEditorSheet,
   type BookFormSubmission,
 } from './components/BookEditorSheet';
 import { AudioPlayerSheet } from './components/AudioPlayerSheet';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { IosInstallGuideModal } from './components/IosInstallGuideModal';
 import { JoinShareModal } from './components/JoinShareModal';
 import { MiniPlayerBar } from './components/MiniPlayerBar';
@@ -182,6 +185,14 @@ const StoryTapeShell: React.FC<AppProps> = ({
     null,
   );
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string;
+    description: React.ReactNode;
+    confirmLabel: string;
+    tone: 'danger' | 'warning';
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   const toastTimersRef = useRef<Map<string, number>>(new Map());
   const settingsRef = useRef(settings);
@@ -740,9 +751,26 @@ const StoryTapeShell: React.FC<AppProps> = ({
   };
 
   const handleDeleteLocalMaster = async (recordingId: string) => {
-    await deleteRecordingMaster(recordingId);
-    await reloadData();
-    showToast('Deleted local lossless master (chapter audio kept)');
+    const rec = allRecordings.find((r) => r.id === recordingId);
+    setPendingConfirm({
+      title: 'Delete Local Lossless Master?',
+      description: (
+        <>
+          Permanently delete the uncompressed 32-bit Float WAV master for{' '}
+          <strong>{rec?.name || 'this chapter'}</strong>
+          {rec?.localMasterBytes ? ` (${formatBytes(rec.localMasterBytes)})` : ''}?
+          Your regular chapter audio will remain playable and synced, but the
+          lossless master cannot be recovered.
+        </>
+      ),
+      confirmLabel: 'Delete Master',
+      tone: 'danger',
+      onConfirm: async () => {
+        await deleteRecordingMaster(recordingId);
+        await reloadData();
+        showToast('Deleted local lossless master (chapter audio kept)');
+      },
+    });
   };
 
   const handleRenameRecording = async (
@@ -848,21 +876,43 @@ const StoryTapeShell: React.FC<AppProps> = ({
     project: BookProject,
     recordingId: string,
   ) => {
-    await deleteRecording(recordingId);
-    const nextDeleted = Array.from(
-      new Set([...(project.deletedRecordingIds ?? []), recordingId]),
+    const rec = (recordingsByProject.get(project.id) ?? []).find(
+      (r) => r.id === recordingId,
     );
-    await putProject({
-      ...project,
-      deletedRecordingIds: nextDeleted,
-      updatedAt: Date.now(),
+    setPendingConfirm({
+      title: 'Delete Recording?',
+      description: (
+        <>
+          Permanently delete <strong>{rec?.name || 'this recording'}</strong>?
+          This removes the audio
+          {rec?.hasLocalMaster ? ' and its local lossless master' : ''} from this
+          device
+          {googleAuth.hasValidToken()
+            ? ' and marks it deleted on Google Drive sync'
+            : ''}
+          . This cannot be undone.
+        </>
+      ),
+      confirmLabel: 'Delete Recording',
+      tone: 'danger',
+      onConfirm: async () => {
+        await deleteRecording(recordingId);
+        const nextDeleted = Array.from(
+          new Set([...(project.deletedRecordingIds ?? []), recordingId]),
+        );
+        await putProject({
+          ...project,
+          deletedRecordingIds: nextDeleted,
+          updatedAt: Date.now(),
+        });
+        await reloadData();
+        await player.refreshChaptersForProject(project.id);
+        showToast('Recording deleted');
+        if (googleAuth.hasValidToken()) {
+          void handleSyncProject(project.id, true);
+        }
+      },
     });
-    await reloadData();
-    await player.refreshChaptersForProject(project.id);
-    showToast('Recording deleted');
-    if (googleAuth.hasValidToken()) {
-      void handleSyncProject(project.id, true);
-    }
   };
 
   const activeBook =
@@ -1033,10 +1083,40 @@ const StoryTapeShell: React.FC<AppProps> = ({
               draftId: draft.id,
             });
           }}
-          onDiscardDraft={async (draftId) => {
-            await deleteDraft(draftId);
-            await reloadData();
-            showToast('Unfinished draft discarded');
+          onDiscardDraft={(draftId) => {
+            const draft = drafts.find((d) => d.id === draftId);
+            const draftBook = draft
+              ? projects.find((p) => p.id === draft.projectId)
+              : undefined;
+            const draftDurationMs =
+              draft && draft.sampleRate > 0
+                ? Math.round((draft.totalFrames / draft.sampleRate) * 1000)
+                : 0;
+            setPendingConfirm({
+              title: 'Discard Unfinished Draft?',
+              description: (
+                <>
+                  Permanently discard the unsaved recording draft
+                  {draftBook ? (
+                    <>
+                      {' '}
+                      for <strong>{draftBook.title}</strong>
+                    </>
+                  ) : null}
+                  {draftDurationMs > 0
+                    ? ` (${formatDurationMs(draftDurationMs)})`
+                    : ''}
+                  ? This cannot be undone.
+                </>
+              ),
+              confirmLabel: 'Discard Draft',
+              tone: 'danger',
+              onConfirm: async () => {
+                await deleteDraft(draftId);
+                await reloadData();
+                showToast('Unfinished draft discarded');
+              },
+            });
           }}
           onContinueListening={(book) =>
             void player.playBook(book, { resumeSaved: true, expand: true })
@@ -1179,6 +1259,27 @@ const StoryTapeShell: React.FC<AppProps> = ({
       <IosInstallGuideModal
         open={iosInstallGuideOpen}
         onClose={() => setIosInstallGuideOpen(false)}
+      />
+
+      {/* Global Destructive / Critical Action Confirmation Dialog */}
+      <ConfirmDialog
+        open={pendingConfirm !== null}
+        title={pendingConfirm?.title ?? ''}
+        description={pendingConfirm?.description ?? ''}
+        confirmLabel={pendingConfirm?.confirmLabel ?? 'Confirm'}
+        tone={pendingConfirm?.tone ?? 'danger'}
+        isBusy={confirmBusy}
+        onCancel={() => setPendingConfirm(null)}
+        onConfirm={async () => {
+          if (!pendingConfirm) return;
+          setConfirmBusy(true);
+          try {
+            await pendingConfirm.onConfirm();
+            setPendingConfirm(null);
+          } finally {
+            setConfirmBusy(false);
+          }
+        }}
       />
     </>
   );

@@ -42,9 +42,22 @@ test.describe('CUJ-04: Chapter Management — Rename, Reorder, Download Audio & 
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/^01 - Wilbur\.(webm|m4a|wav)$/);
 
-    // 4. Delete Chapter 1
+    // 4. Delete Chapter 1 — verify Cancel keeps chapter intact, then Confirm deletes
     await page.getByLabel('More actions for Wilbur').click();
     await page.getByRole('menuitem', { name: 'Delete' }).click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await expect(page.getByTestId('confirm-dialog')).toContainText('Wilbur');
+    await page.getByTestId('confirm-dialog-cancel').click();
+    await expect(page.getByTestId('confirm-dialog')).toBeHidden();
+    await expect(page.locator('.rec-card__title')).toHaveText([
+      'Wilbur',
+      'Ch. 1 — Before Breakfast',
+    ]);
+
+    await page.getByLabel('More actions for Wilbur').click();
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-confirm').click();
     await expect(page.locator('.rec-card__title')).toHaveText([
       'Ch. 1 — Before Breakfast',
     ]);

@@ -25,6 +25,6 @@ A parent organizes recorded chapters within a book: renaming chapters inline, re
    - Open `⋮` menu and tap **Download Audio**.
    - **Expected:** Triggers a browser file download named `01 - <Chapter Name>.<ext>` with non-zero audio bytes.
 
-4. **Delete Chapter**
+4. **Delete Chapter (with Confirmation)**
    - Open `⋮` menu and tap **Delete**.
-   - **Expected:** Removes the recording and its audio blob from IndexedDB, updates chapter count summary, and persists after reload.
+   - **Expected:** Opens a confirmation dialog naming the chapter. Tapping **Cancel** leaves the chapter intact; tapping **Delete Recording** removes the recording, its audio blob, and any local lossless master from IndexedDB, updates chapter count summary, and persists after reload.

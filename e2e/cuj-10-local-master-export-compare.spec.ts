@@ -129,8 +129,17 @@ test.describe('CUJ-10: Local Lossless Master Archival, Multi-Bitrate Export & Qu
       page.getByTestId('batch-export-results').locator('.ql-result-row'),
     ).toHaveCount(6);
 
-    // 7. Reclaim local master storage right from Quality Lab topbar
+    // 7. Reclaim local master storage right from Quality Lab topbar (Cancel keeps master, Confirm deletes)
     await page.getByTestId('delete-local-master-btn').click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-cancel').click();
+    await expect(page.getByTestId('quality-lab-source-badge')).toHaveText(
+      'Lossless Master',
+    );
+
+    await page.getByTestId('delete-local-master-btn').click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-confirm').click();
     await expect(page.getByTestId('quality-lab-source-badge')).toHaveText(
       'Chapter Source',
     );
@@ -179,12 +188,14 @@ test.describe('CUJ-10: Local Lossless Master Archival, Multi-Bitrate Export & Qu
     await recordAndSaveChapter(page, { name: 'Take A', minDurationSec: 0.5 });
     await expect(page.getByTestId('recording-master-badge')).toBeVisible();
 
-    // Go back to Library -> Settings -> Delete Local Masters
+    // Go back to Library -> Settings -> Delete Local Masters (requires confirmation)
     await page.getByLabel('Back to library').click();
     await page.locator('#open-settings-btn').click();
     const clearBtn = page.getByTestId('clear-local-masters-btn');
     await expect(clearBtn).toBeVisible();
     await clearBtn.click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-confirm').click();
     await expect(clearBtn).toHaveCount(0);
   });
 });

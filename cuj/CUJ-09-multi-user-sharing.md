@@ -18,7 +18,7 @@ Family members can share either their entire StoryTape Family Library or an indi
    - If the target book or library has not been uploaded to Google Drive yet, trigger sharing.
    - **Expected:** Automatically runs a pre-sync so the Google Drive folder exists before inviting collaborators or generating a share link, without manual extra steps.
    - Invite a collaborator by Google email via the Drive Permissions API as either **Co-Narrator** (`writer`) or **Listener** (`reader`).
-   - **Expected:** New collaborator appears in the active collaborators list with their email and assigned role; revoking access removes their Drive permission and updates the list immediately.
+   - **Expected:** New collaborator appears in the active collaborators list with their email and assigned role; revoking access prompts for confirmation before removing their Drive permission and updating the list immediately.
    - Toggle **"Anyone with link can listen"** (read-only link access), copy or natively share (`navigator.share`) the 1-tap StoryTape join link (`#/join?folderId=...&name=...&scope=library|book&role=...`), and tap **Open in Google Drive**.
    - **Expected:** Link-sharing toggle creates/removes the Drive `anyone` (`reader`) permission, generated join link encodes the folder ID, display name, scope (`library` or `book`), and role (without exposing any OAuth Client ID), copy/native share feedback confirms success, and the Drive folder link opens cleanly.
 
@@ -29,8 +29,8 @@ Family members can share either their entire StoryTape Family Library or an indi
      - Guides the collaborator through connecting Google Drive and verifies access to the target folder.
      - When Google's `drive.file` scope requires explicit folder authorization, presents a guided Google Picker / Drive link unlock flow so access succeeds cleanly.
    - Complete joining for both scopes:
-     - **Shared Library (`scope=library`):** Links the shared Drive root folder, displays a clear **Shared Library** indicator in the Library UI, pulls shared books, and offers a 1-tap control to return to the user's personal library.
-     - **Shared Book (`scope=book`):** Adds the shared book alongside the user's existing personal books without replacing or disturbing their personal library.
+     - **Shared Library (`scope=library`):** Links the shared Drive root folder, displays a clear **Shared Library** indicator in the Library UI, pulls shared books, and offers a confirmed control to return to the user's personal library.
+     - **Shared Book (`scope=book`):** Adds the shared book alongside the user's existing personal books without replacing or disturbing their personal library (unlinking prompts for confirmation).
    - Also test **Manual Join** in Settings by pasting a StoryTape invite link, a Google Drive folder URL, or a raw Drive folder ID.
    - **Expected:** Parses all three input formats accurately and links the shared library or book through the same verification flow.
 

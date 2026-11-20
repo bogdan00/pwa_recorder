@@ -56,6 +56,13 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     await expect(banner).toBeVisible();
     await expect(banner).toContainText('The Snowman');
 
+    // Tapping Discard prompts for confirmation; Cancel keeps the draft intact
+    await banner.getByRole('button', { name: 'Discard' }).click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await expect(page.getByTestId('confirm-dialog')).toContainText('The Snowman');
+    await page.getByTestId('confirm-dialog-cancel').click();
+    await expect(banner).toBeVisible();
+
     // Resume draft -> opens studio in PAUSED state with recovered duration!
     await banner.getByRole('button', { name: 'Resume' }).click();
     await expect(page.getByTestId('recording-studio-view')).toBeVisible();
@@ -330,10 +337,12 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     expect(uploadedNames).toContain('project.json');
     expect(uploadedNames.some((n) => n.startsWith('01 - Chapter One.'))).toBe(true);
 
-    // Free local cached audio for synced chapters
+    // Free local cached audio for synced chapters (requires confirmation)
     await page
       .getByRole('button', { name: 'Free Cached Audio for Synced Chapters' })
       .click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-confirm').click();
     await expect(page.getByText(/Freed local audio cache for 1 synced chapter/i)).toBeVisible();
 
     await page.getByLabel('Close settings').click();

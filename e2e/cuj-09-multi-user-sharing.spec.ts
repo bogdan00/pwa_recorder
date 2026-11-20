@@ -638,8 +638,15 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
       )
       .toBe(true);
 
-    // Revoke Grandma's access cleanly
+    // Revoke Grandma's access cleanly (requires confirmation)
     await page.getByLabel('Remove grandma@example.com').click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await expect(page.getByTestId('confirm-dialog')).toContainText('grandma@example.com');
+    await page.getByTestId('confirm-dialog-cancel').click();
+    await expect(shareSheet).toContainText('grandma@example.com');
+
+    await page.getByLabel('Remove grandma@example.com').click();
+    await page.getByTestId('confirm-dialog-confirm').click();
     await expect(shareSheet).not.toContainText('grandma@example.com');
     await expect(shareSheet).toContainText('mom@example.com');
   });
@@ -813,10 +820,12 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
       })
       .toEqual(['Goodnight Stars:Dad', 'Moonbeam Express:Mom']);
 
-    // Switch back to Personal Library in Settings
+    // Switch back to Personal Library in Settings (requires confirmation)
     await page.getByLabel('Back to library').click();
     await page.locator('#open-settings-btn').click();
     await page.locator('#switch-personal-library-btn').click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-confirm').click();
     await expect(page.getByTestId('settings-collab-box')).toContainText(
       'Personal Library',
     );

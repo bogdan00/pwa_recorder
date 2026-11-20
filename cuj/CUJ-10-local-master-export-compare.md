@@ -29,6 +29,6 @@ A parent can opt in to saving an uncompressed, full-detail local lossless master
    - Switch to **Export Files**, encode a single custom bitrate or select multiple bitrates in **Batch Comparison Set** and run **Encode Comparison Set**.
    - **Expected:** Every selected tier encodes from the lossless master, reports exact bytes and `% smaller`, and provides labeled file downloads (e.g. `01_Chapter_1_64kbps_48kHz.m4a` / `.webm` / `.wav`).
 
-4. **Local Master Storage Reclamation**
-   - Delete a chapter's local master from Quality Lab (or **Studio Settings → Delete Local Masters**).
-   - **Expected:** The `recordingMasters` entry is deleted and the `Master` badge disappears while the regular chapter recording remains intact and playable.
+4. **Local Master Storage Reclamation (with Confirmation)**
+   - Tap **Free Master** in Quality Lab, **Delete Local Master** in the chapter menu, or **Delete Local Masters** in Studio Settings, and confirm in the dialog.
+   - **Expected:** Prompts for confirmation first (Cancel keeps the master intact); on confirm, deletes the `recordingMasters` entry and removes the `Master` badge while the regular chapter recording remains intact and playable.

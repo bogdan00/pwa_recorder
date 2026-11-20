@@ -28,6 +28,7 @@ import {
   getDriveFolderWebUrl,
   shareInviteLink,
 } from '../drive/shareUtils';
+import { ConfirmDialog } from './ConfirmDialog';
 import './ShareSheet.css';
 
 export interface ShareSheetProps {
@@ -114,6 +115,8 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
 
   const [togglingAnyone, setTogglingAnyone] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [pendingRemovePerm, setPendingRemovePerm] =
+    useState<DriveCollaboratorPermission | null>(null);
 
   const activeFolderId = folderId || preparedFolder?.folderId || '';
   const activeTitle =
@@ -878,7 +881,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
                                 className="btn btn-ghost btn-sm share-remove-btn"
                                 aria-label={`Remove ${removeTargetLabel}`}
                                 disabled={removingId === perm.id}
-                                onClick={() => void handleRemovePermission(perm)}
+                                onClick={() => setPendingRemovePerm(perm)}
                               >
                                 {removingId === perm.id ? (
                                   <Loader2 size={14} className="spin" />
@@ -904,6 +907,33 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={pendingRemovePerm !== null}
+        title="Remove Collaborator Access?"
+        description={
+          <>
+            Revoke Google Drive access for{' '}
+            <strong>
+              {pendingRemovePerm?.emailAddress ||
+                pendingRemovePerm?.displayName ||
+                'this collaborator'}
+            </strong>
+            ? They will no longer be able to access or sync updates for{' '}
+            <strong>{activeTitle}</strong>.
+          </>
+        }
+        confirmLabel="Remove Access"
+        tone="danger"
+        isBusy={Boolean(pendingRemovePerm && removingId === pendingRemovePerm.id)}
+        onCancel={() => setPendingRemovePerm(null)}
+        onConfirm={async () => {
+          if (!pendingRemovePerm) return;
+          const target = pendingRemovePerm;
+          await handleRemovePermission(target);
+          setPendingRemovePerm(null);
+        }}
+      />
     </div>
   );
 };
