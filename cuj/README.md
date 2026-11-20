@@ -2,6 +2,8 @@
 
 This folder defines every end-to-end **Customer User Journey (CUJ)** built into StoryTape. Each CUJ maps 1-to-1 to an automated Playwright E2E specification in [`e2e/`](../e2e/) that runs in parallel against the production PWA bundle (`/pwa_recorder/`) at mobile phone viewport (`390×844`) before every push via the `.githooks/pre-push` gate and in GitHub Actions.
 
+For enduring system invariants and architectural decisions backing these journeys, see [`adr/README.md`](../adr/README.md).
+
 ## CUJ Matrix
 
 | ID | User Journey | Priority | E2E Specification |

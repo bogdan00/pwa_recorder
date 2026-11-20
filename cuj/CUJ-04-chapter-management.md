@@ -1,7 +1,8 @@
 # CUJ-04: Chapter Management — Rename, Reorder, Download Audio & Delete
 
 **Priority:** P1  
-**E2E Spec:** [`e2e/cuj-04-chapter-management.spec.ts`](../e2e/cuj-04-chapter-management.spec.ts)
+**E2E Spec:** [`e2e/cuj-04-chapter-management.spec.ts`](../e2e/cuj-04-chapter-management.spec.ts)  
+**Related ADRs:** [ADR-02](../adr/ADR-02-indexeddb-arraybuffer-storage-and-drafts.md), [ADR-05](../adr/ADR-05-client-side-drive-oauth-and-conflict-safe-sync.md)
 
 ## Goal
 A parent organizes recorded chapters within a book: renaming chapters inline, reordering chapters into book order, downloading a local audio file copy to their device, and deleting unwanted recordings.

@@ -1,7 +1,8 @@
 # CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In, Stop Here & Undo
 
 **Priority:** P0  
-**E2E Spec:** [`e2e/cuj-03-scrub-preview-punchin.spec.ts`](../e2e/cuj-03-scrub-preview-punchin.spec.ts)
+**E2E Spec:** [`e2e/cuj-03-scrub-preview-punchin.spec.ts`](../e2e/cuj-03-scrub-preview-punchin.spec.ts)  
+**Related ADRs:** [ADR-03](../adr/ADR-03-off-main-thread-pcm-capture-and-timeline.md), [ADR-04](../adr/ADR-04-decoupled-60fps-canvas-waveform.md), [ADR-09](../adr/ADR-09-strict-local-to-ci-verification-parity.md)
 
 ## Goal
 While reading aloud, the parent pauses, drags the waveform directly with touch/pointer gestures to scrub back to an earlier moment, plays back to check how the last bit sounded, and chooses between continuing safely from the end, punching in (**Re-record from MM:SS**), or trimming the trailing audio and finishing immediately (**Stop here**), with 1-step Undo trim and discard protection.

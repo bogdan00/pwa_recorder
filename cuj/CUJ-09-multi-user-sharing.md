@@ -1,7 +1,8 @@
 # CUJ-09: Multi-User Family Sharing & Collaboration
 
 **Priority:** P0  
-**E2E Spec:** [`e2e/cuj-09-multi-user-sharing.spec.ts`](../e2e/cuj-09-multi-user-sharing.spec.ts)
+**E2E Spec:** [`e2e/cuj-09-multi-user-sharing.spec.ts`](../e2e/cuj-09-multi-user-sharing.spec.ts)  
+**Related ADRs:** [ADR-05](../adr/ADR-05-client-side-drive-oauth-and-conflict-safe-sync.md), [ADR-06](../adr/ADR-06-shared-folder-unlock-with-google-picker.md), [ADR-08](../adr/ADR-08-persistent-player-and-media-session.md), [ADR-09](../adr/ADR-09-strict-local-to-ci-verification-parity.md)
 
 ## Goal
 Family members can share either their entire StoryTape Family Library or an individual audiobook directly from the app via Google Drive, invite co-narrators or read-only listeners with a 1-tap guided join link, record chapters concurrently into the same shared book without losing anyone's recordings, see who narrated each chapter, and quickly share individual chapter audio files even with relatives who do not have a StoryTape or Google Drive setup.

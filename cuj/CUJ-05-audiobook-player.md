@@ -1,7 +1,8 @@
 # CUJ-05: Minimalistic Audiobook Player — Mini-Player, Full-Screen Sheet, Speed, Sleep Timer & Continue Listening
 
 **Priority:** P0  
-**E2E Spec:** [`e2e/cuj-05-audiobook-player.spec.ts`](../e2e/cuj-05-audiobook-player.spec.ts)
+**E2E Spec:** [`e2e/cuj-05-audiobook-player.spec.ts`](../e2e/cuj-05-audiobook-player.spec.ts)  
+**Related ADRs:** [ADR-07](../adr/ADR-07-vanilla-css-token-theming-and-mobile-ergonomics.md), [ADR-08](../adr/ADR-08-persistent-player-and-media-session.md)
 
 ## Goal
 A parent (or child at bedtime) listens to recorded audiobooks through a calm, minimalistic persistent player with floating mini-player navigation, full-screen Now Playing controls, chapter switching, playback speed, bedtime sleep timer, and automatic resume position memory.

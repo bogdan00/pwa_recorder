@@ -1,7 +1,8 @@
 # CUJ-08: Offline-First Crash-Safe Draft Recovery, Google Drive Two-Way Sync, PWA Install Prompt & Subpath Integrity
 
 **Priority:** P0  
-**E2E Spec:** [`e2e/cuj-08-draft-recovery-drive-pwa.spec.ts`](../e2e/cuj-08-draft-recovery-drive-pwa.spec.ts)
+**E2E Spec:** [`e2e/cuj-08-draft-recovery-drive-pwa.spec.ts`](../e2e/cuj-08-draft-recovery-drive-pwa.spec.ts)  
+**Related ADRs:** [ADR-01](../adr/ADR-01-zero-backend-offline-first-pwa.md), [ADR-02](../adr/ADR-02-indexeddb-arraybuffer-storage-and-drafts.md), [ADR-05](../adr/ADR-05-client-side-drive-oauth-and-conflict-safe-sync.md), [ADR-08](../adr/ADR-08-persistent-player-and-media-session.md), [ADR-09](../adr/ADR-09-strict-local-to-ci-verification-parity.md)
 
 ## Goal
 A parent never loses an in-progress recording if the mobile OS suspends/reloads the PWA, can connect Google Drive to push book folders (`project.json`, `cover.jpg`, and chapter audio via resumable upload) and pull remote `cloud_only` books on demand, can free cached local audio for synced chapters, gets a clear non-intrusive prompt to install StoryTape to their Home Screen (both native `beforeinstallprompt` on Android/Desktop Chromium and guided Add to Home Screen on iOS Safari), and gets a valid subpath PWA at `/pwa_recorder/`.

@@ -4,17 +4,27 @@ This document defines the working agreements, architecture standards, and qualit
 
 ---
 
-## 1. CUJ-First Development Workflow
+## 1. CUJ-First & ADR-Backed Development Workflow
 
-1. **Start with the Customer User Journey (CUJ).**
-   - Before implementing a new feature or changing user-visible behavior, create a new CUJ document under [`cuj/`](./cuj/README.md) (`cuj/CUJ-XX-<slug>.md`) or update the relevant existing CUJ.
-   - Register every CUJ in the [`cuj/README.md`](./cuj/README.md) matrix with its priority (`P0`/`P1`) and 1-to-1 E2E spec mapping.
+StoryTape separates **what users experience** ([`cuj/`](./cuj/README.md)) from **what system invariants the architecture upholds** ([`adr/`](./adr/README.md)):
+
+| Artifact | Purpose | When to Create or Update |
+| --- | --- | --- |
+| **CUJ** (`cuj/CUJ-XX-<slug>.md`) | Documents **user-facing behavior**: flows, screens, controls, edge cases, and acceptance criteria. | Any time you add a feature, alter UI controls/workflows, change user-visible states, or modify acceptance criteria. |
+| **ADR** (`adr/ADR-XX-<slug>.md`) | Documents **architectural decisions & system invariants**: storage contracts, audio/rendering pipelines, OAuth/security boundaries, sync merge rules, or CI/testing guarantees. | Any time you introduce, change, relax, or supersede a technical invariant the system supports (e.g., changing IndexedDB schema/serialization, adding a backend, altering Drive OAuth scope or merge semantics, changing canvas/worklet threading, or modifying CI parity gates). |
+| **Both CUJ + ADR** | Feature changes *both* user behavior and an underlying invariant. | Update/create both documents and **cross-link** them (`**Related ADRs:**` in the CUJ header and `**Related CUJs:**` in the ADR header). |
+
+### Step-by-Step Workflow
+1. **Start with the CUJ and/or ADR before coding.**
+   - **User-facing change → CUJ**: Create `cuj/CUJ-XX-<slug>.md` or update the relevant existing CUJ, and register it in [`cuj/README.md`](./cuj/README.md) with priority (`P0`/`P1`) and 1-to-1 E2E spec mapping.
+   - **System invariant / architecture change → ADR**: Create `adr/ADR-XX-<slug>.md` (with `Status`, `Context`, `Decision`, `System Invariants`, `Consequences & Trade-offs`, and `Related CUJs`) or supersede/amend the existing ADR, and register it in [`adr/README.md`](./adr/README.md).
+   - **Cross-link** related CUJs and ADRs whenever a user journey depends on a specific architectural invariant (broken links and unregistered docs are caught automatically by `src/__tests__/repoInvariants.test.ts`).
 2. **Write or update automated E2E coverage for every CUJ.**
    - Every CUJ must have a matching Playwright spec under `e2e/cuj-XX-<slug>.spec.ts` exercising the production bundle (`/pwa_recorder/`) at mobile phone viewport (`390×844` @ 2x DPR, touch enabled).
 3. **Fix defects in application code, never weaken tests.**
    - If an E2E test uncovers a race condition, stale state, UI glitch, or sync defect, fix the underlying app code and keep the assertion strict.
 4. **Update unit tests alongside domain changes.**
-   - Pure logic (audio timeline, encoding, Drive sync merge, share link parsing, IndexedDB storage) belongs under `src/**/__tests__/*.test.ts(x)` and runs via Vitest.
+   - Pure logic (audio timeline, encoding, Drive sync merge, share link parsing, IndexedDB storage, PWA install prompt) belongs under `src/**/__tests__/*.test.ts(x)` and runs via Vitest.
 
 ---
 

@@ -1,7 +1,8 @@
 # CUJ-02: Core Audio Recording — Start, Live Waveform, Pause, Safe Resume & Stop Name Prompt
 
 **Priority:** P0  
-**E2E Spec:** [`e2e/cuj-02-core-recording.spec.ts`](../e2e/cuj-02-core-recording.spec.ts)
+**E2E Spec:** [`e2e/cuj-02-core-recording.spec.ts`](../e2e/cuj-02-core-recording.spec.ts)  
+**Related ADRs:** [ADR-02](../adr/ADR-02-indexeddb-arraybuffer-storage-and-drafts.md), [ADR-03](../adr/ADR-03-off-main-thread-pcm-capture-and-timeline.md), [ADR-04](../adr/ADR-04-decoupled-60fps-canvas-waveform.md), [ADR-09](../adr/ADR-09-strict-local-to-ci-verification-parity.md)
 
 ## Goal
 A parent enters the mobile Recording Studio for a book, starts recording with the large tactile Start/Pause button, watches the live waveform and timer advance in real time, pauses, safely resumes recording to append more audio, and taps the smaller Stop button to name and save the chapter.

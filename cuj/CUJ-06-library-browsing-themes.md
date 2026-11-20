@@ -1,7 +1,8 @@
 # CUJ-06: Audiobook Library Browsing (Search, Tags, Sort) & Warm Night / Warm Paper Themes
 
 **Priority:** P1  
-**E2E Spec:** [`e2e/cuj-06-library-browsing-themes.spec.ts`](../e2e/cuj-06-library-browsing-themes.spec.ts)
+**E2E Spec:** [`e2e/cuj-06-library-browsing-themes.spec.ts`](../e2e/cuj-06-library-browsing-themes.spec.ts)  
+**Related ADRs:** [ADR-01](../adr/ADR-01-zero-backend-offline-first-pwa.md), [ADR-07](../adr/ADR-07-vanilla-css-token-theming-and-mobile-ergonomics.md)
 
 ## Goal
 A parent with multiple recorded audiobooks quickly finds the right story by searching across titles, authors, narrators, tags, or chapter names, filters by tag chips, sorts the shelf, and switches between low-glare Warm Night (bedtime) and Warm Paper (daytime) themes.

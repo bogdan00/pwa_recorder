@@ -1,7 +1,8 @@
 # CUJ-01: Book Project Creation, Metadata, Cover Art, Editing & Deletion
 
 **Priority:** P0  
-**E2E Spec:** [`e2e/cuj-01-book-management.spec.ts`](../e2e/cuj-01-book-management.spec.ts)
+**E2E Spec:** [`e2e/cuj-01-book-management.spec.ts`](../e2e/cuj-01-book-management.spec.ts)  
+**Related ADRs:** [ADR-01](../adr/ADR-01-zero-backend-offline-first-pwa.md), [ADR-02](../adr/ADR-02-indexeddb-arraybuffer-storage-and-drafts.md)
 
 ## Goal
 A parent creates a dedicated audiobook project for a book they want to read to their daughter, attaches custom cover artwork and rich metadata (title, author, narrator, dedication, language, tags, notes), edits details later, and can delete a book when no longer needed.

@@ -5,8 +5,9 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const E2E_DIR = path.join(REPO_ROOT, 'e2e');
 const CUJ_DIR = path.join(REPO_ROOT, 'cuj');
+const ADR_DIR = path.join(REPO_ROOT, 'adr');
 
-describe('Repository E2E & CUJ systemic invariants', () => {
+describe('Repository E2E, CUJ & ADR systemic invariants', () => {
   const e2eFiles = fs
     .readdirSync(E2E_DIR)
     .filter((f) => f.endsWith('.ts'))
@@ -60,6 +61,43 @@ describe('Repository E2E & CUJ systemic invariants', () => {
         readme,
         `${doc} must be registered in cuj/README.md`,
       ).toContain(doc);
+    }
+  });
+
+  it('registers every adr/ADR-*.md document in adr/README.md and keeps CUJ <-> ADR cross-links valid', () => {
+    const adrReadme = fs.readFileSync(path.join(ADR_DIR, 'README.md'), 'utf8');
+    const adrDocs = fs
+      .readdirSync(ADR_DIR)
+      .filter((f) => /^ADR-\d+-.*\.md$/.test(f))
+      .sort();
+
+    expect(adrDocs.length).toBeGreaterThan(0);
+
+    for (const doc of adrDocs) {
+      expect(
+        adrReadme,
+        `${doc} must be registered in adr/README.md`,
+      ).toContain(doc);
+    }
+
+    // Verify all relative markdown links inside cuj/*.md and adr/*.md resolve to real files
+    const mdDirs = [CUJ_DIR, ADR_DIR];
+    const linkPattern = /\]\((\.\.?\/[^)#\s]+)\)/g;
+    for (const dir of mdDirs) {
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+      for (const file of files) {
+        const fullPath = path.join(dir, file);
+        const content = fs.readFileSync(fullPath, 'utf8');
+        let match: RegExpExecArray | null;
+        while ((match = linkPattern.exec(content)) !== null) {
+          const targetRel = match[1];
+          const resolved = path.resolve(dir, targetRel);
+          expect(
+            fs.existsSync(resolved),
+            `Broken relative link (${targetRel}) in ${path.relative(REPO_ROOT, fullPath)}`,
+          ).toBe(true);
+        }
+      }
     }
   });
 });

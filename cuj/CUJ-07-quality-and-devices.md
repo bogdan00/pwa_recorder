@@ -1,7 +1,8 @@
 # CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV Export) & Multi-Device Microphone Settings
 
 **Priority:** P0  
-**E2E Spec:** [`e2e/cuj-07-quality-and-devices.spec.ts`](../e2e/cuj-07-quality-and-devices.spec.ts)
+**E2E Spec:** [`e2e/cuj-07-quality-and-devices.spec.ts`](../e2e/cuj-07-quality-and-devices.spec.ts)  
+**Related ADRs:** [ADR-03](../adr/ADR-03-off-main-thread-pcm-capture-and-timeline.md)
 
 ## Goal
 A parent tailors recording quality (from compact uploads up to 510 kbps compressed or lossless 96 kHz / 32-bit Float WAV, with raw phone-mic DSP toggles and input gain) and selects among multiple microphones with a live input level test before recording.
