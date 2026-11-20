@@ -13,7 +13,7 @@ This folder defines every end-to-end **Customer User Journey (CUJ)** built into 
 | [CUJ-05](./CUJ-05-audiobook-player.md) | Minimalistic Audiobook Player, Mini-Player, Speed, Sleep Timer & Continue Listening | P0 | [`e2e/cuj-05-audiobook-player.spec.ts`](../e2e/cuj-05-audiobook-player.spec.ts) |
 | [CUJ-06](./CUJ-06-library-browsing-themes.md) | Audiobook Library Browsing (Search, Tags, Sort) & Warm Night / Warm Paper Themes | P1 | [`e2e/cuj-06-library-browsing-themes.spec.ts`](../e2e/cuj-06-library-browsing-themes.spec.ts) |
 | [CUJ-07](./CUJ-07-quality-and-devices.md) | Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV Export) & Microphone Selection | P0 | [`e2e/cuj-07-quality-and-devices.spec.ts`](../e2e/cuj-07-quality-and-devices.spec.ts) |
-| [CUJ-08](./CUJ-08-draft-recovery-drive-pwa.md) | Crash-Safe Draft Recovery, Google Drive Two-Way Sync & Mobile PWA Subpath Integrity | P0 | [`e2e/cuj-08-draft-recovery-drive-pwa.spec.ts`](../e2e/cuj-08-draft-recovery-drive-pwa.spec.ts) |
+| [CUJ-08](./CUJ-08-draft-recovery-drive-pwa.md) | Crash-Safe Draft Recovery, Google Drive Two-Way Sync, PWA Install Prompt & Subpath Integrity | P0 | [`e2e/cuj-08-draft-recovery-drive-pwa.spec.ts`](../e2e/cuj-08-draft-recovery-drive-pwa.spec.ts) |
 | [CUJ-09](./CUJ-09-multi-user-sharing.md) | Multi-User Family Sharing, Guided Join, Conflict-Safe Co-Narration, Listener Mode & Quick Chapter Share | P0 | [`e2e/cuj-09-multi-user-sharing.spec.ts`](../e2e/cuj-09-multi-user-sharing.spec.ts) |
 
 ## Running All CUJ E2E Tests

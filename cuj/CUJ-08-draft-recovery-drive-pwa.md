@@ -1,10 +1,10 @@
-# CUJ-08: Offline-First Crash-Safe Draft Recovery, Google Drive Two-Way Sync & Mobile PWA Subpath Integrity
+# CUJ-08: Offline-First Crash-Safe Draft Recovery, Google Drive Two-Way Sync, PWA Install Prompt & Subpath Integrity
 
 **Priority:** P0  
 **E2E Spec:** [`e2e/cuj-08-draft-recovery-drive-pwa.spec.ts`](../e2e/cuj-08-draft-recovery-drive-pwa.spec.ts)
 
 ## Goal
-A parent never loses an in-progress recording if the mobile OS suspends/reloads the PWA, can connect Google Drive to push book folders (`project.json`, `cover.jpg`, and chapter audio via resumable upload) and pull remote `cloud_only` books on demand, can free cached local audio for synced chapters, and gets a valid subpath PWA at `/pwa_recorder/`.
+A parent never loses an in-progress recording if the mobile OS suspends/reloads the PWA, can connect Google Drive to push book folders (`project.json`, `cover.jpg`, and chapter audio via resumable upload) and pull remote `cloud_only` books on demand, can free cached local audio for synced chapters, gets a clear non-intrusive prompt to install StoryTape to their Home Screen (both native `beforeinstallprompt` on Android/Desktop Chromium and guided Add to Home Screen on iOS Safari), and gets a valid subpath PWA at `/pwa_recorder/`.
 
 ## Preconditions
 - Production PWA served under GitHub Pages subpath `/pwa_recorder/`.
@@ -31,3 +31,14 @@ A parent never loses an in-progress recording if the mobile OS suspends/reloads 
 4. **GitHub Pages Subpath PWA & OAuth Branding Pages**
    - Verify `/pwa_recorder/manifest.webmanifest` (`start_url`, `scope`, `id` = `/pwa_recorder/`, `display` = `standalone`, icons `192`/`512`/`maskable`).
    - Verify `/pwa_recorder/audio/pcm-capture-worklet.js`, `/pwa_recorder/icons/apple-touch-icon.png`, `/pwa_recorder/privacy.html`, and `/pwa_recorder/terms.html` all return HTTP `200`.
+
+5. **In-App PWA Install Prompt (Chromium & iOS Safari)**
+   - **Android / Desktop Chromium (`beforeinstallprompt`)**:
+     - When the browser fires `beforeinstallprompt` outside standalone mode, the Library displays a warm **Install StoryTape** banner with **Install** and a dismiss (`×`) button.
+     - Dismissing the banner hides it and persists dismissal across page reloads (`localStorage`), while **Install StoryTape** remains available anytime inside **Settings → Appearance & Defaults**.
+     - Tapping **Install** triggers the native browser prompt (`event.prompt()`); accepting (or receiving `appinstalled`) hides the install banner, displays a confirmation toast, and updates Settings to show **Installed on this device**.
+   - **iOS / iPadOS Safari**:
+     - When opened on iPhone/iPad outside standalone mode (`navigator.standalone !== true`), the Library shows the **Install StoryTape** banner with **How to Install**.
+     - Tapping **How to Install** (from the banner or Settings) opens a 2-step **Install on iPhone / iPad** guide explaining **Share** → **Add to Home Screen**.
+   - **Already Installed (`standalone` mode)**:
+     - Neither banner appears when running in standalone mode.

@@ -4,7 +4,11 @@ import { registerSW } from 'virtual:pwa-register';
 import './styles/tokens.css';
 import './styles/global.css';
 import { App } from './App';
+import { pwaInstallController } from './pwa/installPrompt';
 import { applyThemeToDocument, loadSettings } from './storage/settings';
+
+// Capture beforeinstallprompt & standalone status immediately before first render
+pwaInstallController.init();
 
 // Apply saved theme immediately before first paint to prevent flash
 applyThemeToDocument(loadSettings().theme);

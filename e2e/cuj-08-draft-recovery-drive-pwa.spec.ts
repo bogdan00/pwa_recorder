@@ -377,4 +377,123 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     const termsRes = await request.get('terms.html');
     expect(termsRes.status()).toBe(200);
   });
+
+  test('prompts Chromium users to install via beforeinstallprompt, persists banner dismissal, and allows installing from Settings', async ({
+    page,
+  }) => {
+    await page.goto('./');
+    await expect(page.getByRole('heading', { name: 'StoryTape' })).toBeVisible();
+
+    // Hidden before browser signals installability
+    await expect(page.getByTestId('install-app-banner')).toHaveCount(0);
+
+    // Simulate Chromium firing beforeinstallprompt
+    await page.evaluate(() => {
+      const ev = new Event('beforeinstallprompt', { cancelable: true }) as Event & {
+        prompt: () => Promise<void>;
+        userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+      };
+      (window as unknown as { __installPromptCalls: number }).__installPromptCalls = 0;
+      ev.prompt = async () => {
+        (window as unknown as { __installPromptCalls: number }).__installPromptCalls += 1;
+      };
+      ev.userChoice = Promise.resolve({ outcome: 'accepted', platform: 'web' });
+      window.dispatchEvent(ev);
+    });
+
+    // Library banner appears with Install CTA
+    const banner = page.getByTestId('install-app-banner');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('Install StoryTape');
+    await expect(page.locator('#install-app-btn')).toHaveText(/Install/);
+
+    // Dismissing hides banner and persists across reload
+    await page.locator('#dismiss-install-banner-btn').click();
+    await expect(banner).toHaveCount(0);
+
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'StoryTape' })).toBeVisible();
+
+    // Re-fire beforeinstallprompt after reload — banner stays dismissed, Settings still offers Install App
+    await page.evaluate(() => {
+      const ev = new Event('beforeinstallprompt', { cancelable: true }) as Event & {
+        prompt: () => Promise<void>;
+        userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+      };
+      (window as unknown as { __installPromptCalls: number }).__installPromptCalls = 0;
+      ev.prompt = async () => {
+        (window as unknown as { __installPromptCalls: number }).__installPromptCalls += 1;
+      };
+      ev.userChoice = Promise.resolve({ outcome: 'accepted', platform: 'web' });
+      window.dispatchEvent(ev);
+    });
+
+    await expect(page.getByTestId('install-app-banner')).toHaveCount(0);
+
+    await page.locator('#open-settings-btn').click();
+    const settingsCard = page.getByTestId('settings-install-card');
+    await expect(settingsCard).toBeVisible();
+    await expect(page.locator('#settings-install-app-btn')).toHaveText(/Install App/);
+
+    // Trigger install from Settings -> invokes native prompt(), shows toast, marks Installed
+    await page.locator('#settings-install-app-btn').click();
+    await expect
+      .poll(async () =>
+        page.evaluate(
+          () => (window as unknown as { __installPromptCalls: number }).__installPromptCalls,
+        ),
+      )
+      .toBe(1);
+    await expect(page.getByText('StoryTape installed to your Home Screen!')).toBeVisible();
+    await expect(settingsCard).toContainText('Installed');
+    await expect(page.locator('#settings-install-app-btn')).toHaveCount(0);
+  });
+
+  test('shows iOS Safari Add to Home Screen guide and hides install banner when running standalone', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, 'userAgent', {
+        configurable: true,
+        get: () =>
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+      });
+      Object.defineProperty(window.navigator, 'platform', {
+        configurable: true,
+        get: () => 'iPhone',
+      });
+      Object.defineProperty(window.navigator, 'standalone', {
+        configurable: true,
+        get: () => window.sessionStorage.getItem('__e2e_standalone') === '1',
+      });
+    });
+
+    await page.goto('./');
+    await expect(page.getByRole('heading', { name: 'StoryTape' })).toBeVisible();
+
+    const banner = page.getByTestId('install-app-banner');
+    await expect(banner).toBeVisible();
+    await expect(page.locator('#install-app-btn')).toHaveText(/How to Install/);
+
+    // Tap How to Install -> opens guided 2-step modal
+    await page.locator('#install-app-btn').click();
+    const guideModal = page.getByTestId('ios-install-guide-modal');
+    await expect(guideModal).toBeVisible();
+    await expect(guideModal).toContainText('1. Tap the Share button');
+    await expect(guideModal).toContainText('Add to Home Screen');
+
+    await guideModal.getByRole('button', { name: 'Got It' }).click();
+    await expect(guideModal).toHaveCount(0);
+
+    // When launched in standalone mode, banner stays hidden and Settings shows Installed
+    await page.evaluate(() => {
+      window.sessionStorage.setItem('__e2e_standalone', '1');
+    });
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'StoryTape' })).toBeVisible();
+    await expect(page.getByTestId('install-app-banner')).toHaveCount(0);
+
+    await page.locator('#open-settings-btn').click();
+    await expect(page.getByTestId('settings-install-card')).toContainText('Installed');
+  });
 });

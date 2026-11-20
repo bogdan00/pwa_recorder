@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
   Cloud,
+  Download,
   ExternalLink,
   FolderOpen,
   HardDrive,
@@ -12,6 +13,7 @@ import {
   RefreshCw,
   Share2,
   Sliders,
+  Smartphone,
   Users,
   Volume2,
   X,
@@ -49,6 +51,7 @@ import {
 } from '../audio/qualityPresets';
 import type { GoogleAuthState } from '../drive/googleAuth';
 import { getDriveFolderWebUrl } from '../drive/shareUtils';
+import type { PwaInstallState } from '../pwa/installPrompt';
 import { formatBytes, formatGainDb, formatSampleRate } from '../utils/format';
 import './SettingsSheet.css';
 
@@ -56,10 +59,12 @@ interface SettingsSheetProps {
   open: boolean;
   settings: AppSettings;
   authState: GoogleAuthState;
+  pwaInstallState?: PwaInstallState;
   isSyncing: boolean;
   syncStatusMessage: string | null;
   onClose: () => void;
   onUpdateSettings: (next: AppSettings) => void;
+  onInstallApp?: () => void;
   onConnectDrive: () => void;
   onSignOutDrive: () => void;
   onSyncAll: () => void;
@@ -76,10 +81,12 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   open,
   settings,
   authState,
+  pwaInstallState,
   isSyncing,
   syncStatusMessage,
   onClose,
   onUpdateSettings,
+  onInstallApp,
   onConnectDrive,
   onSignOutDrive,
   onSyncAll,
@@ -1115,6 +1122,49 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                 <span className="switch-thumb" />
               </button>
             </div>
+
+            {pwaInstallState &&
+              (pwaInstallState.isInstalled ||
+                pwaInstallState.canInstallFromSettings) && (
+                <div
+                  className="settings-install-card"
+                  data-testid="settings-install-card"
+                >
+                  <div className="settings-install-card__info">
+                    <span className="settings-install-card__title">
+                      <Smartphone size={15} />
+                      StoryTape App
+                    </span>
+                    <span className="settings-install-card__sub">
+                      {pwaInstallState.isInstalled
+                        ? 'Running as an installed standalone app.'
+                        : pwaInstallState.isIosManualInstall
+                          ? 'Add to your iPhone or iPad Home Screen for full-screen offline use.'
+                          : 'Install to your Home Screen for full-screen offline recording & playback.'}
+                    </span>
+                  </div>
+                  {pwaInstallState.isInstalled ? (
+                    <span className="settings-install-badge">
+                      <Check size={13} />
+                      Installed
+                    </span>
+                  ) : (
+                    onInstallApp && (
+                      <button
+                        type="button"
+                        className="btn btn-amber btn-sm"
+                        id="settings-install-app-btn"
+                        onClick={onInstallApp}
+                      >
+                        <Download size={14} />
+                        {pwaInstallState.isIosManualInstall
+                          ? 'How to Install'
+                          : 'Install App'}
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
 
             {storageUsage && (
               <div className="field">

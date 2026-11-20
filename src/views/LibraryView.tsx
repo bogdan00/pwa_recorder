@@ -4,6 +4,7 @@ import {
   Cloud,
   CloudOff,
   CloudUpload,
+  Download,
   Loader2,
   Play,
   Plus,
@@ -36,6 +37,10 @@ interface LibraryViewProps {
   driveAccessRole?: ShareAccessRole;
   isSyncing: boolean;
   hasMiniPlayer: boolean;
+  showInstallBanner?: boolean;
+  installPromptMode?: 'native' | 'ios' | null;
+  onInstallApp?: () => void;
+  onDismissInstallBanner?: () => void;
   onOpenBook: (projectId: string) => void;
   onNewBook: () => void;
   onOpenSettings: () => void;
@@ -59,6 +64,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   driveAccessRole = 'owner',
   isSyncing,
   hasMiniPlayer,
+  showInstallBanner = false,
+  installPromptMode = null,
+  onInstallApp,
+  onDismissInstallBanner,
   onOpenBook,
   onNewBook,
   onOpenSettings,
@@ -291,6 +300,52 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               >
                 Resume
               </button>
+            </div>
+          </section>
+        )}
+
+        {/* PWA Install prompt banner (Chromium beforeinstallprompt or iOS Add to Home Screen) */}
+        {showInstallBanner && installPromptMode && onInstallApp && (
+          <section
+            className="install-banner"
+            aria-label="Install StoryTape app"
+            data-testid="install-app-banner"
+          >
+            <div className="install-banner__lead">
+              <img
+                src={baseIconUrl}
+                alt=""
+                className="install-banner__icon"
+                aria-hidden="true"
+              />
+              <div className="install-banner__text">
+                <span className="install-banner__title">Install StoryTape</span>
+                <span className="install-banner__sub">
+                  Add to your Home Screen for full-screen offline recording
+                </span>
+              </div>
+            </div>
+            <div className="install-banner__actions">
+              <button
+                type="button"
+                className="btn btn-amber btn-sm"
+                id="install-app-btn"
+                onClick={onInstallApp}
+              >
+                <Download size={14} />
+                {installPromptMode === 'ios' ? 'How to Install' : 'Install'}
+              </button>
+              {onDismissInstallBanner && (
+                <button
+                  type="button"
+                  className="icon-btn install-banner__dismiss"
+                  id="dismiss-install-banner-btn"
+                  onClick={onDismissInstallBanner}
+                  aria-label="Dismiss install banner"
+                >
+                  <X size={16} />
+                </button>
+              )}
             </div>
           </section>
         )}

@@ -54,9 +54,14 @@ import {
   type BookFormSubmission,
 } from './components/BookEditorSheet';
 import { AudioPlayerSheet } from './components/AudioPlayerSheet';
+import { IosInstallGuideModal } from './components/IosInstallGuideModal';
 import { JoinShareModal } from './components/JoinShareModal';
 import { MiniPlayerBar } from './components/MiniPlayerBar';
 import { ShareSheet } from './components/ShareSheet';
+import {
+  pwaInstallController,
+  type PwaInstallState,
+} from './pwa/installPrompt';
 import { LibraryView } from './views/LibraryView';
 import { ProjectDetailView } from './views/ProjectDetailView';
 import {
@@ -146,6 +151,10 @@ const StoryTapeShell: React.FC<AppProps> = ({
 
   // Modals & transient status
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [iosInstallGuideOpen, setIosInstallGuideOpen] = useState(false);
+  const [pwaInstallState, setPwaInstallState] = useState<PwaInstallState>(() =>
+    pwaInstallController.getState(),
+  );
   const [bookEditorOpen, setBookEditorOpen] = useState(false);
   const [editingBook, setEditingBook] = useState<BookProject | null>(null);
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
@@ -183,6 +192,32 @@ const StoryTapeShell: React.FC<AppProps> = ({
     return () => {
       timers.forEach((t) => window.clearTimeout(t));
     };
+  }, []);
+
+  useEffect(() => {
+    setPwaInstallState(pwaInstallController.getState());
+    return pwaInstallController.subscribe(setPwaInstallState);
+  }, []);
+
+  const handleInstallApp = useCallback(() => {
+    const current = pwaInstallController.getState();
+    if (current.canPromptNative) {
+      // Invoke browser install prompt synchronously within the user tap handler
+      void pwaInstallController.triggerNativeInstall().then((outcome) => {
+        if (outcome === 'accepted') {
+          showToast('StoryTape installed to your Home Screen!');
+        }
+      });
+      return;
+    }
+    if (current.isIosManualInstall) {
+      setSettingsOpen(false);
+      setIosInstallGuideOpen(true);
+    }
+  }, [showToast]);
+
+  const handleDismissInstallBanner = useCallback(() => {
+    pwaInstallController.dismissBanner();
   }, []);
 
   const handleUpdateSettings = useCallback((next: AppSettings) => {
@@ -906,6 +941,16 @@ const StoryTapeShell: React.FC<AppProps> = ({
           driveAccessRole={settings.driveAccessRole}
           isSyncing={isSyncing}
           hasMiniPlayer={hasMiniPlayer}
+          showInstallBanner={pwaInstallState.showBanner}
+          installPromptMode={
+            pwaInstallState.canPromptNative
+              ? 'native'
+              : pwaInstallState.isIosManualInstall
+                ? 'ios'
+                : null
+          }
+          onInstallApp={handleInstallApp}
+          onDismissInstallBanner={handleDismissInstallBanner}
           onOpenBook={(projectId) => navigate({ view: 'book', projectId })}
           onNewBook={() => {
             setEditingBook(null);
@@ -1021,10 +1066,12 @@ const StoryTapeShell: React.FC<AppProps> = ({
         open={settingsOpen}
         settings={settings}
         authState={authState}
+        pwaInstallState={pwaInstallState}
         isSyncing={isSyncing}
         syncStatusMessage={syncStatusMessage}
         onClose={() => setSettingsOpen(false)}
         onUpdateSettings={handleUpdateSettings}
+        onInstallApp={handleInstallApp}
         onConnectDrive={() => handleConnectDrive()}
         onSignOutDrive={() => {
           googleAuth.signOut();
@@ -1045,6 +1092,12 @@ const StoryTapeShell: React.FC<AppProps> = ({
           return count;
         }}
         onToast={(msg) => showToast(msg)}
+      />
+
+      {/* iOS / iPadOS Add to Home Screen Guide */}
+      <IosInstallGuideModal
+        open={iosInstallGuideOpen}
+        onClose={() => setIosInstallGuideOpen(false)}
       />
     </>
   );

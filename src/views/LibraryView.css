@@ -157,6 +157,67 @@
   gap: 8px;
 }
 
+/* PWA install prompt banner */
+.install-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.install-banner__lead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.install-banner__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  object-fit: cover;
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+}
+
+.install-banner__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.install-banner__title {
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--ink-primary);
+}
+
+.install-banner__sub {
+  font-size: 12px;
+  color: var(--ink-secondary);
+  line-height: 1.35;
+}
+
+.install-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.install-banner__dismiss {
+  width: 32px;
+  height: 32px;
+}
+
 /* Continue listening card */
 .continue-card {
   display: flex;
