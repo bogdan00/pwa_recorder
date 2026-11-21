@@ -16,7 +16,7 @@ import type {
   Recording,
 } from '../types/models';
 import { usePlayer } from '../player/PlayerContext';
-import { formatHumanDuration } from '../utils/format';
+import { formatBookNarrators, formatHumanDuration } from '../utils/format';
 import { BookCover } from '../components/BookCover';
 import { RecordingCard } from '../components/RecordingCard';
 import './ProjectDetailView.css';
@@ -68,6 +68,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 }) => {
   const player = usePlayer();
   const totalMs = recordings.reduce((acc, r) => acc + r.durationMs, 0);
+  const derivedNarrator = formatBookNarrators(recordings);
   const completedIds = new Set(progress?.completedRecordingIds ?? []);
   const isReadOnly = project.accessRole === 'reader';
 
@@ -176,28 +177,21 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             {project.author && (
               <p className="project-hero__author">by {project.author}</p>
             )}
-            <div className="project-hero__credits">
-              {project.narrator && <span>Read by {project.narrator}</span>}
-              {project.dedicatedTo && <span>For {project.dedicatedTo}</span>}
-              {project.language && <span>{project.language}</span>}
-            </div>
+            {derivedNarrator && (
+              <div className="project-hero__credits">
+                <span>Read by {derivedNarrator}</span>
+              </div>
+            )}
 
-            {(project.tags.length > 0 || project.isShared) && (
+            {project.isShared && (
               <div className="project-hero__tags">
-                {project.isShared && (
-                  <span
-                    className={`badge ${isReadOnly ? 'badge-amber' : 'badge-sage'}`}
-                    data-testid="book-shared-role-badge"
-                  >
-                    <Users size={11} />
-                    {isReadOnly ? 'Shared · Listener' : 'Shared · Co-Narrator'}
-                  </span>
-                )}
-                {project.tags.map((tag) => (
-                  <span key={tag} className="badge">
-                    {tag}
-                  </span>
-                ))}
+                <span
+                  className={`badge ${isReadOnly ? 'badge-amber' : 'badge-sage'}`}
+                  data-testid="book-shared-role-badge"
+                >
+                  <Users size={11} />
+                  {isReadOnly ? 'Shared · Listener' : 'Shared · Co-Narrator'}
+                </span>
               </div>
             )}
           </div>

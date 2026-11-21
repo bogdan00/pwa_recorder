@@ -394,36 +394,6 @@
   font-weight: 600;
 }
 
-.tag-strip {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: none;
-}
-
-.tag-strip::-webkit-scrollbar {
-  display: none;
-}
-
-.tag-chip {
-  flex-shrink: 0;
-  min-height: 32px;
-  padding: 4px 13px;
-  border-radius: var(--radius-pill);
-  font-size: 12.5px;
-  font-weight: 600;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  color: var(--ink-secondary);
-}
-
-.tag-chip--active {
-  background: var(--ink-primary);
-  color: var(--ink-inverse);
-  border-color: transparent;
-}
-
 /* Book shelf grid */
 .book-grid {
   display: grid;

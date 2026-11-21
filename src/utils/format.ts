@@ -99,3 +99,30 @@ export function downsamplePeaks(peaks: number[], targetCount = 120): number[] {
   }
   return result;
 }
+
+export function deriveBookNarrators(
+  recordings: ReadonlyArray<{ recordedBy?: string }>,
+): string[] {
+  const seen = new Set<string>();
+  const narrators: string[] = [];
+  for (const rec of recordings) {
+    const trimmed = rec.recordedBy?.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    narrators.push(trimmed);
+  }
+  return narrators;
+}
+
+export function formatBookNarrators(
+  recordings: ReadonlyArray<{ recordedBy?: string }>,
+): string {
+  const narrators = deriveBookNarrators(recordings);
+  if (narrators.length === 0) return '';
+  if (narrators.length === 1) return narrators[0];
+  if (narrators.length === 2) return `${narrators[0]} & ${narrators[1]}`;
+  return `${narrators.slice(0, -1).join(', ')} & ${narrators[narrators.length - 1]}`;
+}
+

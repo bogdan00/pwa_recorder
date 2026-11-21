@@ -17,10 +17,6 @@ export function parseTimerSeconds(text: string): number {
 export interface CreateBookInput {
   title: string;
   author?: string;
-  narrator?: string;
-  dedicatedTo?: string;
-  language?: string;
-  tags?: string;
   description?: string;
   coverFile?: { name: string; mimeType: string; buffer: Buffer };
 }
@@ -40,18 +36,6 @@ export async function createBook(page: Page, input: CreateBookInput): Promise<vo
   await page.locator('#book-title-input').fill(input.title);
   if (input.author !== undefined) {
     await page.locator('#book-author-input').fill(input.author);
-  }
-  if (input.narrator !== undefined) {
-    await page.locator('#book-narrator-input').fill(input.narrator);
-  }
-  if (input.dedicatedTo !== undefined) {
-    await page.locator('#book-dedicated-input').fill(input.dedicatedTo);
-  }
-  if (input.language !== undefined) {
-    await page.locator('#book-language-input').fill(input.language);
-  }
-  if (input.tags !== undefined) {
-    await page.locator('#book-tags-input').fill(input.tags);
   }
   if (input.description !== undefined) {
     await page.locator('#book-desc-input').fill(input.description);

@@ -9,11 +9,7 @@ import './BookEditorSheet.css';
 export interface BookFormSubmission {
   title: string;
   author: string;
-  narrator: string;
-  dedicatedTo: string;
   description: string;
-  language: string;
-  tags: string[];
   coverColor: string;
   coverChange: 'keep' | 'replace' | 'remove';
   coverBlob?: Blob;
@@ -23,7 +19,6 @@ export interface BookFormSubmission {
 interface BookEditorSheetProps {
   open: boolean;
   initialProject?: BookProject | null;
-  defaultNarrator: string;
   onClose: () => void;
   onSave: (data: BookFormSubmission) => Promise<void>;
   onDelete?: (projectId: string) => Promise<void>;
@@ -32,18 +27,13 @@ interface BookEditorSheetProps {
 export const BookEditorSheet: React.FC<BookEditorSheetProps> = ({
   open,
   initialProject,
-  defaultNarrator,
   onClose,
   onSave,
   onDelete,
 }) => {
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
-  const [narrator, setNarrator] = useState('');
-  const [dedicatedTo, setDedicatedTo] = useState('');
   const [description, setDescription] = useState('');
-  const [language, setLanguage] = useState('English');
-  const [tagsText, setTagsText] = useState('');
   const [coverColor, setCoverColor] = useState<string>(BOOK_COVER_PALETTE[0].hex);
 
   const [coverChange, setCoverChange] = useState<'keep' | 'replace' | 'remove'>('keep');
@@ -80,11 +70,7 @@ export const BookEditorSheet: React.FC<BookEditorSheetProps> = ({
     if (initialProject) {
       setTitle(initialProject.title);
       setAuthor(initialProject.author);
-      setNarrator(initialProject.narrator);
-      setDedicatedTo(initialProject.dedicatedTo);
       setDescription(initialProject.description);
-      setLanguage(initialProject.language || 'English');
-      setTagsText(initialProject.tags.join(', '));
       setCoverColor(initialProject.coverColor || BOOK_COVER_PALETTE[0].hex);
 
       if (initialProject.hasCover) {
@@ -101,17 +87,13 @@ export const BookEditorSheet: React.FC<BookEditorSheetProps> = ({
     } else {
       setTitle('');
       setAuthor('');
-      setNarrator(defaultNarrator);
-      setDedicatedTo('');
       setDescription('');
-      setLanguage('English');
-      setTagsText('');
       const randomColor =
         BOOK_COVER_PALETTE[Math.floor(Math.random() * BOOK_COVER_PALETTE.length)].hex;
       setCoverColor(randomColor);
       setSafePreview(null);
     }
-  }, [open, initialProject, defaultNarrator]);
+  }, [open, initialProject]);
 
   useEffect(() => {
     return () => {
@@ -152,19 +134,10 @@ export const BookEditorSheet: React.FC<BookEditorSheetProps> = ({
     if (!title.trim() || saving || processingCover) return;
     setSaving(true);
     try {
-      const tags = tagsText
-        .split(',')
-        .map((t) => t.trim())
-        .filter((t, i, arr) => t.length > 0 && arr.indexOf(t) === i);
-
       await onSave({
         title: title.trim(),
         author: author.trim(),
-        narrator: narrator.trim(),
-        dedicatedTo: dedicatedTo.trim(),
         description: description.trim(),
-        language: language.trim(),
-        tags,
         coverColor,
         coverChange,
         coverBlob,
@@ -305,91 +278,31 @@ export const BookEditorSheet: React.FC<BookEditorSheetProps> = ({
             />
           </div>
 
-          <div className="book-editor-grid book-editor-grid--two">
-            <div className="field">
-              <label htmlFor="book-author-input" className="field-label">
-                Author
-              </label>
-              <input
-                id="book-author-input"
-                type="text"
-                className="input"
-                value={author}
-                onChange={(e) => setAuthor(e.target.value)}
-                placeholder="e.g. Julia Donaldson"
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="book-narrator-input" className="field-label">
-                Read By (Narrator)
-              </label>
-              <input
-                id="book-narrator-input"
-                type="text"
-                className="input"
-                value={narrator}
-                onChange={(e) => setNarrator(e.target.value)}
-                placeholder="e.g. Dad"
-              />
-            </div>
-          </div>
-
-          <div className="book-editor-grid book-editor-grid--two">
-            <div className="field">
-              <label htmlFor="book-dedicated-input" className="field-label">
-                Recorded For
-              </label>
-              <input
-                id="book-dedicated-input"
-                type="text"
-                className="input"
-                value={dedicatedTo}
-                onChange={(e) => setDedicatedTo(e.target.value)}
-                placeholder="e.g. My sweet girl"
-              />
-            </div>
-
-            <div className="field">
-              <label htmlFor="book-language-input" className="field-label">
-                Language
-              </label>
-              <input
-                id="book-language-input"
-                type="text"
-                className="input"
-                value={language}
-                onChange={(e) => setLanguage(e.target.value)}
-                placeholder="English"
-              />
-            </div>
-          </div>
-
           <div className="field">
-            <label htmlFor="book-tags-input" className="field-label">
-              Tags
+            <label htmlFor="book-author-input" className="field-label">
+              Author
             </label>
             <input
-              id="book-tags-input"
+              id="book-author-input"
               type="text"
               className="input"
-              value={tagsText}
-              onChange={(e) => setTagsText(e.target.value)}
-              placeholder="Bedtime, Favorites, Age 4–6 (comma-separated)"
+              value={author}
+              onChange={(e) => setAuthor(e.target.value)}
+              placeholder="e.g. Julia Donaldson"
             />
           </div>
 
           <div className="field">
             <label htmlFor="book-desc-input" className="field-label">
-              Notes / Dedication
+              Notes (optional)
             </label>
             <textarea
               id="book-desc-input"
               className="textarea"
-              rows={3}
+              rows={2}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="A note to keep alongside the book metadata in Google Drive..."
+              placeholder="Optional note, e.g. recorded while recovering from a cold…"
             />
           </div>
 

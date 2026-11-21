@@ -551,16 +551,16 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     await expect(page.getByText('dad@example.com')).toBeVisible();
     await page.getByLabel('Close settings').click();
 
-    // Create book & record Chapter 1 -> verifies per-chapter "Read by Dad" attribution
+    // Create book & record Chapter 1 -> verifies per-chapter and auto-derived book "Read by Dad" attribution
     await createBook(page, {
       title: 'The Magic Faraway Tree',
       author: 'Enid Blyton',
-      narrator: 'Dad',
     });
     await recordAndSaveChapter(page, {
       name: 'The Enchanted Wood',
       minDurationSec: 0.6,
     });
+    await expect(page.locator('.project-hero__credits')).toContainText('Read by Dad');
     await expect(page.locator('.rec-card__meta')).toContainText('Read by Dad');
 
     // Zero-account quick Share Audio via Web Share API
@@ -790,19 +790,23 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
       'Bedtime Classics',
     );
 
-    // Open shared book -> verify Dad's chapter with "Read by Dad" attribution
+    // Open shared book -> verify Dad's chapter and auto-derived "Read by Dad" credit
     await page.getByRole('button', { name: /Bedtime Classics/i }).click();
     await expect(page.getByTestId('book-shared-role-badge')).toContainText(
       'Shared · Co-Narrator',
     );
+    await expect(page.locator('.project-hero__credits')).toContainText('Read by Dad');
     await expect(page.locator('.rec-card__meta')).toContainText('Read by Dad');
 
-    // Mom records Chapter 2 into the same shared book -> both Dad's & Mom's chapters merge!
+    // Mom records Chapter 2 into the same shared book -> both Dad's & Mom's chapters merge and book narrator becomes "Read by Dad & Mom"!
     await recordAndSaveChapter(page, {
       name: 'Moonbeam Express',
       minDurationSec: 0.6,
     });
 
+    await expect(page.locator('.project-hero__credits')).toContainText(
+      'Read by Dad & Mom',
+    );
     await expect(page.locator('.rec-card__title')).toHaveText([
       'Goodnight Stars',
       'Moonbeam Express',

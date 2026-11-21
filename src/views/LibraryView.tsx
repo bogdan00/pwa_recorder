@@ -84,16 +84,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onContinueListening,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTag, setSelectedTag] = useState<string>('ALL');
   const [sortBy, setSortBy] = useState<SortKey>('updated');
-
-  const allTags = useMemo(() => {
-    const tagSet = new Set<string>();
-    for (const p of projects) {
-      for (const t of p.tags) tagSet.add(t);
-    }
-    return Array.from(tagSet).sort((a, b) => a.localeCompare(b));
-  }, [projects]);
 
   const pendingCount = useMemo(() => {
     let count = 0;
@@ -135,18 +126,16 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   const filteredProjects = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = projects.filter((p) => {
-      if (selectedTag !== 'ALL' && !p.tags.includes(selectedTag)) return false;
       if (!q) return true;
       const recs = recordingsByProject.get(p.id) ?? [];
       const inBook =
         p.title.toLowerCase().includes(q) ||
         p.author.toLowerCase().includes(q) ||
-        p.narrator.toLowerCase().includes(q) ||
-        p.dedicatedTo.toLowerCase().includes(q) ||
-        p.tags.some((t) => t.toLowerCase().includes(q));
+        p.description.toLowerCase().includes(q);
       const inChapters = recs.some(
         (r) =>
           r.name.toLowerCase().includes(q) ||
+          r.notes.toLowerCase().includes(q) ||
           (r.recordedBy?.toLowerCase().includes(q) ?? false),
       );
       return inBook || inChapters;
@@ -161,7 +150,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       sorted.sort((a, b) => b.updatedAt - a.updatedAt);
     }
     return sorted;
-  }, [projects, recordingsByProject, searchQuery, selectedTag, sortBy]);
+  }, [projects, recordingsByProject, searchQuery, sortBy]);
 
   const latestDraft = drafts[0] ?? null;
   const draftBook = latestDraft
@@ -380,7 +369,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         )}
 
         {/* Continue Listening banner */}
-        {continueTarget && !searchQuery && selectedTag === 'ALL' && (
+        {continueTarget && !searchQuery && (
           <section
             className="continue-card"
             aria-label="Continue listening"
@@ -427,7 +416,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           </section>
         )}
 
-        {/* Search, tag filters & sort */}
+        {/* Search & sort */}
         {projects.length > 0 && (
           <section className="browse-bar" aria-label="Browse audiobooks">
             <div className="browse-search-row">
@@ -464,32 +453,6 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 <option value="newest">Newest</option>
               </select>
             </div>
-
-            {allTags.length > 0 && (
-              <div className="tag-strip" role="tablist" aria-label="Filter by tag">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={selectedTag === 'ALL'}
-                  className={`tag-chip ${selectedTag === 'ALL' ? 'tag-chip--active' : ''}`}
-                  onClick={() => setSelectedTag('ALL')}
-                >
-                  All Books
-                </button>
-                {allTags.map((tag) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    role="tab"
-                    aria-selected={selectedTag === tag}
-                    className={`tag-chip ${selectedTag === tag ? 'tag-chip--active' : ''}`}
-                    onClick={() => setSelectedTag(tag)}
-                  >
-                    {tag}
-                  </button>
-                ))}
-              </div>
-            )}
           </section>
         )}
 
@@ -501,9 +464,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             </div>
             <h2 className="empty-shelf__title">Start Your First Audiobook</h2>
             <p className="empty-shelf__body">
-              Create a book project with cover art and metadata, record chapters
-              with waveform scrubbing, and keep everything backed up to your
-              Google Drive folder.
+              Create a book with cover art, record chapters with waveform
+              scrubbing, and keep everything backed up to your Google Drive
+              folder.
             </p>
             <button
               type="button"
@@ -519,15 +482,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           <section className="empty-shelf">
             <h2 className="empty-shelf__title">No Matching Books</h2>
             <p className="empty-shelf__body">
-              Try a different search term or clear your tag filter.
+              Try a different search term.
             </p>
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => {
-                setSearchQuery('');
-                setSelectedTag('ALL');
-              }}
+              onClick={() => setSearchQuery('')}
             >
               Show All Books
             </button>

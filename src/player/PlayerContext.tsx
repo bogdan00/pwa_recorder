@@ -173,7 +173,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
         if (typeof MediaMetadata !== 'undefined') {
           navigator.mediaSession.metadata = new MediaMetadata({
             title: rec.name,
-            artist: proj.narrator || proj.author || 'StoryTape',
+            artist: rec.recordedBy?.trim() || proj.author || 'StoryTape',
             album: proj.title,
             artwork: artUrl
               ? [{ src: artUrl, sizes: '512x512', type: 'image/jpeg' }]

@@ -6,10 +6,13 @@ test.describe('CUJ-05: Minimalistic Audiobook Player, Mini-Player, Speed, Sleep 
     page,
   }) => {
     await page.goto('./');
+    await page.locator('#open-settings-btn').click();
+    await page.locator('#default-narrator-input').fill('Dad');
+    await page.getByLabel('Close settings').click();
+
     await createBook(page, {
       title: 'The Gruffalo',
       author: 'Julia Donaldson',
-      narrator: 'Dad',
     });
 
     await recordAndSaveChapter(page, { name: 'Into the Deep Dark Wood', minDurationSec: 1.8 });

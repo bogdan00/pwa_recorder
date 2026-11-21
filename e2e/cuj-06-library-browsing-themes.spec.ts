@@ -1,17 +1,16 @@
 import { expect, test } from './fixtures';
 import { createBook, recordAndSaveChapter } from './helpers';
 
-test.describe('CUJ-06: Audiobook Library Browsing (Search, Tags, Sort) & Themes', () => {
-  test('filters by book/author/chapter search and tag chips, sorts A-Z, and switches across 10 curated themes via Quick Switcher & Settings', async ({
+test.describe('CUJ-06: Audiobook Library Browsing (Search & Sort) & Themes', () => {
+  test('filters by book/author/notes/chapter search, sorts A-Z, and switches across 10 curated themes via Quick Switcher & Settings', async ({
     page,
   }) => {
     await page.goto('./');
 
-    // Seed 3 distinct books (one with a distinctive chapter name)
+    // Seed 3 distinct books (one with a distinctive chapter name and one with a note)
     await createBook(page, {
       title: 'Zog',
       author: 'Julia Donaldson',
-      tags: 'Dragons, Bedtime',
     });
     await recordAndSaveChapter(page, { name: 'Madame Dragon’s School', minDurationSec: 0.6 });
 
@@ -19,14 +18,13 @@ test.describe('CUJ-06: Audiobook Library Browsing (Search, Tags, Sort) & Themes'
     await createBook(page, {
       title: 'Alice in Wonderland',
       author: 'Lewis Carroll',
-      tags: 'Classics',
     });
 
     await page.getByLabel('Back to library').click();
     await createBook(page, {
       title: 'Goodnight Moon',
       author: 'Margaret Wise Brown',
-      tags: 'Bedtime',
+      description: 'Recorded with a scratchy cold voice',
     });
 
     await page.getByLabel('Back to library').click();
@@ -39,23 +37,18 @@ test.describe('CUJ-06: Audiobook Library Browsing (Search, Tags, Sort) & Themes'
     await expect(shelf.locator('.book-card')).toHaveCount(1);
     await expect(shelf).toContainText('Zog');
 
+    // Search by book note finds Goodnight Moon!
+    await search.fill('scratchy cold');
+    await expect(shelf.locator('.book-card')).toHaveCount(1);
+    await expect(shelf).toContainText('Goodnight Moon');
+
     // Search with no matches -> empty message + Show All Books button
     await search.fill('Nonexistent Dinosaur');
     await expect(page.getByText('No Matching Books')).toBeVisible();
     await page.getByRole('button', { name: 'Show All Books' }).click();
     await expect(shelf.locator('.book-card')).toHaveCount(3);
 
-    // 2. Tag chip filtering
-    await page.getByRole('tab', { name: 'Bedtime' }).click();
-    await expect(shelf.locator('.book-card')).toHaveCount(2);
-    await expect(shelf).toContainText('Zog');
-    await expect(shelf).toContainText('Goodnight Moon');
-    await expect(shelf).not.toContainText('Alice in Wonderland');
-
-    await page.getByRole('tab', { name: 'All Books' }).click();
-    await expect(shelf.locator('.book-card')).toHaveCount(3);
-
-    // 3. Sort A-Z orders books alphabetically
+    // 2. Sort A-Z orders books alphabetically
     await page.getByLabel('Sort audiobooks').selectOption('title');
     await expect(shelf.locator('.book-card__title')).toHaveText([
       'Alice in Wonderland',
@@ -206,12 +199,11 @@ test.describe('CUJ-06: Audiobook Library Browsing (Search, Tags, Sort) & Themes'
       await page.goto('./');
       await expect(page.getByRole('heading', { name: 'StoryTape' })).toBeVisible();
 
-      // Seed a book + chapter on first pass so tags, Continue Listening, and Mini-Player exist
+      // Seed a book + chapter on first pass so Continue Listening and Mini-Player exist
       if (vp.width === 360) {
         await createBook(page, {
           title: 'The Wind in the Willows',
           author: 'Kenneth Grahame',
-          tags: 'Bedtime, Classics, Adventure, Family, Nature',
         });
         await recordAndSaveChapter(page, {
           name: 'Chapter 1: The River Bank',

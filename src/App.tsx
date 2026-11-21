@@ -247,11 +247,11 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
       id,
       title: data.title,
       author: data.author,
-      narrator: data.narrator,
-      dedicatedTo: data.dedicatedTo,
+      narrator: '',
+      dedicatedTo: '',
       description: data.description,
-      language: data.language,
-      tags: data.tags,
+      language: '',
+      tags: [],
       coverColor: data.coverColor,
       hasCover,
       coverMimeType,
@@ -269,10 +269,6 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
     };
 
     await putProject(savedProject);
-
-    if (data.narrator && !settings.defaultNarrator) {
-      handleUpdateSettings({ ...settings, defaultNarrator: data.narrator });
-    }
 
     await reloadData();
     notifySavedWithOptionalReconnect(
@@ -310,7 +306,6 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
     const narratorAttribution =
       settings.defaultNarrator.trim() ||
       drive.authState.userName?.trim() ||
-      project.narrator.trim() ||
       undefined;
     const canAutoSync = canAutoSyncDrive();
     const hasLinkedDrive = canAutoSync || googleAuth.getState().wasConnected;
@@ -785,7 +780,6 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
       <BookEditorSheet
         open={bookEditorOpen}
         initialProject={editingBook}
-        defaultNarrator={settings.defaultNarrator}
         onClose={() => setBookEditorOpen(false)}
         onSave={handleSaveBook}
         onDelete={editingBook ? handleDeleteBook : undefined}

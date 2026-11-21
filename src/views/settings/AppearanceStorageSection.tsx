@@ -69,7 +69,7 @@ export const AppearanceStorageSection: React.FC<
               defaultNarrator: e.target.value,
             })
           }
-          placeholder="e.g. Dad / Mom (auto-filled on new books)"
+          placeholder="e.g. Dad / Mom (credits your recordings)"
         />
       </div>
 

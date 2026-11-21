@@ -16,7 +16,11 @@ import {
   type SleepTimerMode,
   usePlayer,
 } from '../player/PlayerContext';
-import { formatDurationMs, formatDurationSec } from '../utils/format';
+import {
+  formatBookNarrators,
+  formatDurationMs,
+  formatDurationSec,
+} from '../utils/format';
 import { BookCover } from './BookCover';
 import './AudioPlayerSheet.css';
 
@@ -144,13 +148,16 @@ export const AudioPlayerSheet: React.FC = () => {
         <div className="player-sheet__titles">
           <span className="player-sheet__book">{project.title}</span>
           <h2 className="player-sheet__chapter">{currentRecording.name}</h2>
-          {(project.narrator || project.author) && (
-            <span className="player-sheet__narrator">
-              {project.narrator
-                ? `Read by ${project.narrator}`
-                : project.author}
-            </span>
-          )}
+          {(() => {
+            const narratorLabel =
+              currentRecording.recordedBy?.trim() || formatBookNarrators(chapters);
+            if (!narratorLabel && !project.author) return null;
+            return (
+              <span className="player-sheet__narrator">
+                {narratorLabel ? `Read by ${narratorLabel}` : project.author}
+              </span>
+            );
+          })()}
         </div>
 
         {error && (

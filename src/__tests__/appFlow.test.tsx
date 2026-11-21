@@ -184,22 +184,29 @@ describe('StoryTape end-to-end UI workflows', () => {
     await user.click(screen.getByRole('button', { name: 'Stereo (2 ch · External Mic)' }));
     expect(screen.getByTestId('quality-preset-badge')).toHaveTextContent('Custom');
 
+    await user.type(screen.getByLabelText(/default narrator name/i), 'Dad');
+
     await user.click(screen.getByLabelText('Close settings'));
 
-    // 2. Create a new Book project with metadata & tags
+    // 2. Create a new Book project with simplified fields (title, author, optional notes)
     await user.click(screen.getByRole('button', { name: /create first book/i }));
+    expect(screen.queryByLabelText(/read by/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/recorded for/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/language/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/tags/i)).not.toBeInTheDocument();
+
     await user.type(screen.getByLabelText(/book title/i), 'The Gruffalo');
     await user.type(screen.getByLabelText(/author/i), 'Julia Donaldson');
-    await user.type(screen.getByLabelText(/read by/i), 'Dad');
-    await user.type(screen.getByLabelText(/tags/i), 'Bedtime, Classics');
+    await user.type(screen.getByLabelText(/notes/i), 'Recorded with a mild cold');
     await user.click(screen.getByRole('button', { name: /create book/i }));
 
-    // Navigates into Book Project Detail view
+    // Navigates into Book Project Detail view (narrator not shown until a chapter is recorded)
     expect(
       await screen.findByRole('heading', { name: 'The Gruffalo' }),
     ).toBeInTheDocument();
     expect(screen.getByText('by Julia Donaldson')).toBeInTheDocument();
-    expect(screen.getByText('Read by Dad')).toBeInTheDocument();
+    expect(screen.getByText('Recorded with a mild cold')).toBeInTheDocument();
+    expect(screen.queryByText('Read by Dad')).not.toBeInTheDocument();
 
     // 3. Enter Recording Studio (and simulate real browser hashchange firing right after navigate)
     await user.click(
@@ -240,10 +247,11 @@ describe('StoryTape end-to-end UI workflows', () => {
     await user.type(nameInput, 'Into the Deep Dark Wood');
     await user.click(screen.getByRole('button', { name: /^save recording$/i }));
 
-    // Returns to Project Detail with the newly saved chapter
+    // Returns to Project Detail with the newly saved chapter and auto-derived narrator credit
     expect(
       await screen.findByText('Into the Deep Dark Wood'),
     ).toBeInTheDocument();
+    expect(screen.getAllByText('Read by Dad').length).toBeGreaterThanOrEqual(2);
 
     // 4. Play chapter -> verify floating MiniPlayerBar & full-screen minimalistic player
     await user.click(
