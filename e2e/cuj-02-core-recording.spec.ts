@@ -89,4 +89,47 @@ test.describe('CUJ-02: Core Audio Recording — Start, Live Waveform, Pause, Saf
       page.locator('.rec-card__title', { hasText: 'Mr. McGregor’s Garden' }),
     ).toBeVisible();
   });
+
+  test('supports pure-black OLED Blackout Mode with double-tap wake while recording continues uninterrupted', async ({
+    page,
+  }) => {
+    await page.goto('./');
+    await createBook(page, { title: 'Bedtime Fables', author: 'Aesop' });
+
+    await page.locator('#record-chapter-btn').click();
+    await expect(page.getByTestId('recording-studio-view')).toBeVisible();
+    // Blackout button is only offered while actively recording
+    await expect(page.getByTestId('blackout-mode-btn')).toHaveCount(0);
+
+    await page.locator('#big-record-pause-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('REC');
+
+    const blackoutBtn = page.getByTestId('blackout-mode-btn');
+    await expect(blackoutBtn).toBeVisible();
+    await blackoutBtn.click();
+
+    const overlay = page.getByTestId('studio-blackout-overlay');
+    await expect(overlay).toBeVisible();
+    await expect(overlay).toContainText('Tap twice to wake screen');
+
+    // Single tap arms wake without accidentally dismissing blackout
+    await overlay.click();
+    await expect(overlay).toBeVisible();
+    await expect(overlay).toContainText('Tap once more to wake screen');
+
+    // Second tap wakes screen back to active recording studio
+    await overlay.click();
+    await expect(overlay).toBeHidden();
+    await expect(page.locator('.studio-status-pill')).toHaveText('REC');
+
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= 0.8,
+      'recording timer should continue advancing across blackout mode',
+    );
+
+    await page.locator('#big-record-pause-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
+    await expect(page.getByTestId('blackout-mode-btn')).toHaveCount(0);
+  });
 });

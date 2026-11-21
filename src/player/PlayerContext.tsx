@@ -16,6 +16,7 @@ import {
   putPlaybackProgress,
   putRecordingBlob,
 } from '../storage/db';
+import { setPlaybackAudioSession } from '../audio/backgroundCaptureKeepalive';
 import { downloadCloudRecording } from '../drive/syncService';
 import {
   formatPlaybackErrorMessage,
@@ -302,6 +303,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
 
         lastSavedSecRef.current = startOffsetSec;
         if (autoPlay) {
+          setPlaybackAudioSession();
           try {
             await audio.play();
             if (loadTokenRef.current !== loadToken) {

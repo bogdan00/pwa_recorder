@@ -33,3 +33,8 @@ A parent enters the mobile Recording Studio for a book, starts recording with th
    - Test **Back to Recording** safety escape returns calmly to paused state without losing audio.
    - Tap **Stop** again, type a custom recording name + optional notes, and tap **Save Recording**.
    - **Expected:** Encodes audio to browser-native format (WebM/M4A/WAV), saves metadata + audio blob in IndexedDB, navigates back to Book Detail, and displays the new chapter with duration and audio spec badge. Survives page reload.
+
+5. **Lock-Screen Background Resilience & OLED Blackout Mode**
+   - While recording, `RecordingEngine` activates `navigator.audioSession.type = 'play-and-record'`, a synchronous inaudible looping `<audio>` background keepalive + Lock Screen MediaSession status, `AudioContext` `interrupted`/`suspended` auto-resume, immediate draft persistence on `visibilitychange` (`hidden`), and `MediaStreamTrack` interruption monitoring.
+   - If the OS forcibly ends the microphone track while backgrounded/locked, `RecordingEngine` flushes all captured PCM to IndexedDB, auto-pauses cleanly without losing audio, and displays a clear recovery warning (`data-testid="studio-capture-warning"`).
+   - While recording, tapping **Blackout screen** (`data-testid="blackout-mode-btn"`) activates a pure-black OLED pocket/bedtime overlay (`data-testid="studio-blackout-overlay"`) with accidental-tap protection (double-tap to wake) while recording continues uninterrupted.

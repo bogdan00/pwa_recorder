@@ -14,6 +14,7 @@ import {
 } from '../storage/db';
 import { createId, downsamplePeaks } from '../utils/format';
 import { acquireMicStream } from './audioDevices';
+import { BackgroundCaptureKeepalive } from './backgroundCaptureKeepalive';
 import { buildStudioInputStrip } from './inputStrip';
 import { encodeAudio, type EncodedAudioResult } from './nativeEncoder';
 import {
@@ -37,6 +38,7 @@ export interface StudioSnapshot {
   actualSampleRate: number;
   channels: ChannelCountOption;
   draftId: string | null;
+  captureWarning?: string | null;
 }
 
 export interface LiveWaveformState {
@@ -56,6 +58,7 @@ export interface StartRecordingFeedback {
 
 const DRAFT_FLUSH_SECONDS = 2;
 const LIVE_EMIT_INTERVAL_MS = 65; // ~15 Hz React UI updates during live capture/preview
+const CAPTURE_WATCHDOG_INTERVAL_MS = 2000;
 const EMPTY_PEAKS: readonly number[] = [];
 
 function nowPerfMs(): number {
@@ -64,6 +67,7 @@ function nowPerfMs(): number {
 
 export class RecordingEngine {
   private projectId: string;
+  private projectTitle: string;
   private draftId: string | null = null;
   private phase: StudioPhase = 'idle';
   private timeline: PcmTimeline | null = null;
@@ -72,6 +76,7 @@ export class RecordingEngine {
   private lastChunkPerfMs = 0;
   private lastEmitPerfMs = 0;
   private hasEmittedFirstChunkInSession = false;
+  private captureWarning: string | null = null;
 
   // Capture graph
   private audioCtx: AudioContext | null = null;
@@ -83,6 +88,16 @@ export class RecordingEngine {
   private workletNode: AudioWorkletNode | null = null;
   private captureHandle: PcmCaptureHandle | null = null;
   private activeDeviceLabel = '';
+
+  // iOS background/lock-screen keepalive & interruption recovery
+  private bgKeepalive: BackgroundCaptureKeepalive;
+  private ctxStateChangeHandler: (() => void) | null = null;
+  private watchedAudioTrack: MediaStreamTrack | null = null;
+  private trackEndedHandler: (() => void) | null = null;
+  private trackMuteHandler: (() => void) | null = null;
+  private trackUnmuteHandler: (() => void) | null = null;
+  private captureVisibilityHandler: (() => void) | null = null;
+  private captureWatchdogId: number | null = null;
 
   // Preview playback graph
   private previewSource: AudioBufferSourceNode | null = null;
@@ -108,8 +123,19 @@ export class RecordingEngine {
   private listeners = new Set<(snap: StudioSnapshot) => void>();
   private visibilityHandler: (() => void) | null = null;
 
-  constructor(projectId: string) {
+  constructor(projectId: string, projectTitle = 'StoryTape') {
     this.projectId = projectId;
+    this.projectTitle = projectTitle;
+    this.bgKeepalive = new BackgroundCaptureKeepalive({
+      onSessionStateChange: (state) => {
+        if (this.phase !== 'recording') return;
+        if (state === 'interrupted') {
+          void this.flushPendingDraftToDb();
+        } else if (state === 'active') {
+          this.attemptCaptureResume();
+        }
+      },
+    });
   }
 
   subscribe(listener: (snap: StudioSnapshot) => void): () => void {
@@ -118,6 +144,12 @@ export class RecordingEngine {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  dismissCaptureWarning(): void {
+    if (!this.captureWarning) return;
+    this.captureWarning = null;
+    this.emit();
   }
 
   getSnapshot(): StudioSnapshot {
@@ -132,6 +164,7 @@ export class RecordingEngine {
       actualSampleRate: this.timeline?.sampleRate ?? 44100,
       channels: this.timeline?.channels ?? 1,
       draftId: this.draftId,
+      captureWarning: this.captureWarning,
     };
   }
 
@@ -498,6 +531,7 @@ export class RecordingEngine {
     this.captureEpoch += 1;
     this.stopPreviewPlayback();
     this.teardownMicCapture();
+    this.bgKeepalive.dispose();
     await this.flushPendingDraftToDb();
     await this.releaseWakeLock();
     if (this.audioCtx) {
@@ -516,6 +550,7 @@ export class RecordingEngine {
     this.lastChunkPerfMs = 0;
     this.lastEmitPerfMs = 0;
     this.hasEmittedFirstChunkInSession = false;
+    this.captureWarning = null;
     this.pendingPersistBuffers = [];
     this.pendingPersistSamples = 0;
     this.persistedChunkCount = 0;
@@ -565,17 +600,146 @@ export class RecordingEngine {
     return ctx;
   }
 
+  private attemptCaptureResume(): void {
+    if (this.phase !== 'recording') return;
+    this.bgKeepalive.ensureActive();
+    const ctx = this.audioCtx;
+    if (!ctx) return;
+    const state = ctx.state as string;
+    if (state === 'closed') {
+      void this.handleUnexpectedCaptureStop();
+      return;
+    }
+    if (state === 'suspended' || state === 'interrupted') {
+      void ctx.resume().catch(() => {});
+    }
+  }
+
+  private async handleUnexpectedCaptureStop(): Promise<void> {
+    if (this.phase !== 'recording') return;
+    this.captureWarning =
+      'Recording paused because the system stopped the microphone (for example, screen lock or a call). Your audio up to this point is safely saved — tap Record to keep going, or use Blackout screen while recording.';
+    await this.pause();
+  }
+
+  private attachCaptureResilienceGuards(
+    ctx: AudioContext,
+    stream: MediaStream,
+  ): void {
+    this.detachCaptureResilienceGuards();
+
+    // 1. AudioContext statechange: auto-resume 'interrupted' / 'suspended' states on iOS lock screen
+    this.ctxStateChangeHandler = () => {
+      if (this.phase !== 'recording') return;
+      const state = ctx.state as string;
+      if (state === 'interrupted' || state === 'suspended') {
+        void this.flushPendingDraftToDb();
+        this.attemptCaptureResume();
+      } else if (state === 'closed') {
+        void this.handleUnexpectedCaptureStop();
+      }
+    };
+    if (typeof ctx.addEventListener === 'function') {
+      ctx.addEventListener('statechange', this.ctxStateChangeHandler);
+    }
+
+    // 2. MediaStreamTrack lifecycle: flush immediately on mute; cleanly auto-pause on OS track end
+    const audioTrack = stream.getAudioTracks()[0] ?? null;
+    if (audioTrack && typeof audioTrack.addEventListener === 'function') {
+      this.watchedAudioTrack = audioTrack;
+      this.trackMuteHandler = () => {
+        if (this.phase !== 'recording') return;
+        void this.flushPendingDraftToDb();
+      };
+      this.trackUnmuteHandler = () => {
+        if (this.phase !== 'recording') return;
+        this.attemptCaptureResume();
+      };
+      this.trackEndedHandler = () => {
+        if (this.phase !== 'recording') return;
+        void this.handleUnexpectedCaptureStop();
+      };
+      audioTrack.addEventListener('mute', this.trackMuteHandler);
+      audioTrack.addEventListener('unmute', this.trackUnmuteHandler);
+      audioTrack.addEventListener('ended', this.trackEndedHandler);
+    }
+
+    // 3. Visibilitychange: flush PCM draft immediately before OS suspends, and heal on wake
+    if (typeof document !== 'undefined') {
+      this.captureVisibilityHandler = () => {
+        if (this.phase !== 'recording') return;
+        if (document.visibilityState === 'hidden') {
+          void this.flushPendingDraftToDb();
+          this.attemptCaptureResume();
+        } else if (document.visibilityState === 'visible') {
+          if (this.watchedAudioTrack?.readyState === 'ended') {
+            void this.handleUnexpectedCaptureStop();
+          } else {
+            this.attemptCaptureResume();
+          }
+        }
+      };
+      document.addEventListener('visibilitychange', this.captureVisibilityHandler);
+    }
+
+    // 4. Lightweight 2s watchdog for interrupted contexts or ended tracks while backgrounded
+    if (typeof window !== 'undefined' && typeof window.setInterval === 'function') {
+      this.captureWatchdogId = window.setInterval(() => {
+        if (this.phase !== 'recording') return;
+        if (this.watchedAudioTrack?.readyState === 'ended') {
+          void this.handleUnexpectedCaptureStop();
+          return;
+        }
+        if (this.audioCtx && (this.audioCtx.state as string) !== 'running') {
+          this.attemptCaptureResume();
+        }
+      }, CAPTURE_WATCHDOG_INTERVAL_MS);
+    }
+  }
+
+  private detachCaptureResilienceGuards(): void {
+    if (this.captureWatchdogId !== null && typeof window !== 'undefined') {
+      window.clearInterval(this.captureWatchdogId);
+      this.captureWatchdogId = null;
+    }
+    if (this.captureVisibilityHandler && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.captureVisibilityHandler);
+      this.captureVisibilityHandler = null;
+    }
+    if (this.audioCtx && this.ctxStateChangeHandler && typeof this.audioCtx.removeEventListener === 'function') {
+      this.audioCtx.removeEventListener('statechange', this.ctxStateChangeHandler);
+    }
+    this.ctxStateChangeHandler = null;
+
+    if (this.watchedAudioTrack && typeof this.watchedAudioTrack.removeEventListener === 'function') {
+      if (this.trackMuteHandler) {
+        this.watchedAudioTrack.removeEventListener('mute', this.trackMuteHandler);
+      }
+      if (this.trackUnmuteHandler) {
+        this.watchedAudioTrack.removeEventListener('unmute', this.trackUnmuteHandler);
+      }
+      if (this.trackEndedHandler) {
+        this.watchedAudioTrack.removeEventListener('ended', this.trackEndedHandler);
+      }
+    }
+    this.watchedAudioTrack = null;
+    this.trackMuteHandler = null;
+    this.trackUnmuteHandler = null;
+    this.trackEndedHandler = null;
+  }
+
   private async beginMicCapture(
     deviceSettings: AudioDeviceSettings,
     quality: AudioQualitySettings,
   ): Promise<StartRecordingFeedback> {
     const myEpoch = ++this.captureEpoch;
+    this.captureWarning = null;
     const targetChannels: ChannelCountOption =
       this.timeline?.channels ?? quality.channels;
 
-    // 1. Synchronously create & kick AudioContext.resume() INSIDE the user tap gesture
-    //    (required by iOS Safari before any await!). Use existing timeline rate when
-    //    resuming a take, or native hardware rate for fresh takes.
+    // 1. Synchronously activate iOS background AudioSession + inaudible keepalive <audio>
+    //    and kick AudioContext.resume() INSIDE the user tap gesture (before any await!).
+    this.bgKeepalive.startSync(this.projectTitle);
     const ctx = this.createOrGetAudioContext(this.timeline?.sampleRate);
     if (ctx.state !== 'running') {
       void ctx.resume().catch(() => {});
@@ -584,17 +748,24 @@ export class RecordingEngine {
     // 2. Acquire microphone stream aligned to AudioContext.sampleRate so Chromium/WebRTC
     //    never inserts a live rate-conversion bridge into MediaStreamAudioSourceNode.
     const captureSampleRate = this.timeline?.sampleRate ?? ctx.sampleRate;
-    const acquired = await acquireMicStream(
-      deviceSettings,
-      {
-        ...quality,
-        channels: targetChannels,
-      },
-      captureSampleRate,
-    );
+    let acquired: Awaited<ReturnType<typeof acquireMicStream>>;
+    try {
+      acquired = await acquireMicStream(
+        deviceSettings,
+        {
+          ...quality,
+          channels: targetChannels,
+        },
+        captureSampleRate,
+      );
+    } catch (err) {
+      this.bgKeepalive.stop();
+      throw err;
+    }
 
     // Abort cleanly if pause()/discard()/dispose()/another start superseded us mid-await
     if (myEpoch !== this.captureEpoch) {
+      this.bgKeepalive.stop();
       acquired.stream.getTracks().forEach((t) => t.stop());
       return {
         usedFallbackDevice: acquired.usedFallback,
@@ -602,9 +773,12 @@ export class RecordingEngine {
       };
     }
 
+    this.bgKeepalive.reinforceAfterMicAcquired();
+
     // 3. Re-resume AudioContext after permission dialog closes (iOS suspends it during prompt)
     await this.resumeContextSafely(ctx);
     if (myEpoch !== this.captureEpoch) {
+      this.bgKeepalive.stop();
       acquired.stream.getTracks().forEach((t) => t.stop());
       return {
         usedFallbackDevice: acquired.usedFallback,
@@ -656,6 +830,7 @@ export class RecordingEngine {
     const startPerf = nowPerfMs();
     this.lastChunkPerfMs = startPerf;
     this.hasEmittedFirstChunkInSession = false;
+    this.attachCaptureResilienceGuards(ctx, this.stream);
     await this.requestWakeLock();
     if (myEpoch !== this.captureEpoch) {
       await this.releaseWakeLock();
@@ -713,6 +888,8 @@ export class RecordingEngine {
   }
 
   private teardownMicCapture(): void {
+    this.detachCaptureResilienceGuards();
+    this.bgKeepalive.stop();
     this.updateAutoGain = null;
     for (const node of this.inputStripNodes) {
       try {

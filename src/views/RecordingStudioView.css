@@ -347,3 +347,116 @@
   color: var(--accent-danger);
   border-color: hsla(2 68% 56% / 0.25);
 }
+
+.studio-warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-amber-soft);
+  border: 1px solid var(--accent-amber-border);
+  color: var(--ink-primary);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.studio-warning-banner__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.studio-warning-banner__dismiss {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-secondary);
+}
+
+.studio-blackout-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--ink-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition:
+    background-color 140ms var(--ease-out),
+    border-color 140ms var(--ease-out),
+    color 140ms var(--ease-out);
+}
+
+.studio-blackout-btn:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+  color: var(--ink-primary);
+}
+
+/* Pure OLED black pocket/bedtime shield — powers off OLED pixels for zero glare */
+.studio-blackout-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: #000000;
+  color: rgba(255, 255, 255, 0.34);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: max(24px, var(--safe-top)) 24px max(24px, var(--safe-bottom));
+  border: none;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.studio-blackout-overlay__rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 110, 100, 0.48);
+}
+
+.studio-blackout-overlay__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.studio-blackout-overlay__timer {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 32px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.studio-blackout-overlay__hint {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.32);
+  margin-top: 8px;
+}
+
+.studio-blackout-overlay__hint--armed {
+  color: rgba(255, 255, 255, 0.72);
+}

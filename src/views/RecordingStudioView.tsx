@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Mic,
+  Moon,
   Pause,
   Play,
   Scissors,
@@ -9,6 +10,7 @@ import {
   Square,
   Trash2,
   Undo2,
+  X,
 } from 'lucide-react';
 import type {
   AppSettings,
@@ -79,7 +81,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   if (!engineRef.current) {
     engineRef.current = engineFactory
       ? engineFactory(project.id)
-      : new RecordingEngine(project.id);
+      : new RecordingEngine(project.id, project.title);
   }
 
   const [snap, setSnap] = useState<StudioSnapshot>(() =>
@@ -88,6 +90,11 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   const [caps, setCaps] = useState<CodecCapabilities | null>(null);
   const [studioError, setStudioError] = useState<string | null>(null);
   const [isStartingMic, setIsStartingMic] = useState(false);
+
+  // OLED Blackout Mode (pocket/bedtime zero-glare shield while recording)
+  const [blackoutActive, setBlackoutActive] = useState(false);
+  const [blackoutWakeArmed, setBlackoutWakeArmed] = useState(false);
+  const blackoutWakeTimerRef = useRef<number | null>(null);
 
   // Modals
   const [saveOpen, setSaveOpen] = useState(false);
@@ -100,6 +107,41 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   useEffect(() => {
     void probeAudioCapabilities().then(setCaps);
   }, []);
+
+  useEffect(() => {
+    if (snap.phase !== 'recording' && blackoutActive) {
+      setBlackoutActive(false);
+      setBlackoutWakeArmed(false);
+    }
+  }, [blackoutActive, snap.phase]);
+
+  useEffect(() => {
+    return () => {
+      if (blackoutWakeTimerRef.current !== null) {
+        window.clearTimeout(blackoutWakeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleBlackoutTap = () => {
+    if (blackoutWakeArmed) {
+      if (blackoutWakeTimerRef.current !== null) {
+        window.clearTimeout(blackoutWakeTimerRef.current);
+        blackoutWakeTimerRef.current = null;
+      }
+      setBlackoutWakeArmed(false);
+      setBlackoutActive(false);
+      return;
+    }
+    setBlackoutWakeArmed(true);
+    if (blackoutWakeTimerRef.current !== null) {
+      window.clearTimeout(blackoutWakeTimerRef.current);
+    }
+    blackoutWakeTimerRef.current = window.setTimeout(() => {
+      blackoutWakeTimerRef.current = null;
+      setBlackoutWakeArmed(false);
+    }, 2500);
+  };
 
   // Subscribe once for the lifetime of the view; dispose only on true unmount
   useEffect(() => {
@@ -381,8 +423,39 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
           </div>
         )}
 
-        {/* Paused review controls + contextual Punch-In ("Re-record from here") */}
+        {snap.captureWarning && (
+          <div
+            className="studio-warning-banner"
+            role="status"
+            data-testid="studio-capture-warning"
+          >
+            <span className="studio-warning-banner__text">
+              {snap.captureWarning}
+            </span>
+            <button
+              type="button"
+              className="studio-warning-banner__dismiss"
+              onClick={() => engineRef.current!.dismissCaptureWarning()}
+              aria-label="Dismiss recording notice"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
+        {/* Paused review controls + contextual Punch-In ("Re-record from here") or live Blackout button */}
         <section className="studio-review-zone" aria-label="Playback review controls">
+          {snap.phase === 'recording' && (
+            <button
+              type="button"
+              className="studio-blackout-btn"
+              data-testid="blackout-mode-btn"
+              onClick={() => setBlackoutActive(true)}
+            >
+              <Moon size={14} />
+              Blackout screen
+            </button>
+          )}
           {(snap.phase === 'paused' || snap.phase === 'playing') &&
             snap.durationMs > 0 && (
               <>
@@ -643,6 +716,31 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+      {/* Pure-black OLED pocket/bedtime blackout shield (double-tap to wake) */}
+      {blackoutActive && snap.phase === 'recording' && (
+        <button
+          type="button"
+          className="studio-blackout-overlay"
+          data-testid="studio-blackout-overlay"
+          aria-label="Blackout recording screen. Tap twice to wake."
+          onClick={handleBlackoutTap}
+        >
+          <span className="studio-blackout-overlay__rec">
+            <span className="studio-blackout-overlay__dot" aria-hidden="true" />
+            Recording
+          </span>
+          <span className="studio-blackout-overlay__timer">
+            {formatDurationMs(snap.playheadMs)}
+          </span>
+          <span
+            className={`studio-blackout-overlay__hint ${blackoutWakeArmed ? 'studio-blackout-overlay__hint--armed' : ''}`}
+          >
+            {blackoutWakeArmed
+              ? 'Tap once more to wake screen'
+              : 'Tap twice to wake screen'}
+          </span>
+        </button>
       )}
     </div>
   );
