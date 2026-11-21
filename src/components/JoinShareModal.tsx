@@ -6,9 +6,11 @@ import {
   ExternalLink,
   FolderOpen,
   Headphones,
+  KeyRound,
   Library,
   Loader2,
   Mic,
+  RefreshCw,
   ShieldCheck,
   Users,
   X,
@@ -52,6 +54,7 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
 }) => {
   const [needsPicker, setNeedsPicker] = useState(false);
   const [pickingFolder, setPickingFolder] = useState(false);
+  const [requestedAccess, setRequestedAccess] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
 
   const busy = isJoining || pickingFolder;
@@ -60,6 +63,7 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
     if (!open) return;
     setNeedsPicker(false);
     setPickingFolder(false);
+    setRequestedAccess(false);
     setJoinError(null);
   }, [open, invite?.folderId, invite?.scope, invite?.role]);
 
@@ -305,8 +309,8 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
                 <span>One-Time Folder Selection Required</span>
               </div>
               <p className="join-picker-card__text">
-                For your privacy, Google requires you to select this shared
-                folder once so StoryTape can access only this folder.
+                If the owner already shared this folder with you, select it once
+                in Google Picker so StoryTape can access only this folder.
               </p>
               <div className="join-picker-card__actions">
                 <button
@@ -328,16 +332,58 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
                     </>
                   )}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Native Google Drive "Request access" handoff when recipient lacks Drive permission */}
+          {isDriveConnected && (needsPicker || Boolean(joinError)) && (
+            <div
+              className="join-request-card"
+              data-testid="join-request-access-card"
+            >
+              <div className="join-request-card__head">
+                <KeyRound size={16} />
+                <span>Don&apos;t Have Permission Yet?</span>
+              </div>
+              <p className="join-request-card__text">
+                If you don&apos;t see <strong>{invite.name}</strong> in Google
+                Picker, open the folder in Google Drive and tap{' '}
+                <strong>Request access</strong>. Google will notify the owner to
+                approve your account.
+              </p>
+              <div className="join-request-card__actions">
                 <a
+                  id="join-request-access-btn"
                   href={getDriveFolderWebUrl(invite.folderId)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="btn btn-ghost btn-sm join-external-link"
+                  className="btn btn-secondary btn-sm join-external-link"
+                  onClick={() => setRequestedAccess(true)}
                 >
                   <ExternalLink size={15} />
-                  Open Folder in Google Drive
+                  Request Access in Google Drive
                 </a>
+                {requestedAccess && (
+                  <button
+                    type="button"
+                    id="join-retry-after-request-btn"
+                    className="btn btn-amber btn-sm"
+                    onClick={() => void handleConfirmJoin()}
+                    disabled={busy}
+                  >
+                    <RefreshCw size={14} className={isJoining ? 'spin' : ''} />
+                    Check Access &amp; Retry
+                  </button>
+                )}
               </div>
+              {requestedAccess && (
+                <p className="join-request-card__hint">
+                  Once the owner approves your Drive request (via email or in
+                  their Share sheet), tap <strong>Check Access &amp; Retry</strong>{' '}
+                  or pick the folder above.
+                </p>
+              )}
             </div>
           )}
 

@@ -1,6 +1,7 @@
 import type {
   AppSettings,
   BookProject,
+  DriveAccessProposal,
   DriveCollaboratorPermission,
   DriveProjectMetadataFile,
   Recording,
@@ -903,6 +904,30 @@ export function removeDriveFolderPermission(
 ): Promise<void> {
   return withAuthorizedClient(clientOverride, (client) =>
     client.removePermission(folderId, permissionId),
+  );
+}
+
+export function listDriveFolderAccessProposals(
+  folderId: string,
+  clientOverride?: DriveClient,
+): Promise<DriveAccessProposal[]> {
+  return withAuthorizedClient(clientOverride, (client) =>
+    client.listAccessProposals(folderId),
+  );
+}
+
+export function resolveDriveFolderAccessProposal(
+  folderId: string,
+  proposalId: string,
+  options: {
+    action: 'ACCEPT' | 'DENY';
+    role?: 'reader' | 'writer';
+    sendNotification?: boolean;
+  },
+  clientOverride?: DriveClient,
+): Promise<void> {
+  return withAuthorizedClient(clientOverride, (client) =>
+    client.resolveAccessProposal(folderId, proposalId, options),
   );
 }
 

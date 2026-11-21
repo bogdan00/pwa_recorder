@@ -262,6 +262,48 @@
   text-decoration: none;
 }
 
+/* Pending Drive access requests */
+.share-proposal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.share-proposal-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--accent-amber-soft);
+  border: 1px solid var(--accent-amber-border);
+}
+
+.share-proposal-item__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.share-proposal-item__message {
+  font-size: 12.5px;
+  color: var(--ink-secondary);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.share-proposal-item__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Collaborators list */
 .share-collab-loading,
 .share-collab-empty {

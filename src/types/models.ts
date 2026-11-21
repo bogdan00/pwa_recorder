@@ -72,6 +72,21 @@ export interface DriveCollaboratorPermission {
   displayName?: string;
 }
 
+export interface DriveAccessProposalRoleAndView {
+  role?: string;
+  view?: string;
+}
+
+export interface DriveAccessProposal {
+  fileId?: string;
+  proposalId: string;
+  requesterEmailAddress?: string;
+  recipientEmailAddress?: string;
+  rolesAndViews?: DriveAccessProposalRoleAndView[];
+  requestMessage?: string;
+  createTime?: string;
+}
+
 export interface AppSettings {
   googleClientId: string;
   googleApiKey?: string;

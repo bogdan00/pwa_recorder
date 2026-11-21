@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Check,
   Cloud,
   Copy,
   ExternalLink,
@@ -7,6 +8,7 @@ import {
   Globe,
   Headphones,
   Info,
+  KeyRound,
   Link2,
   Loader2,
   Mic,
@@ -17,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  DriveAccessProposal,
   DriveCollaboratorPermission,
   ShareAccessRole,
 } from '../types/models';
@@ -28,8 +31,10 @@ import {
   shareInviteLink,
 } from '../drive/shareUtils';
 import {
+  listDriveFolderAccessProposals,
   listDriveFolderPermissions,
   removeDriveFolderPermission,
+  resolveDriveFolderAccessProposal,
   setDriveFolderAnyoneLinkAccess,
   shareDriveFolderWithEmail,
 } from '../drive/syncService';
@@ -116,12 +121,14 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
   const [inviteError, setInviteError] = useState<string | null>(null);
 
   const [permissions, setPermissions] = useState<DriveCollaboratorPermission[]>([]);
+  const [accessProposals, setAccessProposals] = useState<DriveAccessProposal[]>([]);
   const [loadingPermissions, setLoadingPermissions] = useState(false);
   const [permissionsRestricted, setPermissionsRestricted] = useState(false);
   const [permissionsError, setPermissionsError] = useState<string | null>(null);
 
   const [togglingAnyone, setTogglingAnyone] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [resolvingProposalId, setResolvingProposalId] = useState<string | null>(null);
 
   const activeFolderId = folderId || preparedFolder?.folderId || '';
   const activeTitle =
@@ -142,10 +149,12 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
     setInviting(false);
     setInviteError(null);
     setPermissions([]);
+    setAccessProposals([]);
     setPermissionsRestricted(false);
     setPermissionsError(null);
     setTogglingAnyone(false);
     setRemovingId(null);
+    setResolvingProposalId(null);
   }, [open, scope, folderId, targetTitle]);
 
   // Allow Escape to close the sheet
@@ -167,9 +176,15 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
       setPermissionsError(null);
 
       try {
-        const list = await listDriveFolderPermissions(targetFolderId);
+        const [list, proposals] = await Promise.all([
+          listDriveFolderPermissions(targetFolderId),
+          isReadOnly
+            ? Promise.resolve<DriveAccessProposal[]>([])
+            : listDriveFolderAccessProposals(targetFolderId).catch(() => []),
+        ]);
         if (!isActive()) return;
         setPermissions(list);
+        setAccessProposals(proposals);
       } catch (err) {
         if (!isActive()) return;
         if (err instanceof DriveApiError && err.status === 401) {
@@ -192,7 +207,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
         if (isActive()) setLoadingPermissions(false);
       }
     },
-    [],
+    [isReadOnly],
   );
 
   useEffect(() => {
@@ -338,6 +353,47 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
       );
     } finally {
       setRemovingId(null);
+    }
+  };
+
+  const handleResolveProposal = async (
+    proposal: DriveAccessProposal,
+    action: 'ACCEPT' | 'DENY',
+    role?: 'reader' | 'writer',
+  ) => {
+    if (resolvingProposalId || !activeFolderId || isReadOnly) return;
+
+    const emailLabel =
+      proposal.recipientEmailAddress ||
+      proposal.requesterEmailAddress ||
+      'requester';
+    setResolvingProposalId(proposal.proposalId);
+    setPermissionsError(null);
+    try {
+      await resolveDriveFolderAccessProposal(activeFolderId, proposal.proposalId, {
+        action,
+        role,
+        sendNotification: true,
+      });
+      setAccessProposals((prev) =>
+        prev.filter((p) => p.proposalId !== proposal.proposalId),
+      );
+      if (action === 'ACCEPT') {
+        onToast(
+          `Approved ${emailLabel} as ${role === 'writer' ? 'Co-Narrator' : 'Listener'}`,
+        );
+        await loadPermissions(activeFolderId);
+      } else {
+        onToast(`Denied access request from ${emailLabel}`);
+      }
+    } catch (err) {
+      setPermissionsError(
+        err instanceof Error
+          ? err.message
+          : `Could not update access request for ${emailLabel}.`,
+      );
+    } finally {
+      setResolvingProposalId(null);
     }
   };
 
@@ -708,6 +764,108 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
                   </a>
                 </div>
               </section>
+
+              {/* Pending Google Drive Access Requests (visible to approvers when non-empty) */}
+              {!isReadOnly && accessProposals.length > 0 && (
+                <section
+                  className="share-section"
+                  aria-label="Pending access requests"
+                  data-testid="share-access-requests-section"
+                >
+                  <div className="share-section__head">
+                    <h3 className="share-section__title">
+                      <KeyRound size={16} />
+                      Pending Access Requests
+                      <span className="badge badge-amber">
+                        {accessProposals.length}
+                      </span>
+                    </h3>
+                  </div>
+
+                  <ul className="share-proposal-list">
+                    {accessProposals.map((proposal) => {
+                      const requester =
+                        proposal.recipientEmailAddress ||
+                        proposal.requesterEmailAddress ||
+                        'Google user';
+                      const requestedWriter = proposal.rolesAndViews?.some(
+                        (rv) => rv.role === 'writer',
+                      );
+                      const isBusy = resolvingProposalId === proposal.proposalId;
+
+                      return (
+                        <li
+                          key={proposal.proposalId}
+                          className="share-proposal-item"
+                          data-testid={`access-proposal-${proposal.proposalId}`}
+                        >
+                          <div className="share-proposal-item__header">
+                            <span className="share-collab-name">
+                              {requester}
+                            </span>
+                            <span className="badge">
+                              {requestedWriter
+                                ? 'Requested Co-Narrator'
+                                : 'Requested Listener'}
+                            </span>
+                          </div>
+                          {proposal.requestMessage?.trim() && (
+                            <p className="share-proposal-item__message">
+                              &ldquo;{proposal.requestMessage.trim()}&rdquo;
+                            </p>
+                          )}
+                          <div className="share-proposal-item__actions">
+                            <button
+                              type="button"
+                              className="btn btn-amber btn-sm"
+                              disabled={Boolean(resolvingProposalId)}
+                              onClick={() =>
+                                void handleResolveProposal(
+                                  proposal,
+                                  'ACCEPT',
+                                  'reader',
+                                )
+                              }
+                            >
+                              {isBusy ? (
+                                <Loader2 size={14} className="spin" />
+                              ) : (
+                                <Check size={14} />
+                              )}
+                              Approve as Listener
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              disabled={Boolean(resolvingProposalId)}
+                              onClick={() =>
+                                void handleResolveProposal(
+                                  proposal,
+                                  'ACCEPT',
+                                  'writer',
+                                )
+                              }
+                            >
+                              <Mic size={14} />
+                              Co-Narrator
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm share-remove-btn"
+                              disabled={Boolean(resolvingProposalId)}
+                              onClick={() =>
+                                void handleResolveProposal(proposal, 'DENY')
+                              }
+                            >
+                              Deny
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )}
 
               {/* Section 3 — People with Access */}
               <section

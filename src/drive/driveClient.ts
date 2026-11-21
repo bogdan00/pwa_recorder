@@ -1,4 +1,7 @@
-import type { DriveCollaboratorPermission } from '../types/models';
+import type {
+  DriveAccessProposal,
+  DriveCollaboratorPermission,
+} from '../types/models';
 
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
@@ -370,6 +373,63 @@ export class DriveClient {
     await this.request(
       `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(permissionId)}`,
       { method: 'DELETE', ignore404: true },
+    );
+  }
+
+  /**
+   * Lists pending Drive access requests (accessproposals) on a folder.
+   * Only approvers (owners/editors with approval capability) can list proposals;
+   * 403/404 responses degrade gracefully to an empty list.
+   */
+  async listAccessProposals(fileId: string): Promise<DriveAccessProposal[]> {
+    try {
+      const data = await this.requestJson<{
+        accessProposals?: DriveAccessProposal[];
+      }>(
+        `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/accessproposals`,
+      );
+      return data.accessProposals ?? [];
+    } catch (err) {
+      if (
+        err instanceof DriveApiError &&
+        (err.status === 403 || err.status === 404)
+      ) {
+        return [];
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Approves or denies a pending Drive access request (accessproposals.resolve).
+   */
+  async resolveAccessProposal(
+    fileId: string,
+    proposalId: string,
+    options: {
+      action: 'ACCEPT' | 'DENY';
+      role?: 'reader' | 'writer';
+      sendNotification?: boolean;
+    },
+  ): Promise<void> {
+    const body: {
+      action: 'ACCEPT' | 'DENY';
+      role?: string[];
+      sendNotification: boolean;
+    } = {
+      action: options.action,
+      sendNotification: options.sendNotification ?? true,
+    };
+    if (options.action === 'ACCEPT') {
+      body.role = [options.role ?? 'reader'];
+    }
+    await this.request(
+      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/accessproposals/${encodeURIComponent(proposalId)}:resolve`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
     );
   }
 }

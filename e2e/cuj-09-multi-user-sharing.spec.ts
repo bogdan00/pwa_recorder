@@ -30,6 +30,16 @@ interface MockDriveState {
       displayName?: string;
     }>
   >;
+  accessProposals?: Map<
+    string,
+    Array<{
+      proposalId: string;
+      requesterEmailAddress?: string;
+      recipientEmailAddress?: string;
+      rolesAndViews?: Array<{ role?: string; view?: string }>;
+      requestMessage?: string;
+    }>
+  >;
   unlockedFolders: Set<string>;
   pushedManifests: Array<{ folderId: string; payload: Record<string, unknown> }>;
   writeAttemptsById: string[];
@@ -262,6 +272,55 @@ async function installMockDriveBackend(
         );
         return route.fulfill({ status: 204, body: '' });
       }
+    }
+
+    // Access Proposals API: GET /drive/v3/files/:id/accessproposals & POST .../:proposalId:resolve
+    const proposalResolveMatch = url.match(
+      /\/drive\/v3\/files\/([^/?]+)\/accessproposals\/([^/?:]+):resolve/,
+    );
+    if (proposalResolveMatch && method === 'POST') {
+      const fileId = decodeURIComponent(proposalResolveMatch[1]);
+      const proposalId = decodeURIComponent(proposalResolveMatch[2]);
+      const body = JSON.parse(req.postData() || '{}') as {
+        action: 'ACCEPT' | 'DENY';
+        role?: string[];
+      };
+      const existing = state.accessProposals?.get(fileId) ?? [];
+      const target = existing.find((p) => p.proposalId === proposalId);
+      state.accessProposals?.set(
+        fileId,
+        existing.filter((p) => p.proposalId !== proposalId),
+      );
+      if (body.action === 'ACCEPT' && target) {
+        const email =
+          target.recipientEmailAddress || target.requesterEmailAddress || '';
+        const role = body.role?.[0] === 'writer' ? 'writer' : 'reader';
+        const curPerms = state.permissions.get(fileId) ?? [];
+        state.permissions.set(fileId, [
+          ...curPerms,
+          {
+            id: `perm-${++permSeq}`,
+            type: 'user',
+            role,
+            emailAddress: email,
+            displayName: email.split('@')[0],
+          },
+        ]);
+      }
+      return route.fulfill({ status: 200, body: '' });
+    }
+
+    const proposalListMatch = url.match(
+      /\/drive\/v3\/files\/([^/?]+)\/accessproposals(?:\?|$)/,
+    );
+    if (proposalListMatch && method === 'GET') {
+      const fileId = decodeURIComponent(proposalListMatch[1]);
+      const proposals = state.accessProposals?.get(fileId) ?? [];
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ accessProposals: proposals }),
+      });
     }
 
     // Resumable binary upload init
@@ -529,6 +588,7 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     const state: MockDriveState = {
       driveFiles: new Map(),
       permissions: new Map(),
+      accessProposals: new Map(),
       unlockedFolders: new Set(),
       pushedManifests: [],
       writeAttemptsById: [],
@@ -690,6 +750,49 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     await page.getByTestId('confirm-dialog-confirm').click();
     await expect(shareSheet).not.toContainText('grandma@example.com');
     await expect(shareSheet).toContainText('mom@example.com');
+
+    // Pending Google Drive access requests appear for the owner and can be approved or denied in-app
+    const inviteHref = await inviteLinkInput.inputValue();
+    const sharedFolderIdMatch = inviteHref.match(/folderId=([^&]+)/);
+    expect(sharedFolderIdMatch?.[1]).toBeTruthy();
+    const bookFolderId = decodeURIComponent(sharedFolderIdMatch![1]);
+    state.accessProposals!.set(bookFolderId, [
+      {
+        proposalId: 'prop-uncle',
+        requesterEmailAddress: 'uncle@example.com',
+        recipientEmailAddress: 'uncle@example.com',
+        rolesAndViews: [{ role: 'reader' }],
+        requestMessage: 'Can I listen to bedtime stories?',
+      },
+      {
+        proposalId: 'prop-unknown',
+        requesterEmailAddress: 'stranger@example.com',
+        recipientEmailAddress: 'stranger@example.com',
+        rolesAndViews: [{ role: 'writer' }],
+      },
+    ]);
+
+    await page.getByLabel('Refresh collaborators').click();
+    const requestsSection = page.getByTestId('share-access-requests-section');
+    await expect(requestsSection).toBeVisible();
+    await expect(requestsSection).toContainText('uncle@example.com');
+    await expect(requestsSection).toContainText('Can I listen to bedtime stories?');
+    await expect(requestsSection).toContainText('stranger@example.com');
+
+    // Approve Uncle as Listener -> moves from Pending Access Requests into People with Access
+    await page
+      .getByTestId('access-proposal-prop-uncle')
+      .getByRole('button', { name: /Approve as Listener/i })
+      .click();
+    await expect(page.getByTestId('access-proposal-prop-uncle')).toBeHidden();
+    await expect(shareSheet).toContainText('uncle@example.com');
+
+    // Deny unknown request -> Pending Access Requests section disappears cleanly
+    await page
+      .getByTestId('access-proposal-prop-unknown')
+      .getByRole('button', { name: /Deny/i })
+      .click();
+    await expect(requestsSection).toBeHidden();
   });
 
   test('collaborator opens #/join link, unlocks shared folder via Google Picker, records Chapter 2 alongside Dad’s Chapter 1 with conflict-safe merge, and switches back to personal library', async ({
@@ -815,9 +918,17 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     await page.locator('#join-connect-drive-btn').click();
     await expect(page.locator('#join-confirm-btn')).toBeVisible();
 
-    // Step 2: Try joining -> Drive returns 404 under drive.file -> Picker unlock button appears!
+    // Step 2: Try joining -> Drive returns 404 under drive.file -> Picker unlock & Request Access cards appear!
     await page.locator('#join-confirm-btn').click();
     await expect(page.locator('#join-google-picker-btn')).toBeVisible();
+    await expect(page.getByTestId('join-request-access-card')).toBeVisible();
+    const requestAccessBtn = page.locator('#join-request-access-btn');
+    await expect(requestAccessBtn).toBeVisible();
+    await expect(requestAccessBtn).toHaveAttribute(
+      'href',
+      `https://drive.google.com/drive/folders/${sharedLibId}`,
+    );
+    await expect(requestAccessBtn).toHaveAttribute('target', '_blank');
 
     // Step 3: Pick folder via Google Picker -> unlocks folder & syncs immediately!
     await page.locator('#join-google-picker-btn').click();

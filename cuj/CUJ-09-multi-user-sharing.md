@@ -19,6 +19,8 @@ Family members can share either their entire StoryTape Family Library or an indi
    - **Expected:** Automatically runs a pre-sync so the Google Drive folder exists before inviting collaborators or generating a share link, without manual extra steps.
    - Invite a collaborator by Google email via the Drive Permissions API as either **Co-Narrator** (`writer`) or **Listener** (`reader`).
    - **Expected:** New collaborator appears in the active collaborators list with their email and assigned role; revoking access prompts for confirmation before removing their Drive permission and updating the list immediately.
+   - When pending Google Drive access requests (`accessproposals`) exist on the folder, review them in **Pending Access Requests** inside `ShareSheet` and approve (as **Listener** or **Co-Narrator**) or deny them.
+   - **Expected:** Approving resolves the proposal via Drive API v3 (`ACCEPT`), removes it from the pending list, and refreshes **People with Access** with the new collaborator; denying resolves with `DENY` and removes it from the pending list.
    - Toggle **"Anyone with link can listen"** (read-only link access), copy or natively share (`navigator.share`) the 1-tap StoryTape join link (`#/join?folderId=...&name=...&scope=library|book&role=...`), and tap **Open in Google Drive**.
    - **Expected:** Link-sharing toggle creates/removes the Drive `anyone` (`reader`) permission, generated join link encodes the folder ID, display name, scope (`library` or `book`), and role (without exposing any OAuth Client ID), the invite link preview wraps cleanly across multiple lines without cropping or horizontal scrolling (so tapping, focusing, or swiping never scrolls the text out of view into an empty-looking input), copy/native share feedback confirms success, and the Drive folder link opens cleanly.
 
@@ -27,7 +29,9 @@ Family members can share either their entire StoryTape Family Library or an indi
    - **Expected:**
      - `JoinShareModal` opens automatically with zero manual credential/Client ID entry.
      - Guides the collaborator through connecting Google Drive and verifies access to the target folder.
-     - When Google's `drive.file` scope requires explicit folder authorization, presents a guided Google Picker / Drive link unlock flow so access succeeds cleanly.
+     - When Google's `drive.file` scope requires explicit folder authorization or the recipient does not yet have Drive permission, presents both:
+       1. A guided **Pick Shared Folder in Google Drive** (Google Picker) unlock flow for already-shared folders, and
+       2. An explicit **Request Access in Google Drive** action opening the folder URL directly in Google Drive (where Google's native *"Request access"* screen notifies the owner, since Drive API v3 does not allow programmatic access proposal creation) paired with a retry control once approved.
    - Complete joining for both scopes:
      - **Shared Library (`scope=library`):** Links the shared Drive root folder, displays a clear **Shared Library** indicator in the Library UI, pulls shared books, and offers a confirmed control to return to the user's personal library.
      - **Shared Book (`scope=book`):** Adds the shared book alongside the user's existing personal books without replacing or disturbing their personal library (unlinking prompts for confirmation).
