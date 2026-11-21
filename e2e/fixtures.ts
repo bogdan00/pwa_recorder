@@ -109,6 +109,11 @@ export const test = base.extend<StoryTapeTestOptions>({
     });
 
     await page.addInitScript(() => {
+      // Neutralize any build-time VITE_GOOGLE_AUTH_BROKER_URL baked into dist/ in CI so
+      // non-broker E2E tests remain identical offline and on GitHub Actions (ADR-09).
+      // Broker-specific E2E tests explicitly override window.__STORYTAPE_AUTH_BROKER_URL__.
+      (window as unknown as Record<string, unknown>).__STORYTAPE_AUTH_BROKER_URL__ = '';
+
       const CHECK_SELECTORS = [
         '.library-header__inner',
         '.library-page',

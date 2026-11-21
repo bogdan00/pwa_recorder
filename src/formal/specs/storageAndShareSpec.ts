@@ -174,7 +174,7 @@ export function stepPlayerQueue(
     case 'collapse':
       return { ...s, isExpanded: false };
     case 'pause_for_recording':
-      return { ...s, isPlaying: false };
+      return { ...s, isPlaying: false, isExpanded: false };
     case 'close':
       return { ...PLAYER_INITIAL_STATE };
   }

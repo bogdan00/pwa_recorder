@@ -24,24 +24,26 @@ StoryTape solves both by sharing one declarative specification layer (`specs/`) 
 ```text
 src/formal/
 ├── core/                        # Reusable formal verification engines
-│   ├── modelChecker.ts          # Explicit-State BFS Model Checker (Safety □I, Reachability ◇G, Shortest Counterexample)
+│   ├── exprIr.ts                # Shared declarative Expression IR AST + Tier 1 concrete evaluator
+│   ├── z3ExprCompiler.ts        # Tier 2 Z3 SMT compiler for the exact same Expression IR (zero drift!)
+│   ├── modelChecker.ts          # Explicit-State BFS Model Checker + Automated Positive/Negative `verifyConformance`
 │   ├── algebra.ts               # Exhaustive universal quantifiers & Join-Semilattice / Round-Trip verifiers
 │   └── z3Prover.ts              # Z3 SMT proof kernel (Proof-by-Refutation UNSAT + Mathematical Induction)
 │
-├── specs/                       # SINGLE SOURCE OF TRUTH — declarative formal models
-│   ├── syncMergeSpec.ts         # 2P-Set + Total-Order LWW CRDT merge & Drive Access-Role policy
-│   ├── studioStateMachineSpec.ts# Recording Studio Labeled Transition System (10 safety invariants, 6 goals)
+├── specs/                       # SINGLE SOURCE OF TRUTH — declarative formal models (Shared IR)
+│   ├── syncMergeSpec.ts         # 2P-Set + Total-Order LWW CRDT merge & Drive Access-Role policy (Shared IR)
+│   ├── studioStateMachineSpec.ts# Recording Studio Labeled Transition System (Shared IR: 12 invariants, 6 goals)
 │   ├── pcmTimelineSpec.ts       # PCM frame clamping, extraction bounds, splice/fade & undo contract
 │   └── storageAndShareSpec.ts   # Player Queue LTS, Share-Link round-trip & IndexedDB binary contracts
 │
 └── __tests__/
     ├── syncMerge.conformance.test.ts      # Tier 1: Join-Semilattice + 273-row role truth table + real syncService.ts
-    ├── studioStateMachine.modelCheck.test.ts # Tier 1: BFS over all studio states + lock-step RecordingEngine replay
-    ├── pcmTimeline.proof.test.ts          # Tier 1: 480-case conservation/undo/round-trip + IEEE-754 bounds on PcmTimeline
-    ├── storageAndShare.proof.test.ts      # Tier 1: Player Queue BFS + 48-case invite bijection + IndexedDB proofs
+    ├── studioStateMachine.modelCheck.test.ts # Tier 1: BFS + 100%-state positive/negative RecordingEngine conformance + async cancellation
+    ├── pcmTimeline.proof.test.ts          # Tier 1: 480-case conservation/undo/round-trip + crash-recovery peaks + IEEE-754 bounds
+    ├── storageAndShare.proof.test.ts      # Tier 1: Player Queue BFS + real PlayerProvider conformance + 48-case invite bijection + IndexedDB
     │
-    ├── syncMerge.z3.formal.test.ts        # Tier 2 (Z3): ∀ t,r ∈ ℤ CRDT convergence, tombstone permanence, non-interference
-    ├── studioStateMachine.z3.formal.test.ts # Tier 2 (Z3): Mathematical induction (Base + 13 Inductive Steps) + non-vacuity
+    ├── syncMerge.z3.formal.test.ts        # Tier 2 (Z3): compiled from syncMergeSpec IR — ∀ t,r ∈ ℤ CRDT convergence & non-interference
+    ├── studioStateMachine.z3.formal.test.ts # Tier 2 (Z3): compiled from studioStateMachineSpec IR — Induction (Base + 13 Steps) + non-vacuity
     └── pcmTimeline.z3.formal.test.ts      # Tier 2 (Z3): ∀ N,k ∈ ℤ, ℝ clamping, conservation, zero-clip raised cosine
 ```
 
@@ -49,13 +51,14 @@ src/formal/
 
 ## Textbook Concepts Demonstrated
 
-### 1. Explicit-State BFS Model Checking (`core/modelChecker.ts`)
+### 1. Single-IR Dual-Backend Specification (`core/exprIr.ts` + `core/z3ExprCompiler.ts`)
+By writing invariants, transition guards, and next-state expressions **once** as a typed AST (`IntExpr` / `BoolExpr`), Tier 1 evaluates the AST concretely in TypeScript while Tier 2 compiles the **exact same AST** into Z3 SMT formulas. Tier-1 ↔ Tier-2 drift is structurally impossible — and enforced by `repoInvariants.test.ts`.
+
+### 2. Explicit-State BFS Model Checking & Positive/Negative Conformance (`core/modelChecker.ts`)
 Models a stateful subsystem as a **Labeled Transition System** $(S, S_0, A, \to)$ and explores the entire reachable graph via Breadth-First Search:
 - **Safety ($\Box I$, "Always $I$"):** Checked on every reachable state. BFS guarantees any violation reports the **shortest possible counterexample action trace**.
 - **Reachability ($\Diamond G$, "Eventually $G$"):** Proves the model is non-vacuous (important states are genuinely reachable, not accidentally blocked by over-strict guards).
-
-### 2. Differential Refinement / Conformance (`*.conformance.test.ts`, `*.modelCheck.test.ts`)
-Defines an **abstraction function** $\alpha(\text{realImpl}) \to \text{FormalState}$ and replays actions against both the formal specification and the real production class (`RecordingEngine`, `syncService.ts`), proving lock-step equivalence. If anyone changes production code in a way that violates the proven spec, Tier 1 fails immediately.
+- **Automated Positive + Negative Conformance (`verifyConformance`):** Automatically replays BFS-harvested maximal traces directly against real production implementations (`RecordingEngine`, `PlayerProvider`) using an abstraction function $\alpha(\text{real}) \to \text{FormalState}$. At every visited state it verifies **both** enabled transitions *and* **disabled guards** (probing disabled actions like `seekToMs` during `recording` or `expandPlayer` while closed to ensure production code rejects them as no-ops).
 
 ### 3. State-Based CRDT Join-Semilattice Proofs (`syncMergeSpec.ts`)
 A state-based CRDT guarantees **Strong Eventual Consistency** if and only if its merge operator $\sqcup$ satisfies three algebraic axioms:
@@ -70,14 +73,17 @@ Tier 1 verifies these exhaustively across 75 canonical replicas (5,625 pairs & 1
 - **Induction (`proveInductiveInvariant`):** Proves safety for arbitrarily long execution histories ($n \to \infty$) without unrolling:
   - **Base Case:** $\text{Init}(s) \land \neg \text{Inv}(s)$ is `unsat`
   - **Inductive Step:** $\text{Inv}(s) \land \text{Step}(s, a, s') \land \neg \text{Inv}(s')$ is `unsat` for every action $a$
-- **Inductive Strengthening (CTI — Counterexample to Induction):** Notice invariant #11 (`canUndoTrim => hasDraft`) in `studioStateMachineSpec.ts`. Without it, Z3 immediately produces an unreachable "ghost" state (`phase = idle, canUndoTrim = true, hasDraft = false`) where `undo_trim` would transition to `paused` without a draft. Adding `canUndoTrim => hasDraft` strengthens the invariant so it becomes *inductive* across all reachable states — a classic textbook formal-methods technique!
+- **Inductive Strengthening (CTI — Counterexample to Induction):** Notice `undo_requires_draft_persisted` (`canUndoTrim => hasDraft`) in `studioStateMachineSpec.ts`. Without it, Z3 immediately produces an unreachable "ghost" state (`phase = idle, canUndoTrim = true, hasDraft = false`) where `undo_trim` would transition to `paused` without a draft. Adding `canUndoTrim => hasDraft` strengthens the invariant so it becomes *inductive* across all reachable states — a classic textbook formal-methods technique!
 - **Non-Vacuity Meta-Proof:** `studioStateMachine.z3.formal.test.ts` explicitly verifies that reverting our fix in `undoLastTrim` causes Z3 to return `sat` with a concrete counterexample — proving the SMT harness has real teeth.
 
 ---
 
-## Real Defects Caught During Formalization
+## Real Defects Caught During Formalization & Systemic Audit
 
-Writing these specs immediately exposed three real edge-case bugs in production code (all fixed rather than weakening invariants):
-1. **`RecordingEngine.undoLastTrim()`**: Undoing a trim-to-zero left `phase === 'idle'` with `durationMs > 0` (violating `idle => duration === 0`). Fixed to restore `phase = restoredDurationMs > 0 ? 'paused' : 'idle'`.
-2. **`syncService.ts` LWW tie-breaking**: Comparing `remote.updatedAt > local.updatedAt` without a deterministic tie-breaker broke CRDT commutativity when two devices edited metadata at the same millisecond. Fixed with total-order lexicographical tie-breaking (`shouldPreferRemoteBookMeta` / `shouldPreferRemoteRecordingMeta`).
-3. **`PcmTimeline` & `RecordingEngine.seekToMs` non-finite inputs**: Passing `NaN` propagated `NaN` into `totalFrames` and `playheadMs`. Fixed with IEEE-754 finiteness guards.
+Writing these specs and upgrading to automated positive+negative conformance immediately exposed real edge-case bugs in production code (all fixed rather than weakening invariants):
+1. **`RecordingEngine.undoLastTrim()`**: Undoing a trim-to-zero left `phase === 'idle'` with `durationMs > 0`. Fixed to restore `phase = restoredDurationMs > 0 ? 'paused' : 'idle'`.
+2. **`RecordingEngine.seekToMs()`, `finalizeAndEncode()`, & `beginMicCapture()`**: `seekToMs` lacked a `phase === 'recording'` guard, `finalizeAndEncode` paused the mic *before* checking its non-empty timeline precondition (both caught automatically by negative guard probing!), and `beginMicCapture` lacked a `captureEpoch` cancellation token against mid-await `discard()`/`pause()` races.
+3. **`PlayerContext`**: `expandPlayer` and `setSleepTimer` lacked loaded-book guards (caught by negative guard probing), and `seek` lacked an IEEE-754 finiteness guard.
+4. **`syncService.ts` LWW tie-breaking**: Comparing `remote.updatedAt > local.updatedAt` without deterministic tie-breaking broke CRDT commutativity on equal timestamps (fixed for book metadata, chapters, and `coverUpdatedAt`).
+5. **`PcmTimeline`**: `NaN` propagated into `totalFrames`/`extractChannelData`, and `loadFromChunks` trusted stale persisted `savedPeaks` without validating length against `totalFrames`.
+6. **`googleAuth.ts` CI E2E parity**: Build-time `VITE_GOOGLE_AUTH_BROKER_URL` took precedence over runtime `window.__STORYTAPE_AUTH_BROKER_URL__`, leaking real Cloud Run requests in CI E2E runs.

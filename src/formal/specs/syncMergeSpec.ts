@@ -307,3 +307,109 @@ export function generateAllAccessRoleInputs(): readonly AccessRoleDecisionInput[
 
   return inputs;
 }
+
+// ============================================================================
+// Shared Expression IR Definitions (Consumed directly by Tier 2 Z3 Compiler)
+// ============================================================================
+
+import { E, type BoolExpr, type IntExpr } from '../core/exprIr';
+
+export const ROLE_CODE = {
+  owner: 0,
+  writer: 1,
+  reader: 2,
+} as const;
+
+export interface LwwIr {
+  readonly t: IntExpr;
+  readonly r: IntExpr;
+}
+
+export interface ChapterSlotIr {
+  readonly exists: BoolExpr;
+  readonly tombstoned: BoolExpr;
+  readonly ver: LwwIr;
+}
+
+export function preferRemoteLwwIr(local: LwwIr, remote: LwwIr): BoolExpr {
+  return E.or(
+    E.gt(remote.t, local.t),
+    E.and(E.eq(remote.t, local.t), E.gt(remote.r, local.r)),
+  );
+}
+
+export function joinLwwIr(a: LwwIr, b: LwwIr): LwwIr {
+  const pickB = preferRemoteLwwIr(a, b);
+  return {
+    t: E.iteInt(pickB, b.t, a.t),
+    r: E.iteInt(pickB, b.r, a.r),
+  };
+}
+
+export function lwwEqIr(a: LwwIr, b: LwwIr): BoolExpr {
+  return E.and(E.eq(a.t, b.t), E.eq(a.r, b.r));
+}
+
+export function validChapterSlotIr(slot: ChapterSlotIr): BoolExpr {
+  return E.implies(slot.tombstoned, E.not(slot.exists));
+}
+
+export function joinChapterSlotIr(a: ChapterSlotIr, b: ChapterSlotIr): ChapterSlotIr {
+  const tombstoned = E.or(a.tombstoned, b.tombstoned);
+  const exists = E.and(E.not(tombstoned), E.or(a.exists, b.exists));
+  const joinedVer = joinLwwIr(a.ver, b.ver);
+  return {
+    exists,
+    tombstoned,
+    ver: {
+      t: E.iteInt(E.and(a.exists, b.exists), joinedVer.t, E.iteInt(a.exists, a.ver.t, b.ver.t)),
+      r: E.iteInt(E.and(a.exists, b.exists), joinedVer.r, E.iteInt(a.exists, a.ver.r, b.ver.r)),
+    },
+  };
+}
+
+export function chapterSlotEqIr(a: ChapterSlotIr, b: ChapterSlotIr): BoolExpr {
+  return E.and(
+    E.boolEq(a.tombstoned, b.tombstoned),
+    E.boolEq(a.exists, b.exists),
+    E.implies(a.exists, lwwEqIr(a.ver, b.ver)),
+  );
+}
+
+/**
+ * Shared Expression IR for `resolveAccessRole` — compiled verbatim into Z3 by Tier 2!
+ */
+export function resolveAccessRoleIr(vars: {
+  readonly summaryPresent: BoolExpr;
+  readonly ownedByMe: BoolExpr;
+  readonly ownedByMeFalse: BoolExpr;
+  readonly shared: BoolExpr;
+  readonly hasCapabilities: BoolExpr;
+  readonly canEdit: BoolExpr;
+  readonly canAddChildren: BoolExpr;
+  readonly fallback: IntExpr;
+}): IntExpr {
+  const canWriteCap = E.or(vars.canEdit, vars.canAddChildren);
+  return E.iteInt(
+    E.not(vars.summaryPresent),
+    vars.fallback,
+    E.iteInt(
+      vars.ownedByMe,
+      E.int(ROLE_CODE.owner),
+      E.iteInt(
+        vars.hasCapabilities,
+        E.iteInt(canWriteCap, E.int(ROLE_CODE.writer), E.int(ROLE_CODE.reader)),
+        E.iteInt(
+          E.and(vars.shared, vars.ownedByMeFalse),
+          E.iteInt(
+            E.eq(vars.fallback, E.int(ROLE_CODE.reader)),
+            E.int(ROLE_CODE.reader),
+            E.int(ROLE_CODE.writer),
+          ),
+          vars.fallback,
+        ),
+      ),
+    ),
+  );
+}
+

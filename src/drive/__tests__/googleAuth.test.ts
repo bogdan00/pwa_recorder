@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   GOOGLE_AUTH_STORAGE_KEY,
   GoogleAuthManager,
+  getConfiguredAuthBrokerUrl,
   type GoogleTokenOverrideConfig,
 } from '../googleAuth';
 
@@ -443,5 +444,26 @@ describe('GoogleAuthManager persistent PWA session & fast reconnect', () => {
       wasConnected: true,
       hasPersistentRefresh: false,
     });
+  });
+
+  it('lets runtime window.__STORYTAPE_AUTH_BROKER_URL__ (including empty string) override build-time VITE_GOOGLE_AUTH_BROKER_URL', () => {
+    const win = window as unknown as Record<string, unknown>;
+    vi.stubEnv('VITE_GOOGLE_AUTH_BROKER_URL', 'https://prod-broker.run.app/');
+
+    try {
+      delete win.__STORYTAPE_AUTH_BROKER_URL__;
+      expect(getConfiguredAuthBrokerUrl()).toBe('https://prod-broker.run.app');
+
+      // Explicit empty string disables broker (critical for non-broker E2E tests on CI builds!)
+      win.__STORYTAPE_AUTH_BROKER_URL__ = '';
+      expect(getConfiguredAuthBrokerUrl()).toBe('');
+
+      // Explicit mock URL overrides baked-in prod broker URL
+      win.__STORYTAPE_AUTH_BROKER_URL__ = 'https://mock-broker.example.test///';
+      expect(getConfiguredAuthBrokerUrl()).toBe('https://mock-broker.example.test');
+    } finally {
+      delete win.__STORYTAPE_AUTH_BROKER_URL__;
+      vi.unstubAllEnvs();
+    }
   });
 });

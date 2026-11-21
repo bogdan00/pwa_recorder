@@ -1,23 +1,31 @@
 /**
- * Tier 1 Formal Verification: Storage, Audiobook Player Queue & Share-Link Contracts
+ * Tier 1 Formal Verification: Storage, Audiobook Player Queue (with Real PlayerProvider
+ * Conformance!) & Share-Link Contracts
  *
  * Runs on every `npm test` (~<1s, zero WASM overhead).
  * Verifies:
- *   1. Audiobook Player Queue Explicit-State BFS Model Check (all 5 safety invariants + 3 reachability goals)
- *   2. Share-Link Encode/Decode Round-Trip Proof (`parseJoinInviteInput(buildJoinShareUrl(x)) === x`)
- *      over all 48 canonical invite combinations (scopes, roles, Unicode, special chars, clientIds)
- *   3. IndexedDB ArrayBuffer Binary Round-Trip Preservation (exact byte & MIME preservation across
- *      0-byte, all 256 byte values, and multi-KB payloads), Local-Only Protection under cache clear,
- *      and Zero-Orphan Cascade Deletion on `deleteProject`.
+ *   1. Audiobook Player Queue Explicit-State BFS Model Check (all 5 safety invariants + 3 goals)
+ *   2. Automated Positive + Negative Conformance (`verifyConformance`) against the REAL
+ *      mounted `PlayerProvider` React context + IndexedDB + deterministic fake `HTMLAudioElement`
+ *      (closing the PlayerContext spec-to-code gap!)
+ *   3. Share-Link Encode/Decode Round-Trip Proof (`parseJoinInviteInput(buildJoinShareUrl(x)) === x`)
+ *   4. IndexedDB ArrayBuffer Binary Round-Trip Preservation, Cache Eviction Safety & Cascade Deletion
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import React from 'react';
+import { act, cleanup, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildJoinShareUrl,
   getDriveFolderWebUrl,
   parseJoinInviteInput,
   type JoinShareInvite,
 } from '../../drive/shareUtils';
+import {
+  PlayerProvider,
+  usePlayer,
+  type PlayerContextValue,
+} from '../../player/PlayerContext';
 import {
   clearSyncedAudioCache,
   deleteProject,
@@ -34,13 +42,16 @@ import {
   putRecording,
   resetDbConnectionForTests,
 } from '../../storage/db';
+import type { BookProject, Recording } from '../../types/models';
 import { blobToArrayBuffer } from '../../utils/blob';
 import { forAll, verifyRoundTrip } from '../core/algebra';
-import { modelCheck } from '../core/modelChecker';
+import { modelCheck, verifyConformance } from '../core/modelChecker';
 import {
   createPlayerQueueLts,
   generateCanonicalBinaryPayloads,
   generateCanonicalShareInvites,
+  type PlayerQueueAction,
+  type PlayerQueueFormalState,
 } from '../specs/storageAndShareSpec';
 
 function invitesEqual(a: JoinShareInvite, b: JoinShareInvite | null): boolean {
@@ -54,7 +65,79 @@ function invitesEqual(a: JoinShareInvite, b: JoinShareInvite | null): boolean {
   );
 }
 
-describe('Tier 1 Formal Proofs: Storage, Player Queue & Share-Link Contracts', () => {
+class FakeAudioElement {
+  src = '';
+  preload = '';
+  currentTime = 0;
+  duration = 30;
+  playbackRate = 1;
+  volume = 1;
+  paused = true;
+  private listeners = new Map<string, Set<() => void>>();
+
+  addEventListener(type: string, cb: () => void): void {
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+    this.listeners.get(type)!.add(cb);
+  }
+  removeEventListener(type: string, cb: () => void): void {
+    this.listeners.get(type)?.delete(cb);
+  }
+  dispatch(type: string): void {
+    this.listeners.get(type)?.forEach((cb) => cb());
+  }
+  removeAttribute(attr: string): void {
+    if (attr === 'src') this.src = '';
+  }
+  load(): void {}
+  play = vi.fn(async () => {
+    this.paused = false;
+    this.dispatch('play');
+  });
+  pause = vi.fn(() => {
+    this.paused = true;
+    this.dispatch('pause');
+  });
+}
+
+function makeBook(id: string): BookProject {
+  return {
+    id,
+    title: `Book ${id}`,
+    author: 'Author',
+    narrator: 'Narrator',
+    dedicatedTo: '',
+    description: '',
+    language: 'English',
+    tags: [],
+    coverColor: '#9E4736',
+    hasCover: false,
+    syncStatus: 'local_only',
+    createdAt: 100,
+    updatedAt: 100,
+  };
+}
+
+function makeChapter(projectId: string, idx: number): Recording {
+  return {
+    id: `${projectId}-ch-${idx}`,
+    projectId,
+    name: `Chapter ${idx + 1}`,
+    notes: '',
+    orderIndex: idx,
+    durationMs: 30_000,
+    mimeType: 'audio/mp4',
+    extension: 'm4a',
+    sampleRate: 48000,
+    channels: 1,
+    fileSizeBytes: 8,
+    peaks: [0.4],
+    syncStatus: 'local_only',
+    createdAt: 100 + idx,
+    updatedAt: 100 + idx,
+  };
+}
+
+describe('Tier 1 Formal Proofs: Storage, Player Queue Conformance & Share-Link Contracts', () => {
   beforeEach(async () => {
     await resetDbConnectionForTests();
     await new Promise<void>((resolve) => {
@@ -65,6 +148,12 @@ describe('Tier 1 Formal Proofs: Storage, Player Queue & Share-Link Contracts', (
     });
   });
 
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it('exhaustively BFS model-checks 100% of reachable Audiobook Player Queue states', () => {
     const lts = createPlayerQueueLts();
     const cert = modelCheck(lts);
@@ -72,6 +161,172 @@ describe('Tier 1 Formal Proofs: Storage, Player Queue & Share-Link Contracts', (
     expect(cert.statesExplored).toBeGreaterThan(40);
     expect(cert.transitionsExplored).toBeGreaterThan(200);
     expect(cert.reachedGoals).toHaveLength(3);
+  });
+
+  it('automatically verifies positive + negative conformance of REAL PlayerProvider against BFS-harvested queue traces', async () => {
+    const lts = createPlayerQueueLts();
+    const cert = modelCheck(lts);
+
+    // Seed two real books in IndexedDB (1-chapter & 3-chapter) with real audio blobs
+    const book1 = makeBook('player-book-1');
+    const book3 = makeBook('player-book-3');
+    await putProject(book1);
+    await putRecording(makeChapter(book1.id, 0), new Blob(['ch0'], { type: 'audio/mp4' }));
+    await putProject(book3);
+    for (let i = 0; i < 3; i += 1) {
+      await putRecording(makeChapter(book3.id, i), new Blob([`ch${i}`], { type: 'audio/mp4' }));
+    }
+
+    let lastAudio: FakeAudioElement | null = null;
+    vi.stubGlobal(
+      'Audio',
+      class extends FakeAudioElement {
+        constructor() {
+          super();
+          lastAudio = this;
+        }
+      },
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:formal-audio');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    interface MountedPlayer {
+      getCtx: () => PlayerContextValue;
+      getAudio: () => FakeAudioElement | null;
+      completedMask: number;
+      unmount: () => void;
+    }
+
+    // Replay a representative maximal set of BFS traces covering every phase, sleep timer,
+    // chapter wrap, expand/collapse, and negative disabled-guard probe on real PlayerProvider!
+    const conf = await verifyConformance<PlayerQueueFormalState, PlayerQueueAction, MountedPlayer>(
+      lts,
+      cert,
+      {
+        createImpl: () => {
+          let latestCtx!: PlayerContextValue;
+          const Harness: React.FC = () => {
+            latestCtx = usePlayer();
+            return null;
+          };
+          const { unmount } = render(
+            React.createElement(PlayerProvider, null, React.createElement(Harness)),
+          );
+          return {
+            getCtx: () => latestCtx,
+            getAudio: () => lastAudio,
+            completedMask: 0,
+            unmount,
+          };
+        },
+        destroyImpl: (impl) => {
+          impl.unmount();
+        },
+        observe: (impl): PlayerQueueFormalState => {
+          const ctx = impl.getCtx();
+          return {
+            chapterCount: ctx.chapters.length,
+            currentIndex: ctx.currentIndex,
+            isPlaying: ctx.isPlaying,
+            isExpanded: ctx.isExpanded,
+            sleepTimerMode: ctx.sleepTimerMode,
+            completedMask: impl.completedMask,
+          };
+        },
+        // Probe disabled guards directly against real PlayerProvider (e.g., expand/sleep/next when closed!)
+        negativeProbeActions: [
+          'toggle_play',
+          'next_chapter',
+          'prev_chapter',
+          'set_sleep_end_of_chapter',
+          'set_sleep_15m',
+          'expand',
+        ],
+        execute: async (impl, action) => {
+          const ctx = impl.getCtx();
+          await act(async () => {
+            switch (action) {
+              case 'load_book_1ch':
+                impl.completedMask = 0;
+                await ctx.playBook(book1, { resumeSaved: false, expand: false });
+                break;
+              case 'load_book_3ch':
+                impl.completedMask = 0;
+                await ctx.playBook(book3, { resumeSaved: false, expand: false });
+                break;
+              case 'toggle_play':
+                await ctx.togglePlayPause();
+                break;
+              case 'next_chapter':
+                await ctx.nextChapter();
+                break;
+              case 'prev_chapter':
+                if (impl.getAudio()) impl.getAudio()!.currentTime = 0;
+                await ctx.prevChapter();
+                break;
+              case 'chapter_ended': {
+                const audio = impl.getAudio();
+                if (audio && ctx.isPlaying && ctx.currentIndex >= 0) {
+                  impl.completedMask |= 1 << ctx.currentIndex;
+                  audio.paused = true;
+                  audio.dispatch('ended');
+                  // Flush microtasks for async next-chapter auto-advance inside onEnded
+                  await Promise.resolve();
+                  await Promise.resolve();
+                }
+                break;
+              }
+              case 'set_sleep_end_of_chapter':
+                ctx.setSleepTimer('end_of_chapter');
+                break;
+              case 'set_sleep_15m':
+                ctx.setSleepTimer('15m');
+                break;
+              case 'set_sleep_off':
+                ctx.setSleepTimer('off');
+                break;
+              case 'expand':
+                ctx.expandPlayer();
+                break;
+              case 'collapse':
+                ctx.collapsePlayer();
+                break;
+              case 'pause_for_recording':
+                ctx.pauseForRecording();
+                break;
+              case 'close':
+                impl.completedMask = 0;
+                ctx.closePlayer();
+                break;
+            }
+          });
+        },
+      },
+      { maxTraces: 20 },
+    );
+
+    expect(conf.tracesReplayed).toBe(20);
+    expect(conf.enabledStepsVerified).toBeGreaterThan(60);
+    expect(conf.disabledGuardsVerified).toBeGreaterThan(30);
+
+    // Also prove seek(NaN / ±Infinity / negative) stays strictly clamped in real PlayerProvider
+    let latestCtx!: PlayerContextValue;
+    const Probe: React.FC = () => {
+      latestCtx = usePlayer();
+      return null;
+    };
+    render(React.createElement(PlayerProvider, null, React.createElement(Probe)));
+    await act(async () => {
+      await latestCtx.playBook(book1, { resumeSaved: false });
+    });
+    for (const badSec of [Number.NaN, Number.NEGATIVE_INFINITY, -100, 99999]) {
+      act(() => {
+        latestCtx.seek(badSec);
+      });
+      expect(Number.isFinite(latestCtx.currentTime)).toBe(true);
+      expect(latestCtx.currentTime).toBeGreaterThanOrEqual(0);
+      expect(latestCtx.currentTime).toBeLessThanOrEqual(latestCtx.duration);
+    }
   });
 
   it('proves buildJoinShareUrl -> parseJoinInviteInput is an exact round-trip across all canonical invites', () => {
@@ -87,7 +342,6 @@ describe('Tier 1 Formal Proofs: Storage, Player Queue & Share-Link Contracts', (
     );
     expect(roundTripCert.casesChecked).toBe(48);
 
-    // Drive folder web URL round-trip
     const folderIds = ['1AbCdEfGhIjKlMnOpQrStUvWxYz', 'folder_01-XYZ_9876'];
     const driveUrlCert = forAll(
       'DriveFolderUrl: parseJoinInviteInput(getDriveFolderWebUrl(id)).folderId === id',
@@ -96,7 +350,6 @@ describe('Tier 1 Formal Proofs: Storage, Player Queue & Share-Link Contracts', (
     );
     expect(driveUrlCert.casesChecked).toBe(2);
 
-    // Invalid inputs must deterministically return null (never throw or fabricate an ID)
     const invalidInputs = ['', '   ', 'not a url', 'https://example.com', 'short', '#/join?foo=bar'];
     const rejectCert = forAll(
       'Invalid share inputs deterministically rejected',
@@ -229,7 +482,6 @@ describe('Tier 1 Formal Proofs: Storage, Player Queue & Share-Link Contracts', (
       new Blob([localBytes], { type: 'audio/mp4' }),
     );
 
-    // Cache eviction invariant: ONLY synced audio blob is evicted; unsynced audio & local master survive!
     const cleared = await clearSyncedAudioCache();
     expect(cleared).toBe(1);
     expect(await getRecordingBlob('rec-synced')).toBeUndefined();
@@ -237,7 +489,6 @@ describe('Tier 1 Formal Proofs: Storage, Player Queue & Share-Link Contracts', (
     expect(await getRecordingBlob('rec-local-only')).toBeDefined();
     expect(await getRecordingMaster('rec-synced')).toBeDefined();
 
-    // Cascade deletion invariant: deleteProject removes ALL dependent records with zero orphans
     await deleteProject(projectId);
     expect(await getProject(projectId)).toBeUndefined();
     expect(await getProjectCover(projectId)).toBeUndefined();

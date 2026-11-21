@@ -99,17 +99,22 @@ function normalizeBrokerUrl(raw?: string | null): string {
 }
 
 export function getConfiguredAuthBrokerUrl(): string {
+  // Explicit runtime test override takes precedence (including '' to disable a baked-in
+  // CI build-time broker URL inside non-broker E2E tests — preserving ADR-09 parity).
+  if (
+    typeof window !== 'undefined' &&
+    '__STORYTAPE_AUTH_BROKER_URL__' in window &&
+    typeof window.__STORYTAPE_AUTH_BROKER_URL__ === 'string'
+  ) {
+    return normalizeBrokerUrl(window.__STORYTAPE_AUTH_BROKER_URL__);
+  }
   const envUrl =
     typeof import.meta !== 'undefined' &&
     import.meta.env &&
     typeof import.meta.env.VITE_GOOGLE_AUTH_BROKER_URL === 'string'
       ? normalizeBrokerUrl(import.meta.env.VITE_GOOGLE_AUTH_BROKER_URL)
       : '';
-  if (envUrl) return envUrl;
-  if (typeof window !== 'undefined' && window.__STORYTAPE_AUTH_BROKER_URL__) {
-    return normalizeBrokerUrl(window.__STORYTAPE_AUTH_BROKER_URL__);
-  }
-  return '';
+  return envUrl;
 }
 
 export class GoogleAuthManager {

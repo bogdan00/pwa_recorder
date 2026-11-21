@@ -208,13 +208,68 @@ describe('Repository E2E, CUJ & ADR systemic invariants', () => {
     // Every declarative spec in src/formal/specs/<name>Spec.ts must have at least one Tier 1 test file
     for (const spec of specs) {
       const baseName = spec.replace(/Spec\.ts$/, '');
-      const hasTier1 = tests.some(
+      const specSrc = fs.readFileSync(path.join(formalSpecsDir, spec), 'utf8');
+      const tier1Files = tests.filter(
         (t) => t.startsWith(baseName) && !t.endsWith('.formal.test.ts'),
       );
       expect(
-        hasTier1,
+        tier1Files.length,
         `Missing Tier 1 formal verification test for src/formal/specs/${spec}`,
-      ).toBe(true);
+      ).toBeGreaterThan(0);
+
+      // Systemic anti-spec-to-code-gap invariant: every LTS spec exporting `create*Lts`
+      // MUST have automated positive+negative `verifyConformance` against real production code!
+      if (/export function create\w+Lts\b/.test(specSrc)) {
+        const combinedTier1Src = tier1Files
+          .map((t) => fs.readFileSync(path.join(formalTestsDir, t), 'utf8'))
+          .join('\n');
+        expect(
+          combinedTier1Src,
+          `LTS spec ${spec} must be bound to real production code via verifyConformance(...) to prevent spec-to-code gaps`,
+        ).toMatch(/\bverifyConformance\s*[<(]/);
+      }
     }
+
+    // Systemic anti-drift invariant: stateful/CRDT Z3 proof suites must compile from shared
+    // specs via z3ExprCompiler instead of duplicating hand-translated transition formulas.
+    for (const sharedIrZ3File of [
+      'studioStateMachine.z3.formal.test.ts',
+      'syncMerge.z3.formal.test.ts',
+    ]) {
+      const z3Src = fs.readFileSync(path.join(formalTestsDir, sharedIrZ3File), 'utf8');
+      expect(
+        z3Src,
+        `${sharedIrZ3File} must compile formulas via ../core/z3ExprCompiler`,
+      ).toMatch(/from\s+['"]\.\.\/core\/z3ExprCompiler['"]/);
+      expect(
+        z3Src,
+        `${sharedIrZ3File} must import its shared IR spec from ../specs/`,
+      ).toMatch(/from\s+['"]\.\.\/specs\//);
+    }
+  });
+
+  it('enforces ADR-09 CI build-env parity: E2E fixtures neutralize baked-in auth broker URL and googleAuth honors runtime overrides first', () => {
+    const fixturesSrc = fs.readFileSync(path.join(E2E_DIR, 'fixtures.ts'), 'utf8');
+    const googleAuthSrc = fs.readFileSync(
+      path.join(REPO_ROOT, 'src/drive/googleAuth.ts'),
+      'utf8',
+    );
+
+    expect(
+      fixturesSrc,
+      'e2e/fixtures.ts must neutralize __STORYTAPE_AUTH_BROKER_URL__ by default so CI builds with VITE_GOOGLE_AUTH_BROKER_URL never leak real Cloud Run traffic into non-broker tests',
+    ).toContain("__STORYTAPE_AUTH_BROKER_URL__ = ''");
+
+    const fnStart = googleAuthSrc.indexOf('export function getConfiguredAuthBrokerUrl');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = googleAuthSrc.slice(fnStart, fnStart + 700);
+    const runtimeIdx = fnBody.indexOf('__STORYTAPE_AUTH_BROKER_URL__');
+    const envIdx = fnBody.indexOf('VITE_GOOGLE_AUTH_BROKER_URL');
+    expect(runtimeIdx).toBeGreaterThan(-1);
+    expect(envIdx).toBeGreaterThan(-1);
+    expect(
+      runtimeIdx,
+      'googleAuth.ts must check window.__STORYTAPE_AUTH_BROKER_URL__ BEFORE import.meta.env.VITE_GOOGLE_AUTH_BROKER_URL',
+    ).toBeLessThan(envIdx);
   });
 });

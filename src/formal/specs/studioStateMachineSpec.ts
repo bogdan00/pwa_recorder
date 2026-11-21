@@ -1,25 +1,36 @@
 /**
- * Formal Specification: Recording Studio State Machine (Labeled Transition System)
+ * Formal Specification: Recording Studio State Machine (Single-IR Dual-Backend LTS)
  *
  * Related ADR: adr/ADR-03-off-main-thread-pcm-capture-and-timeline.md
  * Related ADR: adr/ADR-04-decoupled-60fps-canvas-waveform.md
  * Related ADR: adr/ADR-11-two-tier-formal-verification.md
  * Production implementation: src/audio/recordingEngine.ts
  *
- * Single Source of Truth:
- *   - Tier 1 (BFS Model Checker) explores 100% of reachable states over a finite
- *     duration bound (MAX_DURATION_UNITS = 3) and replays witness traces against
- *     the real `RecordingEngine` class to verify conformance.
- *   - Tier 2 (Z3 SMT Induction) proves the EXACT SAME safety invariants over
- *     unbounded durations (duration ∈ ℤ≥0) and arbitrarily long action sequences.
+ * SINGLE SOURCE OF TRUTH (Zero Tier-1 ↔ Tier-2 Drift):
+ * All 11 safety invariants AND all transition rules are defined ONCE using `exprIr.ts`:
+ *   - Tier 1 (BFS Model Checker + Automated Positive/Negative Conformance):
+ *       Evaluates `STUDIO_INVARIANT_IR` and `STUDIO_TRANSITION_IR` concretely via `evalInt`/`evalBool`.
+ *   - Tier 2 (Z3 SMT Unbounded Mathematical Induction):
+ *       Compiles the EXACT SAME `STUDIO_INVARIANT_IR` and `STUDIO_TRANSITION_IR` ASTs
+ *       directly into Z3 SMT expressions via `z3ExprCompiler.ts`.
  */
 
 import type { StudioPhase } from '../../audio/recordingEngine';
+import { E, evalBool, evalInt, type BoolExpr, type EvalEnv, type IntExpr } from '../core/exprIr';
 import type {
   LabeledTransitionSystem,
   ReachabilityGoal,
   SafetyInvariant,
 } from '../core/modelChecker';
+
+export const STUDIO_PHASE_CODE: Readonly<Record<StudioPhase, number>> = {
+  idle: 0,
+  recording: 1,
+  paused: 2,
+  playing: 3,
+};
+
+const CODE_TO_PHASE: readonly StudioPhase[] = ['idle', 'recording', 'paused', 'playing'];
 
 export interface StudioFormalState {
   readonly phase: StudioPhase;
@@ -85,63 +96,349 @@ export const STUDIO_INITIAL_STATE: StudioFormalState = {
   hasDraft: false,
 };
 
+// ============================================================================
+// Shared Declarative IR for State Variables, Invariants & Transitions
+// ============================================================================
+
+export interface StudioIrStateVars {
+  readonly phase: IntExpr;
+  readonly duration: IntExpr;
+  readonly playhead: IntExpr;
+  readonly micActive: BoolExpr;
+  readonly previewActive: BoolExpr;
+  readonly canUndoTrim: BoolExpr;
+  readonly undoDuration: IntExpr;
+  readonly hasDraft: BoolExpr;
+}
+
+export function studioIrVars(prefix = ''): StudioIrStateVars {
+  const p = (name: string) => (prefix ? `${prefix}_${name}` : name);
+  return {
+    phase: E.intVar(p('phase')),
+    duration: E.intVar(p('duration')),
+    playhead: E.intVar(p('playhead')),
+    micActive: E.boolVar(p('micActive')),
+    previewActive: E.boolVar(p('previewActive')),
+    canUndoTrim: E.boolVar(p('canUndoTrim')),
+    undoDuration: E.intVar(p('undoDuration')),
+    hasDraft: E.boolVar(p('hasDraft')),
+  };
+}
+
+export function studioStateToEnv(
+  s: StudioFormalState,
+  extraInts: Readonly<Record<string, number>> = {},
+): EvalEnv {
+  return {
+    ints: {
+      phase: STUDIO_PHASE_CODE[s.phase],
+      duration: s.duration,
+      playhead: s.playhead,
+      undoDuration: s.undoDuration,
+      ...extraInts,
+    },
+    bools: {
+      micActive: s.micActive,
+      previewActive: s.previewActive,
+      canUndoTrim: s.canUndoTrim,
+      hasDraft: s.hasDraft,
+    },
+  };
+}
+
+export interface StudioInvariantIr {
+  readonly name: string;
+  readonly expr: BoolExpr;
+}
+
+const S = studioIrVars();
+const IDLE = E.int(STUDIO_PHASE_CODE.idle);
+const REC = E.int(STUDIO_PHASE_CODE.recording);
+const PAUSED = E.int(STUDIO_PHASE_CODE.paused);
+const PLAYING = E.int(STUDIO_PHASE_CODE.playing);
+
 /**
- * Safety Invariants (□ Inv) — must hold in EVERY reachable state of StoryTape Studio.
- * The same 9 invariants are proved by BFS (Tier 1) and Z3 Induction (Tier 2).
+ * The 11 Safety Invariants (□ Inv) defined ONCE as Expression IR ASTs.
+ * Evaluated by Tier 1 BFS & Conformance, AND compiled verbatim into Z3 by Tier 2!
  */
-export const STUDIO_INVARIANTS: readonly SafetyInvariant<StudioFormalState>[] = [
+export const STUDIO_INVARIANT_IR: readonly StudioInvariantIr[] = [
+  {
+    name: 'valid_phase_enum',
+    expr: E.and(E.ge(S.phase, IDLE), E.le(S.phase, PLAYING)),
+  },
   {
     name: 'duration_non_negative',
-    check: (s) => s.duration >= 0,
+    expr: E.ge(S.duration, E.int(0)),
   },
   {
     name: 'playhead_within_bounds (0 <= playhead <= duration)',
-    check: (s) => s.playhead >= 0 && s.playhead <= s.duration,
+    expr: E.and(E.ge(S.playhead, E.int(0)), E.le(S.playhead, S.duration)),
   },
   {
     name: 'mic_active_iff_recording',
-    check: (s) => s.micActive === (s.phase === 'recording'),
+    expr: E.boolEq(S.micActive, E.eq(S.phase, REC)),
   },
   {
     name: 'preview_active_iff_playing',
-    check: (s) => s.previewActive === (s.phase === 'playing'),
+    expr: E.boolEq(S.previewActive, E.eq(S.phase, PLAYING)),
   },
   {
     name: 'mutual_exclusion_mic_and_preview',
-    check: (s) => !(s.micActive && s.previewActive),
+    expr: E.not(E.and(S.micActive, S.previewActive)),
   },
   {
     name: 'playing_requires_non_empty_audio',
-    check: (s) => s.phase !== 'playing' || s.duration > 0,
+    expr: E.implies(E.eq(S.phase, PLAYING), E.gt(S.duration, E.int(0))),
   },
   {
     name: 'idle_implies_zero_duration_and_playhead',
-    check: (s) =>
-      s.phase !== 'idle' || (s.duration === 0 && s.playhead === 0),
+    expr: E.implies(
+      E.eq(S.phase, IDLE),
+      E.and(E.eq(S.duration, E.int(0)), E.eq(S.playhead, E.int(0))),
+    ),
   },
   {
     name: 'recording_playhead_tracks_live_tail',
-    check: (s) => s.phase !== 'recording' || s.playhead === s.duration,
+    expr: E.implies(E.eq(S.phase, REC), E.eq(S.playhead, S.duration)),
   },
   {
     name: 'active_session_implies_draft_persisted',
-    check: (s) => s.phase === 'idle' || s.hasDraft,
+    expr: E.implies(E.neq(S.phase, IDLE), S.hasDraft),
   },
   {
     name: 'undo_snapshot_consistent',
-    check: (s) => (s.canUndoTrim ? s.undoDuration >= 0 : s.undoDuration === 0),
+    expr: E.iteBool(
+      S.canUndoTrim,
+      E.ge(S.undoDuration, E.int(0)),
+      E.eq(S.undoDuration, E.int(0)),
+    ),
   },
   {
     // Inductive strengthening (CTI): an undo snapshot only exists while a draft/timeline is active
     name: 'undo_requires_draft_persisted',
-    check: (s) => !s.canUndoTrim || s.hasDraft,
+    expr: E.implies(S.canUndoTrim, S.hasDraft),
   },
 ];
 
+export interface StudioTransitionIr {
+  readonly name: string;
+  /** Optional symbolic action parameters (e.g., chunk delta, seek target, elapsed ms). */
+  readonly intParams?: readonly string[];
+  /** Guard condition that must hold for this transition to fire. */
+  readonly guard: BoolExpr;
+  /** Next-state expressions (omitted fields remain unchanged from `S`). */
+  readonly next: {
+    readonly phase?: IntExpr;
+    readonly duration?: IntExpr;
+    readonly playhead?: IntExpr;
+    readonly micActive?: BoolExpr;
+    readonly previewActive?: BoolExpr;
+    readonly canUndoTrim?: BoolExpr;
+    readonly undoDuration?: IntExpr;
+    readonly hasDraft?: BoolExpr;
+  };
+}
+
 /**
- * Reachability Goals (◇ Goal) — prove the transition system is non-vacuous and all
- * key CUJ-02/CUJ-03 user workflows are reachable.
+ * Shared transition rules expressed ONCE in Expression IR.
+ * Both Tier 1 (`stepStudioState`) and Tier 2 (`studioStateMachine.z3.formal.test.ts`)
+ * execute/compile these exact AST definitions — zero drift is possible.
  */
+const REWIND_WINDOW = E.intVar('rewindWindow');
+const CHUNK_DELTA = E.intVar('chunkDelta');
+const SEEK_TARGET = E.intVar('seekTarget');
+const PREVIEW_ELAPSED = E.intVar('previewElapsed');
+
+function rewoundPlayhead(target: IntExpr, dur: IntExpr, rewindWindow: IntExpr): IntExpr {
+  const rewound = E.max(E.int(0), E.sub(dur, rewindWindow));
+  return E.iteInt(E.ge(target, dur), rewound, target);
+}
+
+export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>> = {
+  start_or_resume: {
+    name: 'start_or_resume',
+    guard: E.bool(true),
+    next: {
+      phase: REC,
+      playhead: S.duration,
+      micActive: E.bool(true),
+      previewActive: E.bool(false),
+      canUndoTrim: E.bool(false),
+      undoDuration: E.int(0),
+      hasDraft: E.bool(true),
+    },
+  },
+  capture_chunk: {
+    name: 'capture_chunk',
+    intParams: ['chunkDelta'],
+    guard: E.and(E.eq(S.phase, REC), E.gt(CHUNK_DELTA, E.int(0))),
+    next: {
+      duration: E.add(S.duration, CHUNK_DELTA),
+      playhead: E.add(S.duration, CHUNK_DELTA),
+    },
+  },
+  pause: {
+    name: 'pause',
+    guard: E.eq(S.phase, REC),
+    next: {
+      phase: PAUSED,
+      micActive: E.bool(false),
+      playhead: S.duration,
+    },
+  },
+  seek: {
+    name: 'seek',
+    intParams: ['seekTarget', 'rewindWindow'],
+    guard: E.and(E.neq(S.phase, REC), E.ge(REWIND_WINDOW, E.int(0))),
+    next: {
+      // Mirrors RecordingEngine.seekToMs: clamps to [0, duration]; if currently playing
+      // and sought to the end, playPreviewFromPlayhead rewinds by rewindWindow.
+      playhead: E.iteInt(
+        E.eq(S.phase, PLAYING),
+        rewoundPlayhead(E.clamp(SEEK_TARGET, E.int(0), S.duration), S.duration, REWIND_WINDOW),
+        E.clamp(SEEK_TARGET, E.int(0), S.duration),
+      ),
+    },
+  },
+  play_preview: {
+    name: 'play_preview',
+    intParams: ['rewindWindow'],
+    guard: E.and(E.gt(S.duration, E.int(0)), E.ge(REWIND_WINDOW, E.int(0))),
+    next: {
+      phase: PLAYING,
+      playhead: rewoundPlayhead(S.playhead, S.duration, REWIND_WINDOW),
+      micActive: E.bool(false),
+      previewActive: E.bool(true),
+    },
+  },
+  preview_tick: {
+    name: 'preview_tick',
+    intParams: ['previewElapsed'],
+    guard: E.and(E.eq(S.phase, PLAYING), E.ge(PREVIEW_ELAPSED, E.int(0))),
+    next: {
+      playhead: E.min(S.duration, E.add(S.playhead, PREVIEW_ELAPSED)),
+    },
+  },
+  preview_ended: {
+    name: 'preview_ended',
+    guard: E.eq(S.phase, PLAYING),
+    next: {
+      phase: PAUSED,
+      previewActive: E.bool(false),
+      playhead: S.duration,
+    },
+  },
+  pause_preview: {
+    name: 'pause_preview',
+    guard: E.eq(S.phase, PLAYING),
+    next: {
+      phase: PAUSED,
+      previewActive: E.bool(false),
+    },
+  },
+  punch_in: {
+    name: 'punch_in',
+    guard: E.bool(true),
+    next: {
+      phase: REC,
+      duration: E.iteInt(S.hasDraft, S.playhead, E.int(0)),
+      playhead: E.iteInt(S.hasDraft, S.playhead, E.int(0)),
+      micActive: E.bool(true),
+      previewActive: E.bool(false),
+      canUndoTrim: S.hasDraft,
+      undoDuration: E.iteInt(S.hasDraft, S.duration, E.int(0)),
+      hasDraft: E.bool(true),
+    },
+  },
+  trim_to_playhead: {
+    name: 'trim_to_playhead',
+    guard: S.hasDraft,
+    next: {
+      phase: E.iteInt(
+        E.gt(E.iteInt(E.eq(S.phase, REC), S.duration, S.playhead), E.int(0)),
+        PAUSED,
+        IDLE,
+      ),
+      duration: E.iteInt(E.eq(S.phase, REC), S.duration, S.playhead),
+      playhead: E.iteInt(E.eq(S.phase, REC), S.duration, S.playhead),
+      micActive: E.bool(false),
+      previewActive: E.bool(false),
+      canUndoTrim: E.bool(true),
+      undoDuration: S.duration,
+    },
+  },
+  undo_trim: {
+    name: 'undo_trim',
+    guard: S.canUndoTrim,
+    next: {
+      phase: E.iteInt(E.gt(S.undoDuration, E.int(0)), PAUSED, IDLE),
+      duration: S.undoDuration,
+      playhead: S.undoDuration,
+      micActive: E.bool(false),
+      previewActive: E.bool(false),
+      canUndoTrim: E.bool(false),
+      undoDuration: E.int(0),
+    },
+  },
+  finalize: {
+    name: 'finalize',
+    guard: E.gt(S.duration, E.int(0)),
+    next: {
+      phase: IDLE,
+      duration: E.int(0),
+      playhead: E.int(0),
+      micActive: E.bool(false),
+      previewActive: E.bool(false),
+      canUndoTrim: E.bool(false),
+      undoDuration: E.int(0),
+      hasDraft: E.bool(false),
+    },
+  },
+  discard: {
+    name: 'discard',
+    guard: E.bool(true),
+    next: {
+      phase: IDLE,
+      duration: E.int(0),
+      playhead: E.int(0),
+      micActive: E.bool(false),
+      previewActive: E.bool(false),
+      canUndoTrim: E.bool(false),
+      undoDuration: E.int(0),
+      hasDraft: E.bool(false),
+    },
+  },
+};
+
+function evalTransitionIr(
+  s: StudioFormalState,
+  ir: StudioTransitionIr,
+  params: Readonly<Record<string, number>> = {},
+): StudioFormalState | null {
+  const env = studioStateToEnv(s, params);
+  if (!evalBool(ir.guard, env)) return null;
+  const nextPhaseCode = ir.next.phase ? evalInt(ir.next.phase, env) : STUDIO_PHASE_CODE[s.phase];
+  return {
+    phase: CODE_TO_PHASE[nextPhaseCode],
+    duration: ir.next.duration ? evalInt(ir.next.duration, env) : s.duration,
+    playhead: ir.next.playhead ? evalInt(ir.next.playhead, env) : s.playhead,
+    micActive: ir.next.micActive ? evalBool(ir.next.micActive, env) : s.micActive,
+    previewActive: ir.next.previewActive ? evalBool(ir.next.previewActive, env) : s.previewActive,
+    canUndoTrim: ir.next.canUndoTrim ? evalBool(ir.next.canUndoTrim, env) : s.canUndoTrim,
+    undoDuration: ir.next.undoDuration ? evalInt(ir.next.undoDuration, env) : s.undoDuration,
+    hasDraft: ir.next.hasDraft ? evalBool(ir.next.hasDraft, env) : s.hasDraft,
+  };
+}
+
+/**
+ * Tier 1 Safety Invariants derived directly from `STUDIO_INVARIANT_IR`.
+ */
+export const STUDIO_INVARIANTS: readonly SafetyInvariant<StudioFormalState>[] =
+  STUDIO_INVARIANT_IR.map((inv) => ({
+    name: inv.name,
+    check: (s) => evalBool(inv.expr, studioStateToEnv(s)),
+  }));
+
 export const STUDIO_REACHABILITY_GOALS: readonly ReachabilityGoal<StudioFormalState>[] =
   [
     {
@@ -177,172 +474,41 @@ export const STUDIO_REACHABILITY_GOALS: readonly ReachabilityGoal<StudioFormalSt
   ];
 
 /**
- * Pure step relation matching `RecordingEngine` semantics.
- * `maxDuration` bounds `capture_chunk` so Tier-1 BFS explores a finite canonical state space.
+ * Tier 1 step relation executed directly from `STUDIO_TRANSITIONS_IR`.
+ * `rewindWindow` defaults to 5 (matching RecordingEngine's 5s rewind at 1 unit = 1s).
  */
 export function stepStudioState(
   s: StudioFormalState,
   action: StudioAction,
   maxDuration = 3,
+  rewindWindow = 5,
 ): StudioFormalState | null {
   switch (action) {
-    case 'start_or_resume': {
-      // Safe append from end; stops any preview, clears undo, starts mic
-      return {
-        ...s,
-        phase: 'recording',
-        playhead: s.duration,
-        micActive: true,
-        previewActive: false,
-        canUndoTrim: false,
-        undoDuration: 0,
-        hasDraft: true,
-      };
-    }
-
-    case 'capture_chunk': {
-      if (s.phase !== 'recording' || s.duration >= maxDuration) return null;
-      const nextDuration = s.duration + 1;
-      return {
-        ...s,
-        duration: nextDuration,
-        playhead: nextDuration,
-      };
-    }
-
-    case 'pause': {
-      if (s.phase !== 'recording') return null;
-      return {
-        ...s,
-        phase: 'paused',
-        micActive: false,
-        playhead: s.duration,
-      };
-    }
-
-    case 'seek_start': {
-      if (s.phase === 'recording') return null;
-      if (s.phase === 'playing') {
-        // Seeking while playing restarts preview from 0 (valid because playing => duration > 0)
-        return { ...s, playhead: 0 };
-      }
-      return { ...s, playhead: 0 };
-    }
-
-    case 'seek_mid': {
-      if (s.phase === 'recording' || s.duration < 2) return null;
-      const mid = Math.floor(s.duration / 2);
-      return { ...s, playhead: mid };
-    }
-
-    case 'seek_end': {
-      if (s.phase === 'recording') return null;
-      if (s.phase === 'playing') {
-        // Mirror RecordingEngine.playPreviewFromPlayhead: seeking to very end rewinds back from end
-        const rewindPos = Math.max(0, s.duration - 1);
-        return { ...s, playhead: rewindPos };
-      }
-      return { ...s, playhead: s.duration };
-    }
-
-    case 'play_preview': {
-      if (s.duration === 0) return null;
-      // If playhead is already at end, rewind smoothly (mirrors RecordingEngine.playPreviewFromPlayhead)
-      const effectivePlayhead =
-        s.playhead >= s.duration ? Math.max(0, s.duration - 1) : s.playhead;
-      return {
-        ...s,
-        phase: 'playing',
-        playhead: effectivePlayhead,
-        micActive: false,
-        previewActive: true,
-      };
-    }
-
-    case 'preview_tick': {
-      if (s.phase !== 'playing') return null;
-      const nextPlayhead = Math.min(s.duration, s.playhead + 1);
-      return {
-        ...s,
-        playhead: nextPlayhead,
-      };
-    }
-
-    case 'preview_ended': {
-      if (s.phase !== 'playing') return null;
-      return {
-        ...s,
-        phase: 'paused',
-        previewActive: false,
-        playhead: s.duration,
-      };
-    }
-
-    case 'pause_preview': {
-      if (s.phase !== 'playing') return null;
-      return {
-        ...s,
-        phase: 'paused',
-        previewActive: false,
-      };
-    }
-
-    case 'punch_in': {
-      // Truncate at current playhead (saving 1-step undo snapshot) & start recording
-      const hasTimeline = s.hasDraft;
-      const newDuration = hasTimeline ? s.playhead : 0;
-      return {
-        ...s,
-        phase: 'recording',
-        duration: newDuration,
-        playhead: newDuration,
-        micActive: true,
-        previewActive: false,
-        canUndoTrim: hasTimeline,
-        undoDuration: hasTimeline ? s.duration : 0,
-        hasDraft: true,
-      };
-    }
-
-    case 'trim_to_playhead': {
-      if (!s.hasDraft) return null;
-      // Mirrors RecordingEngine.trimToPlayhead (pause if recording -> truncate at playhead)
-      const cutAt = s.phase === 'recording' ? s.duration : s.playhead;
-      return {
-        ...s,
-        phase: cutAt > 0 ? 'paused' : 'idle',
-        duration: cutAt,
-        playhead: cutAt,
-        micActive: false,
-        previewActive: false,
-        canUndoTrim: true,
-        undoDuration: s.duration,
-      };
-    }
-
-    case 'undo_trim': {
-      if (!s.canUndoTrim) return null;
-      const restored = s.undoDuration;
-      return {
-        ...s,
-        phase: restored > 0 ? 'paused' : 'idle',
-        duration: restored,
-        playhead: restored,
-        micActive: false,
-        previewActive: false,
-        canUndoTrim: false,
-        undoDuration: 0,
-      };
-    }
-
-    case 'finalize': {
-      if (s.duration === 0) return null;
-      return { ...STUDIO_INITIAL_STATE };
-    }
-
-    case 'discard': {
-      return { ...STUDIO_INITIAL_STATE };
-    }
+    case 'capture_chunk':
+      if (s.duration >= maxDuration) return null;
+      return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.capture_chunk, { chunkDelta: 1 });
+    case 'seek_start':
+      return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.seek, {
+        seekTarget: 0,
+        rewindWindow,
+      });
+    case 'seek_mid':
+      if (s.duration < 2) return null;
+      return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.seek, {
+        seekTarget: Math.floor(s.duration / 2),
+        rewindWindow,
+      });
+    case 'seek_end':
+      return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.seek, {
+        seekTarget: s.duration,
+        rewindWindow,
+      });
+    case 'play_preview':
+      return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.play_preview, { rewindWindow });
+    case 'preview_tick':
+      return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.preview_tick, { previewElapsed: 1 });
+    default:
+      return evalTransitionIr(s, STUDIO_TRANSITIONS_IR[action]);
   }
 }
 
@@ -361,12 +527,13 @@ export function serializeStudioState(s: StudioFormalState): string {
 
 export function createStudioLts(
   maxDuration = 3,
+  rewindWindow = 5,
 ): LabeledTransitionSystem<StudioFormalState, StudioAction> {
   return {
     name: 'RecordingStudio',
     initialStates: [STUDIO_INITIAL_STATE],
     actions: STUDIO_ACTIONS,
-    step: (state, action) => stepStudioState(state, action, maxDuration),
+    step: (state, action) => stepStudioState(state, action, maxDuration, rewindWindow),
     serialize: serializeStudioState,
     invariants: STUDIO_INVARIANTS,
     reachabilityGoals: STUDIO_REACHABILITY_GOALS,

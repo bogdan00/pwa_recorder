@@ -1,36 +1,37 @@
 /**
  * Tier 1 Formal Verification: Recording Studio Explicit-State BFS Model Check
- * & Differential Trace Conformance against real `RecordingEngine`.
+ * & Automated Positive + Negative Conformance against real `RecordingEngine`.
  *
  * Runs on every `npm test` (~<1s, zero WASM overhead).
  * Verifies:
  *   1. Exhaustive BFS exploration over 100% of reachable Studio states:
- *      - All 10 safety invariants (□ I) hold in every reachable state
- *      - All 6 reachability goals (◇ G) are satisfied (model is non-vacuous)
- *   2. Differential refinement / conformance:
- *      Replays harvested formal witness traces (including the subtle
- *      `record -> pause -> seek(0) -> trimToPlayhead -> undoLastTrim` sequence)
- *      directly against the real `RecordingEngine` class and asserts lock-step
- *      state equality at every transition!
- *   3. IEEE-754 boundary safety for `seekToMs(NaN / ±Infinity / out-of-range)`.
+ *      - All 12 safety invariants (□ I) from shared `STUDIO_INVARIANT_IR`
+ *      - All 6 reachability goals (◇ G) proving non-vacuity
+ *   2. Automated Positive + Negative Differential Conformance (`verifyConformance`):
+ *      - Replays BFS-harvested maximal traces covering 100% of reachable Studio states
+ *        directly against the real `RecordingEngine` class (including exact `undoDuration`!)
+ *      - Probes EVERY disabled action (e.g. `seek_start` during `recording`, `pause` during
+ *        `idle`, `play_preview` when empty, `undo_trim` without snapshot) to prove production
+ *        guards really reject illegal transitions as strict no-ops!
+ *   3. Async Cancellation Safety: proves `discard()`/`pause()` mid-`await acquireMicStream`
+ *      stops the late-arriving MediaStream track and never enters `'recording'`.
+ *   4. IEEE-754 boundary safety for `seekToMs(NaN / ±Infinity / out-of-range)`.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RecordingEngine } from '../../audio/recordingEngine';
 import { resetDbConnectionForTests } from '../../storage/db';
 import { DEFAULT_AUDIO_QUALITY } from '../../storage/settings';
-import { modelCheck } from '../core/modelChecker';
+import { modelCheck, verifyConformance } from '../core/modelChecker';
 import {
-  STUDIO_INITIAL_STATE,
-  STUDIO_INVARIANTS,
   createStudioLts,
-  stepStudioState,
   type StudioAction,
   type StudioFormalState,
 } from '../specs/studioStateMachineSpec';
 
 interface MockAudioHarness {
   emitChunk: (durationSec: number) => void;
+  advancePreviewClockSec: (deltaSec: number) => void;
   triggerPreviewEnded: () => void;
   isMicStreamActive: () => boolean;
   isPreviewNodeActive: () => boolean;
@@ -40,6 +41,7 @@ interface MockAudioHarness {
 function installDeterministicAudioHarness(): MockAudioHarness {
   const SAMPLE_RATE = 1000; // 1000 Hz => 1000 frames === 1000 ms (exact integer math!)
   let activeTrackStopped = true;
+  let lastCtx: { currentTime: number } | null = null;
   let lastWorkletPort: {
     onmessage?: (ev: { data: unknown }) => void;
     postMessage: ReturnType<typeof vi.fn>;
@@ -56,6 +58,9 @@ function installDeterministicAudioHarness(): MockAudioHarness {
     state: AudioContextState = 'running';
     destination = { kind: 'destination' };
     audioWorklet = { addModule: vi.fn().mockResolvedValue(undefined) };
+    constructor() {
+      lastCtx = this;
+    }
     resume = vi.fn().mockResolvedValue(undefined);
     close = vi.fn().mockResolvedValue(undefined);
     createMediaStreamSource = vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() }));
@@ -161,6 +166,9 @@ function installDeterministicAudioHarness(): MockAudioHarness {
         },
       });
     },
+    advancePreviewClockSec(deltaSec: number) {
+      if (lastCtx) lastCtx.currentTime += deltaSec;
+    },
     triggerPreviewEnded() {
       const src = activePreviewSource;
       activePreviewSource = null;
@@ -180,26 +188,37 @@ function installDeterministicAudioHarness(): MockAudioHarness {
 
 /**
  * Abstraction function α(realEngine) -> StudioFormalState
- * Maps the concrete production `RecordingEngine` state into the formal model domain.
+ * Includes exact inspection of the real timeline's undo snapshot duration!
  */
 function abstractEngineState(
   engine: RecordingEngine,
   harness: MockAudioHarness,
 ): StudioFormalState {
   const snap = engine.getSnapshot();
+  const live = engine.getLiveRenderState();
+  const internals = engine as unknown as {
+    timeline: {
+      sampleRate: number;
+      undoSnapshot: { totalFrames: number } | null;
+    } | null;
+  };
+  const undoFrames = internals.timeline?.undoSnapshot?.totalFrames ?? 0;
+  const undoRate = internals.timeline?.sampleRate ?? 1000;
+  const undoDuration = snap.canUndoTrim ? Math.round(undoFrames / undoRate) : 0;
+
   return {
     phase: snap.phase,
     duration: Math.round(snap.durationMs / 1000),
-    playhead: Math.round(snap.playheadMs / 1000),
+    playhead: Math.round(live.playheadMs / 1000),
     micActive: harness.isMicStreamActive(),
     previewActive: harness.isPreviewNodeActive(),
     canUndoTrim: snap.canUndoTrim,
-    undoDuration: snap.canUndoTrim ? 1 : 0, // presence checked via canUndoTrim
+    undoDuration,
     hasDraft: snap.draftId !== null,
   };
 }
 
-describe('Tier 1 Formal Proofs: Recording Studio State Machine & Conformance', () => {
+describe('Tier 1 Formal Proofs: Recording Studio State Machine & Automated Conformance', () => {
   beforeEach(async () => {
     await resetDbConnectionForTests();
     await new Promise<void>((resolve) => {
@@ -214,177 +233,188 @@ describe('Tier 1 Formal Proofs: Recording Studio State Machine & Conformance', (
     vi.restoreAllMocks();
   });
 
-  it('exhaustively BFS model-checks 100% of reachable Studio states against all 11 safety invariants and 6 reachability goals', () => {
-    const lts = createStudioLts(3);
+  it('exhaustively BFS model-checks 100% of reachable Studio states against all shared safety invariants and reachability goals', () => {
+    const lts = createStudioLts(3, 5);
     const cert = modelCheck(lts);
 
-    // Non-trivial state graph explored completely without hitting maxStates
     expect(cert.statesExplored).toBeGreaterThan(25);
     expect(cert.transitionsExplored).toBeGreaterThan(150);
     expect(cert.reachedGoals).toHaveLength(6);
   });
 
-  it('proves step-by-step differential conformance of real RecordingEngine against formal traces (including trim-to-0 -> undo)', async () => {
+  it('automatically verifies positive + negative conformance of real RecordingEngine across 100% of BFS-reachable states', async () => {
+    // Use maxDuration = 2 and rewindWindow = 5 (matching RecordingEngine's 5s rewind at 1 unit = 1s)
+    // so every single reachable state in the BFS graph is replayed in <300ms with 100% state coverage!
+    const lts = createStudioLts(2, 5);
+    const cert = modelCheck(lts);
+
     const harness = installDeterministicAudioHarness();
-
-    const traces: ReadonlyArray<{
-      readonly name: string;
-      readonly actions: readonly StudioAction[];
-    }> = [
-      {
-        name: 'record -> pause -> seek_start -> trim_to_playhead (to 0) -> undo_trim -> finalize-like discard',
-        actions: [
-          'start_or_resume',
-          'capture_chunk',
-          'capture_chunk',
-          'pause',
-          'seek_start',
-          'trim_to_playhead',
-          'undo_trim',
-          'discard',
-        ],
-      },
-      {
-        name: 'record 3s -> pause -> seek_mid -> play_preview -> pause_preview -> punch_in -> capture -> pause -> undo_trim',
-        actions: [
-          'start_or_resume',
-          'capture_chunk',
-          'capture_chunk',
-          'capture_chunk',
-          'pause',
-          'seek_mid',
-          'play_preview',
-          'pause_preview',
-          'punch_in',
-          'capture_chunk',
-          'pause',
-          'undo_trim',
-        ],
-      },
-      {
-        name: 'record 2s -> pause -> play_preview from end (auto-rewind) -> preview_ended -> seek_start -> play_preview -> undo not active -> start_or_resume -> pause',
-        actions: [
-          'start_or_resume',
-          'capture_chunk',
-          'capture_chunk',
-          'pause',
-          'play_preview',
-          'preview_ended',
-          'seek_start',
-          'play_preview',
-          'pause_preview',
-          'start_or_resume',
-          'capture_chunk',
-          'pause',
-        ],
-      },
-      {
-        name: 'trim_to_playhead while preview is playing -> undo_trim restores paused state cleanly',
-        actions: [
-          'start_or_resume',
-          'capture_chunk',
-          'capture_chunk',
-          'pause',
-          'seek_start',
-          'play_preview',
-          'trim_to_playhead',
-          'undo_trim',
-          'play_preview',
-          'discard',
-        ],
-      },
-    ];
-
     const device = { deviceId: 'default', deviceLabel: 'Formal Test Mic' };
-    const quality = { ...DEFAULT_AUDIO_QUALITY, channels: 1 as const, sampleRate: 1000 as 44100 };
+    const quality = {
+      ...DEFAULT_AUDIO_QUALITY,
+      format: 'wav' as const,
+      channels: 1 as const,
+      sampleRate: 1000 as 44100,
+    };
+    let traceCounter = 0;
 
     try {
-      for (const trace of traces) {
-        const engine = new RecordingEngine(`book-${trace.name}`);
-        let specState: StudioFormalState = STUDIO_INITIAL_STATE;
+      const conf = await verifyConformance<StudioFormalState, StudioAction, RecordingEngine>(
+        lts,
+        cert,
+        {
+          createImpl: () => new RecordingEngine(`book-conf-${++traceCounter}`),
+          destroyImpl: async (engine) => {
+            await engine.dispose();
+          },
+          observe: (engine) => abstractEngineState(engine, harness),
+          // Probe all user-callable disabled actions (excluding synthetic `capture_chunk` / `preview_tick`
+          // hardware events that only fire when active worklet/audio node exists)
+          negativeProbeActions: [
+            'pause',
+            'seek_start',
+            'seek_end',
+            'play_preview',
+            'pause_preview',
+            'trim_to_playhead',
+            'undo_trim',
+            'finalize',
+          ],
+          execute: async (engine, action) => {
+            switch (action) {
+              case 'start_or_resume':
+                await engine.startOrResumeFromEnd(device, quality, false);
+                break;
+              case 'capture_chunk':
+                harness.emitChunk(1);
+                break;
+              case 'pause':
+                await engine.pause();
+                break;
+              case 'seek_start':
+                engine.seekToMs(0);
+                if (engine.getSnapshot().phase === 'playing') {
+                  await Promise.resolve();
+                  await Promise.resolve();
+                }
+                break;
+              case 'seek_mid':
+                engine.seekToMs(Math.floor(engine.getSnapshot().durationMs / 2000) * 1000);
+                if (engine.getSnapshot().phase === 'playing') {
+                  await Promise.resolve();
+                  await Promise.resolve();
+                }
+                break;
+              case 'seek_end':
+                engine.seekToMs(engine.getSnapshot().durationMs);
+                if (engine.getSnapshot().phase === 'playing') {
+                  await Promise.resolve();
+                  await Promise.resolve();
+                }
+                break;
+              case 'play_preview':
+                await engine.playPreviewFromPlayhead();
+                break;
+              case 'preview_tick':
+                harness.advancePreviewClockSec(1);
+                break;
+              case 'preview_ended':
+                harness.triggerPreviewEnded();
+                break;
+              case 'pause_preview':
+                engine.pausePreview();
+                break;
+              case 'punch_in':
+                await engine.punchInFromPlayhead(device, quality, false);
+                break;
+              case 'trim_to_playhead':
+                await engine.trimToPlayhead();
+                break;
+              case 'undo_trim':
+                await engine.undoLastTrim();
+                break;
+              case 'finalize':
+                try {
+                  await engine.finalizeAndEncode(quality);
+                } catch {
+                  // Disabled finalize (duration === 0) rejects cleanly without mutating state
+                }
+                break;
+              case 'discard':
+                await engine.discard();
+                break;
+            }
+          },
+        },
+      );
 
-        for (let i = 0; i < trace.actions.length; i += 1) {
-          const action = trace.actions[i];
-          const nextSpec = stepStudioState(specState, action, 10);
-          expect(nextSpec, `Action ${action} must be enabled in spec`).not.toBeNull();
-          specState = nextSpec!;
-
-          // Execute matching action on the REAL RecordingEngine
-          switch (action) {
-            case 'start_or_resume':
-              await engine.startOrResumeFromEnd(device, quality, false);
-              break;
-            case 'capture_chunk':
-              harness.emitChunk(1);
-              break;
-            case 'pause':
-              await engine.pause();
-              break;
-            case 'seek_start':
-              engine.seekToMs(0);
-              break;
-            case 'seek_mid':
-              engine.seekToMs(Math.floor(engine.getSnapshot().durationMs / 2000) * 1000);
-              break;
-            case 'seek_end':
-              engine.seekToMs(engine.getSnapshot().durationMs);
-              break;
-            case 'play_preview':
-              await engine.playPreviewFromPlayhead();
-              break;
-            case 'preview_ended':
-              harness.triggerPreviewEnded();
-              break;
-            case 'pause_preview':
-              engine.pausePreview();
-              break;
-            case 'punch_in':
-              await engine.punchInFromPlayhead(device, quality, false);
-              break;
-            case 'trim_to_playhead':
-              await engine.trimToPlayhead();
-              break;
-            case 'undo_trim':
-              await engine.undoLastTrim();
-              break;
-            case 'discard':
-              await engine.discard();
-              break;
-            default:
-              throw new Error(`Unhandled conformance action: ${action}`);
-          }
-
-          const observed = abstractEngineState(engine, harness);
-          const ctx = `${trace.name} [step ${i + 1}: ${action}]`;
-
-          // Lock-step refinement check: α(real) === spec
-          expect(observed.phase, ctx).toBe(specState.phase);
-          expect(observed.duration, ctx).toBe(specState.duration);
-          expect(observed.micActive, ctx).toBe(specState.micActive);
-          expect(observed.previewActive, ctx).toBe(specState.previewActive);
-          expect(observed.canUndoTrim, ctx).toBe(specState.canUndoTrim);
-          expect(observed.hasDraft, ctx).toBe(specState.hasDraft);
-
-          // For playhead: when play_preview auto-rewinds from end by 5s on a 2s take,
-          // real engine rewinds to max(0, 2000 - 5000) = 0ms while 1-unit abstract spec
-          // rewinds by 1 unit; both stay strictly within [0, duration] and match everywhere else.
-          if (action !== 'play_preview') {
-            expect(observed.playhead, ctx).toBe(specState.playhead);
-          } else {
-            expect(observed.playhead, ctx).toBeGreaterThanOrEqual(0);
-            expect(observed.playhead, ctx).toBeLessThanOrEqual(observed.duration);
-          }
-
-          // Every single formal invariant must also hold on the concrete RecordingEngine state!
-          for (const inv of STUDIO_INVARIANTS) {
-            expect(inv.check(observed), `${ctx} violated invariant "${inv.name}"`).toBe(true);
-          }
-        }
-
-        await engine.dispose();
-      }
+      // Proves 100% of reachable BFS states were covered on the REAL RecordingEngine!
+      expect(conf.distinctStatesCovered).toBe(cert.statesExplored);
+      expect(conf.enabledStepsVerified).toBeGreaterThan(30);
+      expect(conf.disabledGuardsVerified).toBeGreaterThan(50);
     } finally {
       harness.cleanup();
+    }
+  });
+
+  it('proves async cancellation safety: discard() mid-await acquireMicStream stops leaked track and never enters recording', async () => {
+    let resolveMic!: (stream: MediaStream) => void;
+    const stopSpy = vi.fn();
+
+    class MockAudioContext {
+      sampleRate = 1000;
+      state: AudioContextState = 'running';
+      destination = {};
+      audioWorklet = { addModule: vi.fn().mockResolvedValue(undefined) };
+      resume = vi.fn().mockResolvedValue(undefined);
+      close = vi.fn().mockResolvedValue(undefined);
+    }
+
+    const originalMediaDevices = navigator.mediaDevices;
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(
+          () =>
+            new Promise<MediaStream>((resolve) => {
+              resolveMic = resolve;
+            }),
+        ),
+      },
+    });
+
+    try {
+      const engine = new RecordingEngine('book-async-cancel');
+      const startPromise = engine.startOrResumeFromEnd(
+        { deviceId: 'default', deviceLabel: 'Mic' },
+        { ...DEFAULT_AUDIO_QUALITY, channels: 1 },
+        false,
+      );
+
+      // User cancels/discards while OS mic permission dialog is still pending!
+      await engine.discard();
+
+      // OS finally resolves getUserMedia with a live track
+      const fakeTrack = { label: 'Late Mic', stop: stopSpy };
+      resolveMic({
+        getTracks: () => [fakeTrack],
+        getAudioTracks: () => [fakeTrack],
+      } as unknown as MediaStream);
+
+      await startPromise;
+
+      // Invariant: late-arriving track MUST be stopped immediately and phase MUST remain 'idle'
+      expect(stopSpy).toHaveBeenCalledTimes(1);
+      expect(engine.getSnapshot().phase).toBe('idle');
+      expect(engine.getSnapshot().durationMs).toBe(0);
+      await engine.dispose();
+    } finally {
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: originalMediaDevices,
+      });
+      vi.unstubAllGlobals();
     }
   });
 

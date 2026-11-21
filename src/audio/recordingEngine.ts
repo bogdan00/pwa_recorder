@@ -97,6 +97,10 @@ export class RecordingEngine {
   private wakeLock: WakeLockSentinel | null = null;
   private keepScreenAwake = true;
 
+  // Monotonic cancellation epoch preventing stale in-flight beginMicCapture awaits
+  // from re-entering 'recording' after pause/discard/dispose.
+  private captureEpoch = 0;
+
   // Listeners
   private listeners = new Set<(snap: StudioSnapshot) => void>();
   private visibilityHandler: (() => void) | null = null;
@@ -280,6 +284,7 @@ export class RecordingEngine {
   }
 
   async pause(): Promise<void> {
+    this.captureEpoch += 1;
     if (this.phase !== 'recording') return;
 
     this.teardownMicCapture();
@@ -296,8 +301,10 @@ export class RecordingEngine {
 
   /**
    * Seek playhead while paused or playing (used by drag-to-scrub waveform & -5s/+5s buttons).
+   * Explicitly disabled while recording so playhead always tracks the live recording tail.
    */
   seekToMs(ms: number): void {
+    if (this.phase === 'recording') return;
     const safeMs = Number.isFinite(ms) ? ms : 0;
     const maxMs = this.timeline?.getDurationMs() ?? 0;
     const clamped = Math.max(0, Math.min(safeMs, maxMs));
@@ -413,10 +420,10 @@ export class RecordingEngine {
     overviewPeaks: number[];
     deviceLabel: string;
   }> {
-    await this.pauseForStopPrompt();
     if (!this.timeline || this.timeline.getTotalFrames() === 0) {
       throw new Error('No audio recorded yet.');
     }
+    await this.pauseForStopPrompt();
 
     const durationMs = this.timeline.getDurationMs();
     const overviewPeaks = downsamplePeaks(this.timeline.getPeaks(), 140);
@@ -468,6 +475,7 @@ export class RecordingEngine {
   }
 
   async discard(): Promise<void> {
+    this.captureEpoch += 1;
     this.stopPreviewPlayback();
     this.teardownMicCapture();
     await this.releaseWakeLock();
@@ -484,6 +492,7 @@ export class RecordingEngine {
   }
 
   async dispose(): Promise<void> {
+    this.captureEpoch += 1;
     this.stopPreviewPlayback();
     this.teardownMicCapture();
     await this.flushPendingDraftToDb();
@@ -557,6 +566,7 @@ export class RecordingEngine {
     deviceSettings: AudioDeviceSettings,
     quality: AudioQualitySettings,
   ): Promise<StartRecordingFeedback> {
+    const myEpoch = ++this.captureEpoch;
     const targetChannels: ChannelCountOption =
       this.timeline?.channels ?? quality.channels;
 
@@ -580,8 +590,24 @@ export class RecordingEngine {
       captureSampleRate,
     );
 
+    // Abort cleanly if pause()/discard()/dispose()/another start superseded us mid-await
+    if (myEpoch !== this.captureEpoch) {
+      acquired.stream.getTracks().forEach((t) => t.stop());
+      return {
+        usedFallbackDevice: acquired.usedFallback,
+        fallbackReason: acquired.fallbackReason,
+      };
+    }
+
     // 3. Re-resume AudioContext after permission dialog closes (iOS suspends it during prompt)
     await this.resumeContextSafely(ctx);
+    if (myEpoch !== this.captureEpoch) {
+      acquired.stream.getTracks().forEach((t) => t.stop());
+      return {
+        usedFallbackDevice: acquired.usedFallback,
+        fallbackReason: acquired.fallbackReason,
+      };
+    }
 
     this.stream = acquired.stream;
     this.activeDeviceLabel = acquired.actualDeviceLabel;
@@ -606,6 +632,14 @@ export class RecordingEngine {
       onChunk: ({ pcm, peaks, liveLevel }) =>
         this.ingestCapturedChunk(pcm, peaks, liveLevel),
     });
+    if (myEpoch !== this.captureEpoch) {
+      teardownPcmCapture(handle);
+      this.teardownMicCapture();
+      return {
+        usedFallbackDevice: acquired.usedFallback,
+        fallbackReason: acquired.fallbackReason,
+      };
+    }
     this.captureHandle = handle;
     this.workletNode = handle.workletNode;
 
@@ -615,6 +649,13 @@ export class RecordingEngine {
     this.lastChunkPerfMs = startPerf;
     this.hasEmittedFirstChunkInSession = false;
     await this.requestWakeLock();
+    if (myEpoch !== this.captureEpoch) {
+      await this.releaseWakeLock();
+      return {
+        usedFallbackDevice: acquired.usedFallback,
+        fallbackReason: acquired.fallbackReason,
+      };
+    }
     if (this.lastChunkPerfMs === startPerf) {
       this.lastChunkPerfMs = nowPerfMs();
     }

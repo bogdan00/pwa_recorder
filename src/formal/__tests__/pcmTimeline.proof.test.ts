@@ -202,4 +202,15 @@ describe('Tier 1 Formal Proofs: PCM Audio Timeline Algebraic Invariants', () => 
     );
     expect(extractCert.casesChecked).toBe(framePoints.length * framePoints.length);
   });
+
+  it('proves loadFromChunks reconciles stale or truncated persisted peaks after a crash', () => {
+    const timeline = new PcmTimeline(1000, 1);
+    const pcm = new Float32Array(1000).fill(0.75); // 1000 frames => 50 expected peaks
+    // Simulate a crash where savedPeaks only captured 3 peaks while 1000 frames were persisted
+    timeline.loadFromChunks([pcm], [0.1, 0.2, 0.3]);
+
+    expect(timeline.getTotalFrames()).toBe(1000);
+    expect(timeline.getPeaks()).toHaveLength(50);
+    expect(timeline.getPeaks().every((p) => Math.abs(p - 0.75) < 1e-5)).toBe(true);
+  });
 });

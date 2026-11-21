@@ -152,7 +152,14 @@ export class PcmTimeline {
       this.totalFrames += frameCount;
     }
 
-    if (savedPeaks && savedPeaks.length > 0) {
+    const expectedPeakCount = Math.floor(
+      (this.totalFrames / Math.max(1, this.sampleRate)) * PEAKS_PER_SECOND,
+    );
+    if (
+      savedPeaks &&
+      savedPeaks.length > 0 &&
+      Math.abs(savedPeaks.length - expectedPeakCount) <= 1
+    ) {
       this.peaks = savedPeaks.slice();
     } else {
       this.recomputeAllPeaks();

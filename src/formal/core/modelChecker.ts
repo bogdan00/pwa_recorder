@@ -208,3 +208,186 @@ export function modelCheck<S, A>(
     witnessTraces,
   };
 }
+
+// ============================================================================
+// Automated Refinement / Differential Conformance Engine (Positive + Negative)
+// ============================================================================
+
+export interface ConformanceAdapter<S, A, Impl> {
+  /** Create a fresh isolated production instance matching `initialState`. */
+  readonly createImpl: (initialState: S) => Promise<Impl> | Impl;
+  /** Dispose/cleanup production instance after each trace. */
+  readonly destroyImpl?: (impl: Impl) => Promise<void> | void;
+  /** Execute an action (either enabled OR disabled) on the real implementation. */
+  readonly execute: (impl: Impl, action: A, currentSpec: S) => Promise<void> | void;
+  /** Abstraction function α(impl) -> formal state S. */
+  readonly observe: (impl: Impl) => S;
+  /** Optional custom comparator (defaults to lts.serialize equality). */
+  readonly statesMatch?: (spec: S, observed: S, action: A | null) => boolean;
+  /**
+   * Optional subset of disabled actions to probe as no-ops at visited states.
+   * Defaults to ALL actions in `lts.actions` where `lts.step(s, a) === null`.
+   */
+  readonly negativeProbeActions?: readonly A[];
+}
+
+export interface ConformanceCertificate {
+  readonly systemName: string;
+  readonly tracesReplayed: number;
+  readonly enabledStepsVerified: number;
+  readonly disabledGuardsVerified: number;
+  readonly distinctStatesCovered: number;
+}
+
+/**
+ * Selects a minimal set of maximal BFS witness traces (prefixes pruned) that cover
+ * 100% of reachable states — avoiding redundant replays of strict prefixes.
+ */
+export function selectMaximalWitnessTraces<S, A>(
+  cert: ModelCheckCertificate<S, A>,
+  serialize: (state: S) => string,
+): ReadonlyArray<{
+  readonly targetKey: string;
+  readonly initialState: S;
+  readonly steps: readonly TransitionStep<S, A>[];
+}> {
+  const all = Array.from(cert.witnessTraces.entries()).map(([targetKey, trace]) => ({
+    targetKey,
+    initialState: trace.initialState,
+    steps: trace.steps,
+  }));
+
+  // Sort longest-first so shorter strict prefixes are subsumed automatically
+  all.sort((a, b) => b.steps.length - a.steps.length);
+
+  const coveredKeys = new Set<string>();
+  const selected: Array<{
+    readonly targetKey: string;
+    readonly initialState: S;
+    readonly steps: readonly TransitionStep<S, A>[];
+  }> = [];
+
+  for (const candidate of all) {
+    if (coveredKeys.has(candidate.targetKey)) continue;
+    selected.push(candidate);
+    coveredKeys.add(serialize(candidate.initialState));
+    for (const step of candidate.steps) {
+      coveredKeys.add(serialize(step.state));
+    }
+  }
+
+  return selected;
+}
+
+/**
+ * Automated Positive + Negative Differential Conformance Verifier.
+ *
+ * Replays BFS-harvested traces against the REAL production implementation:
+ *   1. Positive conformance: after every enabled action `a`, asserts α(real) === specNext
+ *      and every formal safety invariant holds on α(real).
+ *   2. Negative conformance (guard verification): at every newly visited state `s`,
+ *      probes every disabled action (`lts.step(s, a) === null`) against the REAL
+ *      implementation and asserts α(real) remains strictly unchanged!
+ */
+export async function verifyConformance<S, A, Impl>(
+  lts: LabeledTransitionSystem<S, A>,
+  cert: ModelCheckCertificate<S, A>,
+  adapter: ConformanceAdapter<S, A, Impl>,
+  options?: { readonly maxTraces?: number },
+): Promise<ConformanceCertificate> {
+  const maximal = selectMaximalWitnessTraces(cert, lts.serialize);
+  const traces =
+    options?.maxTraces !== undefined ? maximal.slice(0, options.maxTraces) : maximal;
+
+  const statesMatch =
+    adapter.statesMatch ??
+    ((spec: S, obs: S) => lts.serialize(spec) === lts.serialize(obs));
+  const negativeCandidates = adapter.negativeProbeActions ?? lts.actions;
+
+  const coveredStateKeys = new Set<string>();
+  const probedStateKeys = new Set<string>();
+  let enabledStepsVerified = 0;
+  let disabledGuardsVerified = 0;
+
+  const assertInvariants = (observed: S, context: string): void => {
+    for (const inv of lts.invariants) {
+      if (!inv.check(observed)) {
+        throw new Error(
+          `[Conformance:${lts.name}] Production state violated invariant "${inv.name}" at ${context}\n  Observed α(impl): ${JSON.stringify(observed)}`,
+        );
+      }
+    }
+  };
+
+  for (let tIdx = 0; tIdx < traces.length; tIdx += 1) {
+    const trace = traces[tIdx];
+    const impl = await adapter.createImpl(trace.initialState);
+    try {
+      let currentSpec = trace.initialState;
+      const initObs = adapter.observe(impl);
+      if (!statesMatch(currentSpec, initObs, null)) {
+        throw new Error(
+          `[Conformance:${lts.name}] Initial state mismatch on trace #${tIdx + 1}:\n  Spec:     ${JSON.stringify(currentSpec)}\n  Observed: ${JSON.stringify(initObs)}`,
+        );
+      }
+      assertInvariants(initObs, `trace #${tIdx + 1} [init]`);
+      coveredStateKeys.add(lts.serialize(currentSpec));
+
+      const probeDisabledAtCurrent = async (stepLabel: string): Promise<void> => {
+        const key = lts.serialize(currentSpec);
+        if (probedStateKeys.has(key)) return;
+        probedStateKeys.add(key);
+
+        for (const candidate of negativeCandidates) {
+          if (lts.step(currentSpec, candidate) !== null) continue;
+          const beforeObs = adapter.observe(impl);
+          await adapter.execute(impl, candidate, currentSpec);
+          const afterObs = adapter.observe(impl);
+          disabledGuardsVerified += 1;
+
+          if (lts.serialize(beforeObs) !== lts.serialize(afterObs)) {
+            throw new Error(
+              `[Conformance:${lts.name}] NEGATIVE GUARD FAILURE at ${stepLabel}: disabled action ${JSON.stringify(candidate)} mutated production state!\n  Before: ${JSON.stringify(beforeObs)}\n  After:  ${JSON.stringify(afterObs)}`,
+            );
+          }
+          assertInvariants(afterObs, `${stepLabel} [negative probe: ${JSON.stringify(candidate)}]`);
+        }
+      };
+
+      await probeDisabledAtCurrent(`trace #${tIdx + 1} [init]`);
+
+      for (let sIdx = 0; sIdx < trace.steps.length; sIdx += 1) {
+        const step = trace.steps[sIdx];
+        const stepLabel = `trace #${tIdx + 1} step ${sIdx + 1}/${trace.steps.length} (${JSON.stringify(step.action)})`;
+
+        await adapter.execute(impl, step.action, currentSpec);
+        currentSpec = step.state;
+        enabledStepsVerified += 1;
+        coveredStateKeys.add(lts.serialize(currentSpec));
+
+        const observed = adapter.observe(impl);
+        if (!statesMatch(currentSpec, observed, step.action)) {
+          throw new Error(
+            `[Conformance:${lts.name}] Refinement mismatch at ${stepLabel}:\n  Spec:     ${JSON.stringify(currentSpec)}\n  Observed: ${JSON.stringify(observed)}`,
+          );
+        }
+        assertInvariants(observed, stepLabel);
+
+        await probeDisabledAtCurrent(stepLabel);
+      }
+    } finally {
+      if (adapter.destroyImpl) {
+        await adapter.destroyImpl(impl);
+      }
+    }
+  }
+
+  return {
+    systemName: lts.name,
+    tracesReplayed: traces.length,
+    enabledStepsVerified,
+    disabledGuardsVerified,
+    distinctStatesCovered: coveredStateKeys.size,
+  };
+}
+

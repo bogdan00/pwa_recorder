@@ -395,8 +395,9 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
     if (!audio) return;
+    const safeSec = Number.isFinite(seconds) ? seconds : 0;
     const maxDur = Number.isFinite(audio.duration) ? audio.duration : duration;
-    const clamped = Math.max(0, Math.min(seconds, maxDur));
+    const clamped = Math.max(0, Math.min(safeSec, Math.max(0, maxDur)));
     try {
       audio.currentTime = clamped;
     } catch {
@@ -462,6 +463,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
 
   const setSleepTimer = useCallback(
     (mode: SleepTimerMode) => {
+      if (mode !== 'off' && chaptersRef.current.length === 0) return;
       clearSleepInterval();
       setSleepTimerModeState(mode);
       if (audioRef.current) audioRef.current.volume = 1;
@@ -687,7 +689,9 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       setPlaybackRate,
       cyclePlaybackRate,
       setSleepTimer,
-      expandPlayer: () => setIsExpanded(true),
+      expandPlayer: () => {
+        if (chaptersRef.current.length > 0) setIsExpanded(true);
+      },
       collapsePlayer: () => setIsExpanded(false),
       closePlayer,
       pauseForRecording,

@@ -306,9 +306,13 @@ export async function pullSingleBookFolderFromDrive(
   let coverUpdatedAt = existingLocal?.coverUpdatedAt ?? remoteMeta.coverUpdatedAt;
 
   if (coverFile) {
+    const remoteCoverTs = remoteMeta.coverUpdatedAt ?? 0;
+    const localCoverTs = existingLocal?.coverUpdatedAt ?? 0;
     const needsCoverDownload =
       !existingLocal?.hasCover ||
-      (remoteMeta.coverUpdatedAt ?? 0) > (existingLocal.coverUpdatedAt ?? 0);
+      remoteCoverTs > localCoverTs ||
+      (remoteCoverTs === localCoverTs &&
+        coverFile.id > (existingLocal.driveCoverFileId ?? ''));
     if (needsCoverDownload) {
       try {
         const coverBlob = await client.downloadFileBlob(coverFile.id);
