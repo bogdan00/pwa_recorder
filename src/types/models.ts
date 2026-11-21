@@ -104,6 +104,16 @@ export interface AppSettings {
   audioDevice: AudioDeviceSettings;
 }
 
+export interface ImportedBookSource {
+  folderId: string;
+  sourceTitle?: string;
+  sourceProjectId?: string;
+  importedByEmail?: string;
+  importedAt: number;
+  lastMirrorSyncAt?: number;
+  sourceUnavailable?: boolean;
+}
+
 export interface BookProject {
   id: string;
   title: string;
@@ -122,6 +132,7 @@ export interface BookProject {
   driveCoverFileId?: string;
   isShared?: boolean;
   accessRole?: ShareAccessRole;
+  importedFrom?: ImportedBookSource;
   deletedRecordingIds?: string[];
   syncStatus: SyncStatus;
   syncError?: string;
@@ -132,6 +143,7 @@ export interface BookProject {
 export interface Recording {
   id: string;
   projectId: string;
+  sourceRecordingId?: string;
   name: string;
   notes: string;
   recordedBy?: string;
@@ -201,6 +213,7 @@ export interface DriveProjectMetadataFile {
   coverFileName?: string;
   coverMimeType?: string;
   coverUpdatedAt?: number;
+  importedFrom?: ImportedBookSource;
   deletedRecordingIds?: string[];
   createdAt: number;
   updatedAt: number;
@@ -208,6 +221,7 @@ export interface DriveProjectMetadataFile {
     Pick<
       Recording,
       | 'id'
+      | 'sourceRecordingId'
       | 'name'
       | 'notes'
       | 'recordedBy'

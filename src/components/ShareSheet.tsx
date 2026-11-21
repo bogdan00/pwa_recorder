@@ -626,7 +626,9 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
                             Listener (Listen Only)
                           </span>
                           <span className="share-role-option__sub">
-                            Play &amp; download chapters safely
+                            {scope === 'book'
+                              ? 'Listen or import a synced copy to their library'
+                              : 'Play & download chapters safely'}
                           </span>
                         </button>
                       </div>

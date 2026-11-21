@@ -540,17 +540,31 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                       coverUpdatedAt={project.coverUpdatedAt}
                       progressRatio={progressRatio}
                     />
-                    {project.isShared && (
+                    {project.importedFrom ? (
                       <span
-                        className="book-card__shared-dot"
+                        className="book-card__imported-dot"
                         title={
-                          project.accessRole === 'reader'
-                            ? 'Shared book (Listener)'
-                            : 'Shared book (Co-Narrator)'
+                          project.importedFrom.sourceUnavailable
+                            ? 'Imported copy (original source unavailable)'
+                            : 'Imported copy (mirrors updates when synced)'
                         }
+                        data-testid={`book-imported-dot-${project.id}`}
                       >
-                        <Users size={11} />
+                        <Download size={11} />
                       </span>
+                    ) : (
+                      project.isShared && (
+                        <span
+                          className="book-card__shared-dot"
+                          title={
+                            project.accessRole === 'reader'
+                              ? 'Shared book (Listener)'
+                              : 'Shared book (Co-Narrator)'
+                          }
+                        >
+                          <Users size={11} />
+                        </span>
+                      )
                     )}
                     {project.syncStatus === 'synced' && !hasPending && (
                       <span

@@ -292,6 +292,39 @@ export class DriveClient {
     });
   }
 
+  /**
+   * Server-side Google Drive file copy (avoids downloading & re-uploading large audio files).
+   */
+  async copyFile(
+    sourceFileId: string,
+    name: string,
+    parentId: string,
+  ): Promise<DriveFileSummary> {
+    return this.requestJson<DriveFileSummary>(
+      `${DRIVE_API_BASE}/files/${encodeURIComponent(sourceFileId)}/copy?fields=${UPLOAD_SUMMARY_FIELDS}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          parents: [parentId],
+        }),
+      },
+    );
+  }
+
+  /**
+   * Moves a Google Drive file or folder to the trash (safe, non-permanent removal).
+   */
+  async trashFile(fileId: string): Promise<void> {
+    await this.request(`${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: true }),
+      ignore404: true,
+    });
+  }
+
   // ============================================================================
   // Multi-User Collaboration & Sharing (Google Drive Permissions API v3)
   // ============================================================================

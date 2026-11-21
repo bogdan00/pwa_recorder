@@ -15,6 +15,7 @@ interface MockDriveState {
       parents?: string[];
       ownedByMe?: boolean;
       shared?: boolean;
+      trashed?: boolean;
       capabilities?: { canEdit?: boolean; canAddChildren?: boolean; canShare?: boolean };
       content?: unknown;
       binary?: Buffer;
@@ -419,6 +420,48 @@ async function installMockDriveBackend(
       });
     }
 
+    // Server-side file copy (POST /drive/v3/files/:id/copy)
+    const copyMatch = url.match(/\/drive\/v3\/files\/([^/?]+)\/copy/);
+    if (method === 'POST' && copyMatch) {
+      const sourceId = decodeURIComponent(copyMatch[1]);
+      const source = state.driveFiles.get(sourceId);
+      if (!source || source.trashed) {
+        return route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { message: 'Source file not found' } }),
+        });
+      }
+      const body = JSON.parse(req.postData() || '{}') as {
+        name?: string;
+        parents?: string[];
+      };
+      const copiedId = `drive-copy-${++idSeq}`;
+      const parentId = body.parents?.[0];
+      if (parentId) state.writeAttemptsById.push(parentId);
+      state.driveFiles.set(copiedId, {
+        id: copiedId,
+        name: body.name || source.name,
+        mimeType: source.mimeType,
+        parents: body.parents ?? ['root'],
+        ownedByMe: true,
+        shared: false,
+        content: source.content,
+        binary: source.binary,
+        capabilities: { canEdit: true, canAddChildren: true, canShare: true },
+      });
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: copiedId,
+          name: body.name || source.name,
+          mimeType: source.mimeType,
+          size: source.binary ? String(source.binary.byteLength) : undefined,
+        }),
+      });
+    }
+
     // Single file metadata lookup / verifyFileExists
     const fileMetaMatch = url.match(/\/drive\/v3\/files\/([^/?]+)(?:\?|$)/);
     if (method === 'GET' && fileMetaMatch) {
@@ -445,7 +488,7 @@ async function installMockDriveBackend(
           });
         }
       }
-      if (!entry) {
+      if (!entry || entry.trashed) {
         return route.fulfill({
           status: 404,
           contentType: 'application/json',
@@ -459,7 +502,7 @@ async function installMockDriveBackend(
           id: entry.id,
           name: entry.name,
           mimeType: entry.mimeType,
-          trashed: false,
+          trashed: Boolean(entry.trashed),
           ownedByMe: entry.ownedByMe ?? true,
           shared: entry.shared ?? false,
           capabilities: entry.capabilities ?? {
@@ -471,13 +514,19 @@ async function installMockDriveBackend(
       });
     }
 
-    // Rename / PATCH file metadata
+    // Rename / trash / PATCH file metadata
     if (method === 'PATCH' && fileMetaMatch) {
       const fileId = decodeURIComponent(fileMetaMatch[1]);
       state.writeAttemptsById.push(fileId);
-      const body = JSON.parse(req.postData() || '{}') as { name?: string };
+      const body = JSON.parse(req.postData() || '{}') as {
+        name?: string;
+        trashed?: boolean;
+      };
       const entry = state.driveFiles.get(fileId);
-      if (entry && body.name) entry.name = body.name;
+      if (entry) {
+        if (body.name) entry.name = body.name;
+        if (typeof body.trashed === 'boolean') entry.trashed = body.trashed;
+      }
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -535,6 +584,7 @@ async function installMockDriveBackend(
 
       const matches = Array.from(state.driveFiles.values())
         .filter((f) => {
+          if (f.trashed) return false;
           if (parentId && !(f.parents ?? []).includes(parentId)) return false;
           if (wantedName && f.name !== wantedName) return false;
           return true;
@@ -1142,5 +1192,436 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     // Verify ZERO write attempts were ever sent to the read-only Drive folder!
     expect(state.writeAttemptsById).not.toContain(roBookFolderId);
     expect(state.writeAttemptsById).not.toContain(roMetaId);
+  });
+
+  test('imports a colleague finished book copy into library, mirrors new chapters on sync, survives source revocation, and detaches to editable', async ({
+    page,
+  }) => {
+    const ch1Audio = createSilentWavBuffer(1.2);
+    const ch2Audio = createSilentWavBuffer(1.2);
+    const colleagueFolderId = 'colleague-book-1';
+    const colleagueMetaId = 'colleague-meta-1';
+    const colleagueAudio1Id = 'colleague-audio-1';
+    const colleagueAudio2Id = 'colleague-audio-2';
+
+    const state: MockDriveState = {
+      driveFiles: new Map([
+        [
+          colleagueFolderId,
+          {
+            id: colleagueFolderId,
+            name: 'Dragon Stories',
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: ['colleague-root'],
+            ownedByMe: false,
+            shared: true,
+            capabilities: {
+              canEdit: false,
+              canAddChildren: false,
+              canShare: false,
+            },
+          },
+        ],
+        [
+          colleagueMetaId,
+          {
+            id: colleagueMetaId,
+            name: 'project.json',
+            mimeType: 'application/json',
+            parents: [colleagueFolderId],
+            ownedByMe: false,
+            shared: true,
+            content: {
+              schemaVersion: 1,
+              id: 'book-colleague-dragon',
+              title: 'Dragon Stories',
+              author: 'Alex',
+              narrator: 'Alex',
+              dedicatedTo: '',
+              description: 'Finished bedtime dragon stories.',
+              language: 'English',
+              tags: ['Fantasy'],
+              coverColor: '#3D6352',
+              createdAt: 1700000000000,
+              updatedAt: 1700000001000,
+              recordings: [
+                {
+                  id: 'colleague-rec-1',
+                  name: 'The Silver Egg',
+                  notes: '',
+                  recordedBy: 'Alex',
+                  orderIndex: 0,
+                  durationMs: 1200,
+                  mimeType: 'audio/wav',
+                  extension: 'wav',
+                  sampleRate: 8000,
+                  channels: 1,
+                  fileSizeBytes: ch1Audio.byteLength,
+                  peaks: [0.3, 0.7, 0.5],
+                  driveFileId: colleagueAudio1Id,
+                  driveFileName: '01 - The Silver Egg.wav',
+                  createdAt: 1700000000500,
+                  updatedAt: 1700000000500,
+                },
+              ],
+            },
+          },
+        ],
+        [
+          colleagueAudio1Id,
+          {
+            id: colleagueAudio1Id,
+            name: '01 - The Silver Egg.wav',
+            mimeType: 'audio/wav',
+            parents: [colleagueFolderId],
+            ownedByMe: false,
+            shared: true,
+            binary: ch1Audio,
+          },
+        ],
+      ]),
+      permissions: new Map(),
+      unlockedFolders: new Set(), // Requires Google Picker unlock first under drive.file
+      pushedManifests: [],
+      writeAttemptsById: [],
+    };
+
+    await stubGoogleIdentity(page, {
+      withPicker: { folderId: colleagueFolderId, name: 'Dragon Stories' },
+    });
+    await installMockDriveBackend(
+      page,
+      { displayName: 'Dad', emailAddress: 'dad@example.com' },
+      state,
+    );
+
+    // 1. Open colleague's single-book Listener invite link
+    await page.goto(
+      `./#/join?folderId=${colleagueFolderId}&name=Dragon%20Stories&scope=book&role=reader`,
+    );
+
+    const joinModal = page.getByTestId('join-share-modal');
+    await expect(joinModal).toBeVisible();
+    await expect(page.getByTestId('join-book-mode-selector')).toBeVisible();
+    await expect(page.locator('#join-mode-import')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+
+    // Connect Drive -> try import -> Picker unlock -> completes server-side copy into own library
+    await page.locator('#join-connect-drive-btn').click();
+    await expect(page.locator('#join-confirm-btn')).toContainText(
+      'Import to My Library',
+    );
+    await page.locator('#join-confirm-btn').click();
+    await expect(page.locator('#join-google-picker-btn')).toBeVisible();
+    await page.locator('#join-google-picker-btn').click();
+    await expect(joinModal).toBeHidden();
+
+    // Verify ZERO writes targeted colleague's original folder or files
+    expect(state.writeAttemptsById).not.toContain(colleagueFolderId);
+    expect(state.writeAttemptsById).not.toContain(colleagueMetaId);
+    expect(state.writeAttemptsById).not.toContain(colleagueAudio1Id);
+
+    // Book appears on shelf with Imported badge & Listen-only UI
+    await expect(page.getByLabel('Audiobook library')).toContainText(
+      'Dragon Stories',
+    );
+    await page.getByRole('button', { name: /Dragon Stories/i }).click();
+    await expect(page.getByTestId('book-imported-badge')).toContainText(
+      'Imported Copy',
+    );
+    await expect(page.getByTestId('project-imported-banner')).toContainText(
+      'Imported copy',
+    );
+    await expect(page.locator('#record-chapter-btn')).toBeHidden();
+    await expect(page.locator('#edit-book-btn')).toBeHidden();
+    await expect(page.locator('.rec-card__title')).toHaveText(['The Silver Egg']);
+
+    // Play copied chapter from our own Drive folder
+    await page.getByRole('button', { name: /Play The Silver Egg/i }).click();
+    await expect(page.getByTestId('mini-player-bar')).toContainText(
+      'The Silver Egg',
+    );
+
+    // 2. Colleague adds Chapter 2 upstream -> tap Updates to mirror delta into our copy
+    state.driveFiles.set(colleagueAudio2Id, {
+      id: colleagueAudio2Id,
+      name: '02 - The Ember Bridge.wav',
+      mimeType: 'audio/wav',
+      parents: [colleagueFolderId],
+      ownedByMe: false,
+      shared: true,
+      binary: ch2Audio,
+    });
+    const metaEntry = state.driveFiles.get(colleagueMetaId)!;
+    const prevMeta = metaEntry.content as {
+      updatedAt: number;
+      recordings: Array<Record<string, unknown>>;
+    };
+    metaEntry.content = {
+      ...prevMeta,
+      updatedAt: 1700000005000,
+      recordings: [
+        ...prevMeta.recordings,
+        {
+          id: 'colleague-rec-2',
+          name: 'The Ember Bridge',
+          notes: 'Bonus chapter',
+          recordedBy: 'Alex',
+          orderIndex: 1,
+          durationMs: 1200,
+          mimeType: 'audio/wav',
+          extension: 'wav',
+          sampleRate: 8000,
+          channels: 1,
+          fileSizeBytes: ch2Audio.byteLength,
+          peaks: [0.5, 0.8, 0.4],
+          driveFileId: colleagueAudio2Id,
+          driveFileName: '02 - The Ember Bridge.wav',
+          createdAt: 1700000004000,
+          updatedAt: 1700000004000,
+        },
+      ],
+    };
+
+    await page.locator('#sync-book-btn').click();
+    await expect(page.locator('.rec-card__title')).toHaveText([
+      'The Silver Egg',
+      'The Ember Bridge',
+    ]);
+    expect(state.writeAttemptsById).not.toContain(colleagueFolderId);
+
+    // 3. Colleague revokes access (404) -> sync succeeds, copy stays intact with both chapters
+    state.unlockedFolders.delete(colleagueFolderId);
+    await page.locator('#sync-book-btn').click();
+    await expect(page.getByTestId('book-imported-badge')).toContainText(
+      'Source Unavailable',
+    );
+    await expect(page.locator('.rec-card__title')).toHaveText([
+      'The Silver Egg',
+      'The Ember Bridge',
+    ]);
+
+    // 4. Detach & Make Editable unlocks Record Chapter & Edit
+    await page.locator('#detach-imported-book-btn').click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-confirm').click();
+    await expect(page.getByTestId('book-imported-badge')).toBeHidden();
+    await expect(page.locator('#record-chapter-btn')).toBeVisible();
+    await expect(page.locator('#edit-book-btn')).toBeVisible();
+  });
+
+  test('family co-narrator syncing shared library automatically receives colleague book imported by spouse with zero Picker prompts, and Remove Copy trashes only the family copy', async ({
+    page,
+  }) => {
+    const ch1Audio = createSilentWavBuffer(1.2);
+    const ch2Audio = createSilentWavBuffer(1.2);
+    const familyLibId = 'family-lib-root-9';
+    const copiedBookFolderId = 'family-copied-dragon-1';
+    const copiedMetaId = 'family-copied-dragon-meta-1';
+    const copiedAudio1Id = 'family-copied-audio-1';
+    const copiedAudio2Id = 'family-copied-audio-2';
+    const colleagueFolderId = 'colleague-private-book-9';
+
+    const state: MockDriveState = {
+      driveFiles: new Map([
+        [
+          familyLibId,
+          {
+            id: familyLibId,
+            name: 'Family Audiobooks',
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: ['dad-root'],
+            ownedByMe: false,
+            shared: true,
+            capabilities: {
+              canEdit: true,
+              canAddChildren: true,
+              canShare: false,
+            },
+          },
+        ],
+        [
+          copiedBookFolderId,
+          {
+            id: copiedBookFolderId,
+            name: 'Dragon Stories',
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: [familyLibId],
+            ownedByMe: false,
+            shared: true,
+            capabilities: {
+              canEdit: true,
+              canAddChildren: true,
+              canShare: false,
+            },
+          },
+        ],
+        [
+          copiedMetaId,
+          {
+            id: copiedMetaId,
+            name: 'project.json',
+            mimeType: 'application/json',
+            parents: [copiedBookFolderId],
+            ownedByMe: false,
+            shared: true,
+            content: {
+              schemaVersion: 1,
+              id: 'book-family-copy-dragon',
+              title: 'Dragon Stories',
+              author: 'Alex',
+              narrator: 'Alex',
+              dedicatedTo: '',
+              description: 'Imported from work colleague.',
+              language: 'English',
+              tags: ['Fantasy'],
+              coverColor: '#3D6352',
+              importedFrom: {
+                folderId: colleagueFolderId,
+                sourceTitle: 'Dragon Stories',
+                sourceProjectId: 'colleague-orig-id',
+                importedByEmail: 'dad@example.com',
+                importedAt: 1700000000000,
+                lastMirrorSyncAt: 1700000005000,
+                sourceUnavailable: false,
+              },
+              createdAt: 1700000000000,
+              updatedAt: 1700000005000,
+              recordings: [
+                {
+                  id: 'copy-rec-1',
+                  sourceRecordingId: 'colleague-rec-1',
+                  name: 'The Silver Egg',
+                  notes: '',
+                  recordedBy: 'Alex',
+                  orderIndex: 0,
+                  durationMs: 1200,
+                  mimeType: 'audio/wav',
+                  extension: 'wav',
+                  sampleRate: 8000,
+                  channels: 1,
+                  fileSizeBytes: ch1Audio.byteLength,
+                  peaks: [0.3, 0.7],
+                  driveFileId: copiedAudio1Id,
+                  driveFileName: '01 - The Silver Egg.wav',
+                  createdAt: 1700000001000,
+                  updatedAt: 1700000001000,
+                },
+                {
+                  id: 'copy-rec-2',
+                  sourceRecordingId: 'colleague-rec-2',
+                  name: 'The Ember Bridge',
+                  notes: '',
+                  recordedBy: 'Alex',
+                  orderIndex: 1,
+                  durationMs: 1200,
+                  mimeType: 'audio/wav',
+                  extension: 'wav',
+                  sampleRate: 8000,
+                  channels: 1,
+                  fileSizeBytes: ch2Audio.byteLength,
+                  peaks: [0.5, 0.8],
+                  driveFileId: copiedAudio2Id,
+                  driveFileName: '02 - The Ember Bridge.wav',
+                  createdAt: 1700000004000,
+                  updatedAt: 1700000004000,
+                },
+              ],
+            },
+          },
+        ],
+        [
+          copiedAudio1Id,
+          {
+            id: copiedAudio1Id,
+            name: '01 - The Silver Egg.wav',
+            mimeType: 'audio/wav',
+            parents: [copiedBookFolderId],
+            ownedByMe: false,
+            shared: true,
+            binary: ch1Audio,
+          },
+        ],
+        [
+          copiedAudio2Id,
+          {
+            id: copiedAudio2Id,
+            name: '02 - The Ember Bridge.wav',
+            mimeType: 'audio/wav',
+            parents: [copiedBookFolderId],
+            ownedByMe: false,
+            shared: true,
+            binary: ch2Audio,
+          },
+        ],
+        // Colleague's original book is NOT shared with Wife and NOT in unlockedFolders
+        [
+          colleagueFolderId,
+          {
+            id: colleagueFolderId,
+            name: 'Dragon Stories',
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: ['colleague-root'],
+            ownedByMe: false,
+            shared: true,
+            capabilities: {
+              canEdit: false,
+              canAddChildren: false,
+              canShare: false,
+            },
+          },
+        ],
+      ]),
+      permissions: new Map(),
+      unlockedFolders: new Set([familyLibId]), // Only Family Library is unlocked for Wife
+      pushedManifests: [],
+      writeAttemptsById: [],
+    };
+
+    await stubGoogleIdentity(page);
+    await installMockDriveBackend(
+      page,
+      { displayName: 'Wife', emailAddress: 'wife@example.com' },
+      state,
+    );
+
+    // Wife connects to Family Audiobooks -> sees Dragon Stories + both chapters automatically!
+    await page.goto(
+      `./#/join?folderId=${familyLibId}&name=Family%20Audiobooks&scope=library&role=writer`,
+    );
+    await page.locator('#join-connect-drive-btn').click();
+    await page.locator('#join-confirm-btn').click();
+    await expect(page.getByTestId('join-share-modal')).toBeHidden();
+
+    await expect(page.getByLabel('Audiobook library')).toContainText(
+      'Dragon Stories',
+    );
+    await page.getByRole('button', { name: /Dragon Stories/i }).click();
+    await expect(page.getByTestId('book-imported-badge')).toContainText(
+      'Imported Copy',
+    );
+    await expect(page.locator('.rec-card__title')).toHaveText([
+      'The Silver Egg',
+      'The Ember Bridge',
+    ]);
+
+    // Wife plays Chapter 2 seamlessly from Family Library without colleague access
+    await page.getByRole('button', { name: /Play The Ember Bridge/i }).click();
+    await expect(page.getByTestId('mini-player-bar')).toContainText(
+      'The Ember Bridge',
+    );
+
+    // Remove Copy trashes ONLY the copied family folder, never touching colleague's original
+    await page.locator('#remove-imported-book-btn').click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-confirm').click();
+    await expect(page.getByLabel('Audiobook library')).not.toBeVisible();
+    await expect(page.getByText('Start Your First Audiobook')).toBeVisible();
+
+    expect(state.driveFiles.get(copiedBookFolderId)?.trashed).toBe(true);
+    expect(state.driveFiles.get(colleagueFolderId)?.trashed).toBeFalsy();
+    expect(state.writeAttemptsById).not.toContain(colleagueFolderId);
   });
 });

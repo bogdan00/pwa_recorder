@@ -3,11 +3,15 @@ import {
   ArrowLeft,
   Cloud,
   CloudUpload,
+  Download,
   Headphones,
   Loader2,
   Mic,
   Pencil,
+  RefreshCw,
   Share2,
+  Trash2,
+  Unlock,
   Users,
 } from 'lucide-react';
 import type {
@@ -18,6 +22,7 @@ import type {
 import { usePlayer } from '../player/PlayerContext';
 import { formatBookNarrators, formatHumanDuration } from '../utils/format';
 import { BookCover } from '../components/BookCover';
+import { useConfirm } from '../components/ConfirmDialogContext';
 import { RecordingCard } from '../components/RecordingCard';
 import './ProjectDetailView.css';
 
@@ -42,6 +47,8 @@ interface ProjectDetailViewProps {
   onDeleteLocalMaster: (recordingId: string) => Promise<void>;
   onShareRecording: (recording: Recording) => Promise<void>;
   onDeleteRecording: (recordingId: string) => Promise<void>;
+  onDetachImportedBook?: () => Promise<void>;
+  onRemoveImportedBook?: () => Promise<void>;
 }
 
 export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
@@ -65,12 +72,17 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   onDeleteLocalMaster,
   onShareRecording,
   onDeleteRecording,
+  onDetachImportedBook,
+  onRemoveImportedBook,
 }) => {
   const player = usePlayer();
+  const confirm = useConfirm();
   const totalMs = recordings.reduce((acc, r) => acc + r.durationMs, 0);
   const derivedNarrator = formatBookNarrators(recordings);
   const completedIds = new Set(progress?.completedRecordingIds ?? []);
-  const isReadOnly = project.accessRole === 'reader';
+  const isImported = Boolean(project.importedFrom);
+  const isDriveReadOnly = project.accessRole === 'reader';
+  const isReadOnly = isDriveReadOnly || isImported;
 
   const hasPendingSync =
     !isReadOnly &&
@@ -114,10 +126,17 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 className="btn btn-secondary btn-sm"
                 onClick={onSyncProject}
                 disabled={isSyncing}
-                aria-label="Sync book to Google Drive"
+                id="sync-book-btn"
+                aria-label={
+                  isImported
+                    ? 'Check for updates from source book'
+                    : 'Sync book to Google Drive'
+                }
               >
                 {isSyncing ? (
                   <Loader2 size={14} className="spin" />
+                ) : isImported ? (
+                  <RefreshCw size={14} />
                 ) : hasPendingSync ? (
                   <CloudUpload size={14} />
                 ) : (
@@ -125,11 +144,13 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 )}
                 {isSyncing
                   ? 'Syncing'
-                  : isReadOnly
-                    ? 'Refresh'
-                    : hasPendingSync
-                      ? 'Sync'
-                      : 'Synced'}
+                  : isImported
+                    ? 'Updates'
+                    : isDriveReadOnly
+                      ? 'Refresh'
+                      : hasPendingSync
+                        ? 'Sync'
+                        : 'Synced'}
               </button>
             )}
 
@@ -183,15 +204,31 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               </div>
             )}
 
-            {project.isShared && (
+            {(isImported || project.isShared) && (
               <div className="project-hero__tags">
-                <span
-                  className={`badge ${isReadOnly ? 'badge-amber' : 'badge-sage'}`}
-                  data-testid="book-shared-role-badge"
-                >
-                  <Users size={11} />
-                  {isReadOnly ? 'Shared · Listener' : 'Shared · Co-Narrator'}
-                </span>
+                {isImported ? (
+                  <span
+                    className={`badge ${
+                      project.importedFrom?.sourceUnavailable
+                        ? 'badge-amber'
+                        : 'badge-sage'
+                    }`}
+                    data-testid="book-imported-badge"
+                  >
+                    <Download size={11} />
+                    {project.importedFrom?.sourceUnavailable
+                      ? 'Imported · Source Unavailable'
+                      : 'Imported Copy'}
+                  </span>
+                ) : (
+                  <span
+                    className={`badge ${isDriveReadOnly ? 'badge-amber' : 'badge-sage'}`}
+                    data-testid="book-shared-role-badge"
+                  >
+                    <Users size={11} />
+                    {isDriveReadOnly ? 'Shared · Listener' : 'Shared · Co-Narrator'}
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -201,14 +238,104 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
           <p className="project-hero__desc">{project.description}</p>
         )}
 
-        {isReadOnly && (
-          <div className="project-readonly-banner" role="status">
-            <Headphones size={16} />
-            <span>
-              <strong>Listener mode</strong> — This shared book is read-only. You
-              can listen, stream, and download chapters anytime.
-            </span>
+        {isImported ? (
+          <div
+            className={`project-imported-banner ${
+              project.importedFrom?.sourceUnavailable
+                ? 'project-imported-banner--unavailable'
+                : ''
+            }`}
+            role="status"
+            data-testid="project-imported-banner"
+          >
+            <div className="project-imported-banner__text">
+              <Download size={16} />
+              <span>
+                {project.importedFrom?.sourceUnavailable ? (
+                  <>
+                    <strong>Original source unavailable</strong> — The shared
+                    source folder can no longer be reached, but your copied
+                    audiobook stays safely stored in your library.
+                  </>
+                ) : (
+                  <>
+                    <strong>Imported copy</strong> — Stored in your library so
+                    everyone sharing your library can listen. New chapters
+                    mirror automatically when you sync.
+                  </>
+                )}
+              </span>
+            </div>
+            {!isDriveReadOnly && (onDetachImportedBook || onRemoveImportedBook) && (
+              <div className="project-imported-banner__actions">
+                {onDetachImportedBook && (
+                  <button
+                    type="button"
+                    id="detach-imported-book-btn"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() =>
+                      confirm({
+                        title: 'Detach & Make Editable?',
+                        description: (
+                          <>
+                            Stop mirroring updates from the original creator for{' '}
+                            <strong>{project.title}</strong> and unlock
+                            recording and editing on your copy?
+                          </>
+                        ),
+                        confirmLabel: 'Make Editable',
+                        tone: 'warning',
+                        onConfirm: async () => {
+                          await onDetachImportedBook();
+                        },
+                      })
+                    }
+                  >
+                    <Unlock size={13} />
+                    Make Editable
+                  </button>
+                )}
+                {onRemoveImportedBook && (
+                  <button
+                    type="button"
+                    id="remove-imported-book-btn"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() =>
+                      confirm({
+                        title: 'Remove Imported Copy?',
+                        description: (
+                          <>
+                            Remove your copied version of{' '}
+                            <strong>{project.title}</strong> from your library
+                            and Google Drive? The original creator&apos;s book
+                            will not be affected.
+                          </>
+                        ),
+                        confirmLabel: 'Remove Copy',
+                        tone: 'danger',
+                        onConfirm: async () => {
+                          await onRemoveImportedBook();
+                        },
+                      })
+                    }
+                  >
+                    <Trash2 size={13} />
+                    Remove Copy
+                  </button>
+                )}
+              </div>
+            )}
           </div>
+        ) : (
+          isDriveReadOnly && (
+            <div className="project-readonly-banner" role="status">
+              <Headphones size={16} />
+              <span>
+                <strong>Listener mode</strong> — This shared book is read-only.
+                You can listen, stream, and download chapters anytime.
+              </span>
+            </div>
+          )
         )}
 
         {/* Primary Listen + Record CTAs */}

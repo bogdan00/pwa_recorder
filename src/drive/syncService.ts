@@ -4,6 +4,7 @@ import type {
   DriveAccessProposal,
   DriveCollaboratorPermission,
   DriveProjectMetadataFile,
+  ImportedBookSource,
   Recording,
   ShareAccessRole,
 } from '../types/models';
@@ -22,6 +23,7 @@ import {
 } from '../storage/db';
 import {
   buildChapterDriveFileName,
+  createId,
   sanitizeFileName,
 } from '../utils/format';
 import {
@@ -220,6 +222,7 @@ function buildMetadataPayload(
     coverFileName: project.hasCover ? COVER_FILENAME : undefined,
     coverMimeType: project.coverMimeType,
     coverUpdatedAt: project.coverUpdatedAt,
+    importedFrom: project.importedFrom,
     deletedRecordingIds: project.deletedRecordingIds?.length
       ? project.deletedRecordingIds
       : undefined,
@@ -227,6 +230,7 @@ function buildMetadataPayload(
     updatedAt: project.updatedAt,
     recordings: recordings.map((rec) => ({
       id: rec.id,
+      sourceRecordingId: rec.sourceRecordingId,
       name: rec.name,
       notes: rec.notes,
       recordedBy: rec.recordedBy,
@@ -347,6 +351,7 @@ export async function pullSingleBookFolderFromDrive(
       driveCoverFileId: coverFile?.id ?? existingLocal?.driveCoverFileId,
       isShared,
       accessRole: detectedRole,
+      importedFrom: remoteMeta.importedFrom,
       deletedRecordingIds: mergedDeletedIds.length ? mergedDeletedIds : undefined,
       syncStatus:
         existingLocal?.syncStatus === 'pending_upload' && detectedRole !== 'reader'
@@ -394,6 +399,7 @@ export async function pullSingleBookFolderFromDrive(
       const imported: Recording = {
         id: remoteRec.id,
         projectId: remoteMeta.id,
+        sourceRecordingId: remoteRec.sourceRecordingId,
         name: remoteRec.name,
         notes: remoteRec.notes || '',
         recordedBy: remoteRec.recordedBy,
@@ -419,6 +425,7 @@ export async function pullSingleBookFolderFromDrive(
     } else if (shouldPreferRemoteRecordingMeta(localRec, remoteRec)) {
       await putRecording({
         ...localRec,
+        sourceRecordingId: remoteRec.sourceRecordingId ?? localRec.sourceRecordingId,
         name: remoteRec.name,
         notes: remoteRec.notes || '',
         recordedBy: remoteRec.recordedBy ?? localRec.recordedBy,
@@ -428,10 +435,14 @@ export async function pullSingleBookFolderFromDrive(
         updatedAt: remoteRec.updatedAt,
       });
       didUpdate = true;
-    } else if (!localRec.driveFileId && remoteRec.driveFileId) {
+    } else if (
+      (!localRec.driveFileId && remoteRec.driveFileId) ||
+      (!localRec.sourceRecordingId && remoteRec.sourceRecordingId)
+    ) {
       await putRecording({
         ...localRec,
-        driveFileId: remoteRec.driveFileId,
+        driveFileId: localRec.driveFileId || remoteRec.driveFileId,
+        sourceRecordingId: localRec.sourceRecordingId || remoteRec.sourceRecordingId,
       });
     }
   }
@@ -646,6 +657,640 @@ export async function pullRemoteProjectsFromDrive(
   return { pulledProjects };
 }
 
+function isSameUserEmail(a?: string | null, b?: string | null): boolean {
+  return Boolean(a && b && a.trim().toLowerCase() === b.trim().toLowerCase());
+}
+
+/**
+ * Copies a file inside Google Drive server-side (`files.copy`) to avoid wasting
+ * mobile upload bandwidth, falling back to download + resumable upload if server-side
+ * copy is rejected (e.g., copy restriction on an upstream file).
+ */
+async function copyDriveFileWithFallback(
+  client: DriveClient,
+  sourceFileId: string,
+  name: string,
+  mimeType: string,
+  destParentId: string,
+): Promise<DriveFileSummary> {
+  try {
+    return await client.copyFile(sourceFileId, name, destParentId);
+  } catch (err) {
+    if (err instanceof DriveApiError && err.status === 401) {
+      throw err;
+    }
+    const blob = await client.downloadFileBlob(sourceFileId);
+    return client.uploadBinaryResumable(
+      name,
+      mimeType || blob.type || 'application/octet-stream',
+      destParentId,
+      blob,
+    );
+  }
+}
+
+export interface MirrorImportResult {
+  updated: boolean;
+  copiedChapters: number;
+  removedChapters: number;
+  sourceUnavailable?: boolean;
+}
+
+/**
+ * Pull-mirrors upstream changes from `project.importedFrom.folderId` into this
+ * library's own copied book folder (`project.driveFolderId`).
+ *
+ * Invariants (ADR-06):
+ * - NEVER writes to `importedFrom.folderId`.
+ * - Non-importer family members (`importedByEmail` mismatch) silently skip upstream checks.
+ * - If upstream returns 403/404, marks `sourceUnavailable: true` locally and preserves
+ *   the copied book and all chapters 100% intact.
+ */
+export async function mirrorImportedBookFromSource(
+  client: DriveClient,
+  project: BookProject,
+  options?: {
+    currentUserEmail?: string | null;
+    onProgress?: (update: SyncProgressUpdate) => void;
+  },
+): Promise<MirrorImportResult> {
+  const source = project.importedFrom;
+  if (!source?.folderId || !project.driveFolderId || project.accessRole === 'reader') {
+    return { updated: false, copiedChapters: 0, removedChapters: 0 };
+  }
+
+  // Non-importer family members simply consume the real copied files inside the shared library
+  if (
+    source.importedByEmail &&
+    options?.currentUserEmail &&
+    !isSameUserEmail(source.importedByEmail, options.currentUserEmail)
+  ) {
+    return { updated: false, copiedChapters: 0, removedChapters: 0 };
+  }
+
+  const markSourceUnavailable = async (): Promise<MirrorImportResult> => {
+    if (!source.sourceUnavailable) {
+      await putProject({
+        ...project,
+        importedFrom: {
+          ...source,
+          sourceUnavailable: true,
+        },
+      });
+    }
+    return {
+      updated: false,
+      copiedChapters: 0,
+      removedChapters: 0,
+      sourceUnavailable: true,
+    };
+  };
+
+  let sourceFolder: DriveFileSummary | null;
+  try {
+    sourceFolder = await client.verifyFileExists(source.folderId);
+  } catch (err) {
+    if (err instanceof DriveApiError && err.status === 401) throw err;
+    if (err instanceof DriveApiError && (err.status === 403 || err.status === 404)) {
+      return markSourceUnavailable();
+    }
+    throw err;
+  }
+  if (!sourceFolder) {
+    return markSourceUnavailable();
+  }
+
+  let sourceFiles: DriveFileSummary[];
+  let sourceMeta: DriveProjectMetadataFile;
+  try {
+    sourceFiles = await client.listFolderChildren(sourceFolder.id);
+    const metaFile = sourceFiles.find((f) => f.name === PROJECT_METADATA_FILENAME);
+    if (!metaFile) return markSourceUnavailable();
+    sourceMeta = await client.downloadJsonFile<DriveProjectMetadataFile>(metaFile.id);
+  } catch (err) {
+    if (err instanceof DriveApiError && err.status === 401) throw err;
+    if (err instanceof DriveApiError && (err.status === 403 || err.status === 404)) {
+      return markSourceUnavailable();
+    }
+    return markSourceUnavailable();
+  }
+
+  if (!sourceMeta?.id || !sourceMeta?.title) {
+    return markSourceUnavailable();
+  }
+
+  // Pull our own destination folder first so we never clobber concurrent family state (e.g., detach)
+  const destFolder = await client.verifyFileExists(project.driveFolderId);
+  if (destFolder) {
+    await pullSingleBookFolderFromDrive(client, destFolder, {
+      isShared: project.isShared,
+      defaultRole: project.accessRole,
+    });
+  }
+
+  const freshProject = (await getProject(project.id)) ?? project;
+  if (!freshProject.importedFrom?.folderId || !freshProject.driveFolderId) {
+    return { updated: false, copiedChapters: 0, removedChapters: 0 };
+  }
+
+  const destFolderId = freshProject.driveFolderId;
+  let didChange = false;
+  let nextProject: BookProject = { ...freshProject };
+
+  // 1. Mirror updated book metadata if upstream is newer
+  if (sourceMeta.updatedAt > freshProject.updatedAt) {
+    const safeNewTitle = sanitizeFileName(sourceMeta.title, 'Imported Book');
+    if (sourceMeta.title !== freshProject.title) {
+      await client.renameFile(destFolderId, safeNewTitle).catch(() => {});
+    }
+    nextProject = {
+      ...nextProject,
+      title: sourceMeta.title,
+      author: sourceMeta.author || '',
+      narrator: sourceMeta.narrator || '',
+      dedicatedTo: sourceMeta.dedicatedTo || '',
+      description: sourceMeta.description || '',
+      language: sourceMeta.language || '',
+      tags: Array.isArray(sourceMeta.tags) ? sourceMeta.tags : [],
+      coverColor: sourceMeta.coverColor || '#9E4736',
+    };
+    didChange = true;
+  }
+
+  // 2. Mirror cover image if added or updated upstream
+  const sourceCoverFile = sourceFiles.find(
+    (f) => f.name === (sourceMeta.coverFileName || COVER_FILENAME),
+  );
+  if (sourceCoverFile) {
+    const remoteCoverTs = sourceMeta.coverUpdatedAt ?? 0;
+    const localCoverTs = freshProject.coverUpdatedAt ?? 0;
+    if (!freshProject.hasCover || remoteCoverTs > localCoverTs) {
+      try {
+        const copiedCover = await copyDriveFileWithFallback(
+          client,
+          sourceCoverFile.id,
+          COVER_FILENAME,
+          sourceMeta.coverMimeType || 'image/jpeg',
+          destFolderId,
+        );
+        try {
+          const coverBlob = await client.downloadFileBlob(sourceCoverFile.id);
+          await putProjectCover(freshProject.id, coverBlob);
+        } catch {
+          // Local cover cache is best-effort; Drive copy succeeded
+        }
+        nextProject = {
+          ...nextProject,
+          hasCover: true,
+          coverMimeType: sourceMeta.coverMimeType || 'image/jpeg',
+          coverUpdatedAt: sourceMeta.coverUpdatedAt ?? Date.now(),
+          driveCoverFileId: copiedCover.id,
+        };
+        didChange = true;
+      } catch (err) {
+        if (err instanceof DriveApiError && err.status === 401) throw err;
+      }
+    }
+  }
+
+  // 3. Reconcile chapters by sourceRecordingId (delta copy + metadata updates + upstream tombstones)
+  const localRecs = await listProjectRecordings(freshProject.id);
+  const localBySourceId = new Map<string, Recording>();
+  for (const r of localRecs) {
+    if (r.sourceRecordingId) {
+      localBySourceId.set(r.sourceRecordingId, r);
+    }
+  }
+
+  const sourceDeletedSet = new Set(sourceMeta.deletedRecordingIds ?? []);
+  let mergedDeletedIds = freshProject.deletedRecordingIds ?? [];
+  let removedChapters = 0;
+
+  for (const localRec of localRecs) {
+    if (localRec.sourceRecordingId && sourceDeletedSet.has(localRec.sourceRecordingId)) {
+      await deleteRecording(localRec.id);
+      if (localRec.driveFileId) {
+        await client.trashFile(localRec.driveFileId).catch(() => {});
+      }
+      mergedDeletedIds = mergeDeletedIds(mergedDeletedIds, [localRec.id]);
+      localBySourceId.delete(localRec.sourceRecordingId);
+      removedChapters += 1;
+      didChange = true;
+    }
+  }
+
+  const activeSourceRecs = (sourceMeta.recordings ?? [])
+    .filter((r) => !sourceDeletedSet.has(r.id))
+    .slice()
+    .sort((a, b) => a.orderIndex - b.orderIndex);
+
+  let copiedChapters = 0;
+  for (let i = 0; i < activeSourceRecs.length; i += 1) {
+    const srcRec = activeSourceRecs[i];
+    const existingLocalRec = localBySourceId.get(srcRec.id);
+    const desiredName = buildChapterDriveFileName(
+      srcRec.orderIndex,
+      srcRec.name,
+      srcRec.extension,
+    );
+
+    if (!existingLocalRec) {
+      const srcAudioFile =
+        sourceFiles.find((f) => f.id === srcRec.driveFileId) ||
+        sourceFiles.find((f) => f.name === srcRec.driveFileName);
+      if (!srcAudioFile) continue;
+
+      options?.onProgress?.({
+        phase: 'pulling',
+        message: `Mirroring "${srcRec.name}"…`,
+        current: i + 1,
+        total: activeSourceRecs.length,
+      });
+
+      const copiedAudio = await copyDriveFileWithFallback(
+        client,
+        srcAudioFile.id,
+        desiredName,
+        srcRec.mimeType,
+        destFolderId,
+      );
+
+      const copiedRec: Recording = {
+        id: createId('rec'),
+        projectId: freshProject.id,
+        sourceRecordingId: srcRec.id,
+        name: srcRec.name,
+        notes: srcRec.notes || '',
+        recordedBy: srcRec.recordedBy,
+        orderIndex: srcRec.orderIndex,
+        durationMs: srcRec.durationMs,
+        mimeType: srcRec.mimeType,
+        extension: srcRec.extension,
+        sampleRate: srcRec.sampleRate || 44100,
+        bitrateKbps: srcRec.bitrateKbps,
+        bitDepth: srcRec.bitDepth,
+        channels: srcRec.channels || 1,
+        deviceLabel: srcRec.deviceLabel,
+        fileSizeBytes: srcRec.fileSizeBytes || 0,
+        peaks: Array.isArray(srcRec.peaks) ? srcRec.peaks : [],
+        driveFileId: copiedAudio.id,
+        driveFileName: desiredName,
+        syncStatus: 'cloud_only',
+        createdAt: srcRec.createdAt || Date.now(),
+        updatedAt: srcRec.updatedAt || Date.now(),
+      };
+      await putRecording(copiedRec);
+      copiedChapters += 1;
+      didChange = true;
+    } else if (shouldPreferRemoteRecordingMeta(existingLocalRec, srcRec)) {
+      if (existingLocalRec.driveFileId && existingLocalRec.driveFileName !== desiredName) {
+        await client.renameFile(existingLocalRec.driveFileId, desiredName).catch(() => {});
+      }
+      await putRecording({
+        ...existingLocalRec,
+        name: srcRec.name,
+        notes: srcRec.notes || '',
+        recordedBy: srcRec.recordedBy ?? existingLocalRec.recordedBy,
+        orderIndex: srcRec.orderIndex,
+        driveFileName: desiredName,
+        updatedAt: srcRec.updatedAt,
+      });
+      didChange = true;
+    }
+  }
+
+  const now = Date.now();
+  const nextImportedFrom: ImportedBookSource = {
+    ...freshProject.importedFrom,
+    sourceTitle: sourceMeta.title,
+    sourceProjectId: sourceMeta.id,
+    lastMirrorSyncAt: now,
+    sourceUnavailable: false,
+  };
+
+  if (didChange || freshProject.importedFrom.sourceUnavailable) {
+    const finalRecs = await listProjectRecordings(freshProject.id);
+    const updatedProject: BookProject = {
+      ...nextProject,
+      importedFrom: nextImportedFrom,
+      deletedRecordingIds: mergedDeletedIds.length ? mergedDeletedIds : undefined,
+      syncStatus: 'synced',
+      syncError: undefined,
+      updatedAt: didChange
+        ? Math.max(freshProject.updatedAt + 1, sourceMeta.updatedAt, now)
+        : freshProject.updatedAt,
+    };
+
+    const manifest = buildMetadataPayload(updatedProject, finalRecs);
+    const metaSummary = await client.uploadJsonFile(
+      PROJECT_METADATA_FILENAME,
+      destFolderId,
+      manifest,
+      updatedProject.driveMetadataFileId,
+    );
+
+    await putProject({
+      ...updatedProject,
+      driveMetadataFileId: metaSummary.id,
+    });
+  } else {
+    await putProject({
+      ...freshProject,
+      importedFrom: nextImportedFrom,
+    });
+  }
+
+  return {
+    updated: didChange,
+    copiedChapters,
+    removedChapters,
+    sourceUnavailable: false,
+  };
+}
+
+export interface ImportBookResult {
+  rootFolderId: string;
+  projectId: string;
+  title: string;
+  copiedChapters: number;
+  alreadyExisted: boolean;
+}
+
+/**
+ * Imports a shared book from another user's Drive folder as a real copied subfolder
+ * inside the signed-in user's own Drive library root, recording `importedFrom` so
+ * family library co-narrators automatically receive the book and future chapter updates
+ * mirror cleanly whenever the importer syncs.
+ */
+export async function importSharedBookIntoLibrary(
+  sourceFolderId: string,
+  settings: AppSettings,
+  options?: {
+    currentUserEmail?: string | null;
+    onProgress?: (update: SyncProgressUpdate) => void;
+    clientOverride?: DriveClient;
+  },
+): Promise<ImportBookResult> {
+  return withAuthorizedClient(options?.clientOverride, async (client) => {
+    const onProgress = options?.onProgress;
+    onProgress?.({
+      phase: 'connecting',
+      message: 'Checking shared book…',
+    });
+
+    const root = await ensureRootFolder(client, settings);
+    if (root.role === 'reader') {
+      throw new Error(
+        'Your active library is read-only. Switch to a writable library to import a copy.',
+      );
+    }
+
+    const sourceFolder = await client.verifyFileExists(sourceFolderId);
+    if (!sourceFolder) {
+      throw new DriveApiError(
+        404,
+        'StoryTape does not have permission to view this folder yet.',
+      );
+    }
+
+    const sourceFiles = await client.listFolderChildren(sourceFolder.id);
+    const metaFile = sourceFiles.find((f) => f.name === PROJECT_METADATA_FILENAME);
+    if (!metaFile) {
+      throw new Error('This Google Drive folder does not contain a StoryTape book.');
+    }
+
+    let sourceMeta: DriveProjectMetadataFile;
+    try {
+      sourceMeta = await client.downloadJsonFile<DriveProjectMetadataFile>(metaFile.id);
+    } catch {
+      throw new Error('Could not read book metadata from the shared folder.');
+    }
+    if (!sourceMeta?.id || !sourceMeta?.title) {
+      throw new Error('The shared book metadata is incomplete.');
+    }
+
+    const currentUserEmail =
+      options?.currentUserEmail !== undefined
+        ? options.currentUserEmail
+        : googleAuth.getState().userEmail;
+
+    // Pull existing root library first so deduplication sees books already imported on another device
+    await pullRemoteProjectsFromDrive(client, root.id, undefined, {
+      isSharedLibrary: settings.driveLibraryMode === 'shared',
+      rootRole: root.role,
+    });
+
+    const existingProjects = await listProjects();
+    const sameDriveBook = existingProjects.find(
+      (p) => p.driveFolderId === sourceFolder.id,
+    );
+    if (sameDriveBook) {
+      return {
+        rootFolderId: root.id,
+        projectId: sameDriveBook.id,
+        title: sameDriveBook.title,
+        copiedChapters: 0,
+        alreadyExisted: true,
+      };
+    }
+
+    const existingImport = existingProjects.find(
+      (p) => p.importedFrom?.folderId === sourceFolder.id,
+    );
+    if (existingImport) {
+      const mirrorRes = await mirrorImportedBookFromSource(client, existingImport, {
+        currentUserEmail,
+        onProgress,
+      });
+      return {
+        rootFolderId: root.id,
+        projectId: existingImport.id,
+        title: existingImport.title,
+        copiedChapters: mirrorRes.copiedChapters,
+        alreadyExisted: true,
+      };
+    }
+
+    onProgress?.({
+      phase: 'pushing',
+      message: `Importing "${sourceMeta.title}" into your library…`,
+    });
+
+    const safeFolderName = sanitizeFileName(sourceMeta.title, 'Imported Book');
+    const destFolder = await client.createFolder(safeFolderName, root.id);
+    const newProjectId = createId('book');
+    const now = Date.now();
+
+    // 1. Copy cover image if present
+    let hasCover = false;
+    let coverMimeType: string | undefined;
+    let coverUpdatedAt: number | undefined;
+    let driveCoverFileId: string | undefined;
+
+    const sourceCoverFile = sourceFiles.find(
+      (f) => f.name === (sourceMeta.coverFileName || COVER_FILENAME),
+    );
+    if (sourceCoverFile) {
+      try {
+        const copiedCover = await copyDriveFileWithFallback(
+          client,
+          sourceCoverFile.id,
+          COVER_FILENAME,
+          sourceMeta.coverMimeType || 'image/jpeg',
+          destFolder.id,
+        );
+        driveCoverFileId = copiedCover.id;
+        hasCover = true;
+        coverMimeType = sourceMeta.coverMimeType || 'image/jpeg';
+        coverUpdatedAt = sourceMeta.coverUpdatedAt ?? now;
+        try {
+          const coverBlob = await client.downloadFileBlob(sourceCoverFile.id);
+          await putProjectCover(newProjectId, coverBlob);
+        } catch {
+          // Best-effort local cover cache
+        }
+      } catch (err) {
+        if (err instanceof DriveApiError && err.status === 401) throw err;
+      }
+    }
+
+    // 2. Copy all non-deleted audio chapters server-side into destination book folder
+    const sourceDeletedSet = new Set(sourceMeta.deletedRecordingIds ?? []);
+    const activeSourceRecs = (sourceMeta.recordings ?? [])
+      .filter((r) => !sourceDeletedSet.has(r.id))
+      .slice()
+      .sort((a, b) => a.orderIndex - b.orderIndex);
+
+    const copiedRecordings: Recording[] = [];
+    for (let i = 0; i < activeSourceRecs.length; i += 1) {
+      const srcRec = activeSourceRecs[i];
+      const srcAudioFile =
+        sourceFiles.find((f) => f.id === srcRec.driveFileId) ||
+        sourceFiles.find((f) => f.name === srcRec.driveFileName);
+      if (!srcAudioFile) continue;
+
+      const desiredName = buildChapterDriveFileName(
+        srcRec.orderIndex,
+        srcRec.name,
+        srcRec.extension,
+      );
+
+      onProgress?.({
+        phase: 'pushing',
+        message: `Copying "${srcRec.name}"…`,
+        current: i + 1,
+        total: activeSourceRecs.length,
+      });
+
+      const copiedAudio = await copyDriveFileWithFallback(
+        client,
+        srcAudioFile.id,
+        desiredName,
+        srcRec.mimeType,
+        destFolder.id,
+      );
+
+      const rec: Recording = {
+        id: createId('rec'),
+        projectId: newProjectId,
+        sourceRecordingId: srcRec.id,
+        name: srcRec.name,
+        notes: srcRec.notes || '',
+        recordedBy: srcRec.recordedBy,
+        orderIndex: srcRec.orderIndex,
+        durationMs: srcRec.durationMs,
+        mimeType: srcRec.mimeType,
+        extension: srcRec.extension,
+        sampleRate: srcRec.sampleRate || 44100,
+        bitrateKbps: srcRec.bitrateKbps,
+        bitDepth: srcRec.bitDepth,
+        channels: srcRec.channels || 1,
+        deviceLabel: srcRec.deviceLabel,
+        fileSizeBytes: srcRec.fileSizeBytes || 0,
+        peaks: Array.isArray(srcRec.peaks) ? srcRec.peaks : [],
+        driveFileId: copiedAudio.id,
+        driveFileName: desiredName,
+        syncStatus: 'cloud_only',
+        createdAt: srcRec.createdAt || now,
+        updatedAt: srcRec.updatedAt || now,
+      };
+      copiedRecordings.push(rec);
+    }
+
+    const importedFrom: ImportedBookSource = {
+      folderId: sourceFolder.id,
+      sourceTitle: sourceMeta.title,
+      sourceProjectId: sourceMeta.id,
+      importedByEmail: currentUserEmail ?? undefined,
+      importedAt: now,
+      lastMirrorSyncAt: now,
+      sourceUnavailable: false,
+    };
+
+    let newProject: BookProject = {
+      id: newProjectId,
+      title: sourceMeta.title,
+      author: sourceMeta.author || '',
+      narrator: sourceMeta.narrator || '',
+      dedicatedTo: sourceMeta.dedicatedTo || '',
+      description: sourceMeta.description || '',
+      language: sourceMeta.language || '',
+      tags: Array.isArray(sourceMeta.tags) ? sourceMeta.tags : [],
+      coverColor: sourceMeta.coverColor || '#9E4736',
+      hasCover,
+      coverMimeType,
+      coverUpdatedAt,
+      driveFolderId: destFolder.id,
+      driveCoverFileId,
+      isShared: settings.driveLibraryMode === 'shared',
+      accessRole: root.role,
+      importedFrom,
+      syncStatus: 'synced',
+      createdAt: now,
+      updatedAt: Math.max(now, sourceMeta.updatedAt || now),
+    };
+
+    const manifest = buildMetadataPayload(newProject, copiedRecordings);
+    const metaSummary = await client.uploadJsonFile(
+      PROJECT_METADATA_FILENAME,
+      destFolder.id,
+      manifest,
+    );
+
+    newProject = {
+      ...newProject,
+      driveMetadataFileId: metaSummary.id,
+    };
+
+    await putProject(newProject);
+    for (const rec of copiedRecordings) {
+      await putRecording(rec);
+    }
+
+    onProgress?.({
+      phase: 'done',
+      message: `Imported "${newProject.title}" into your library.`,
+    });
+
+    return {
+      rootFolderId: root.id,
+      projectId: newProject.id,
+      title: newProject.title,
+      copiedChapters: copiedRecordings.length,
+      alreadyExisted: false,
+    };
+  });
+}
+
+export function trashDriveFolder(
+  folderId: string,
+  clientOverride?: DriveClient,
+): Promise<void> {
+  return withAuthorizedClient(clientOverride, (client) =>
+    client.trashFile(folderId),
+  );
+}
+
 export async function syncAllWithDrive(
   settings: AppSettings,
   onProgress?: (update: SyncProgressUpdate) => void,
@@ -663,7 +1308,7 @@ export async function syncAllWithDrive(
     const isSharedLibrary = settings.driveLibraryMode === 'shared';
 
     // 1. PULL & MERGE FIRST so collaborator changes & new chapters are always preserved!
-    const { pulledProjects } = await pullRemoteProjectsFromDrive(
+    let { pulledProjects } = await pullRemoteProjectsFromDrive(
       client,
       root.id,
       onProgress,
@@ -674,7 +1319,34 @@ export async function syncAllWithDrive(
       },
     );
 
-    // 2. PUSH local writable projects (skipping read-only Listener books)
+    // 1.5. MIRROR UPSTREAM UPDATES for imported books (non-importer family members skip silently)
+    const currentUserEmail = googleAuth.getState().userEmail;
+    const projectsAfterPull = await listProjects();
+    for (const project of projectsAfterPull) {
+      if (
+        !project.importedFrom?.folderId ||
+        !project.driveFolderId ||
+        project.accessRole === 'reader'
+      ) {
+        continue;
+      }
+      try {
+        const mirrorRes = await mirrorImportedBookFromSource(client, project, {
+          currentUserEmail,
+          onProgress,
+        });
+        if (mirrorRes.updated) {
+          pulledProjects += 1;
+        }
+      } catch (err) {
+        if (err instanceof DriveApiError && err.status === 401) {
+          throw err;
+        }
+        // Never break overall library sync if an external source book is temporarily unreachable
+      }
+    }
+
+    // 2. PUSH local writable projects (skipping read-only Listener books and already-synced mirrored imports)
     const localProjects = await listProjects();
     let pushedProjects = 0;
     let pushedRecordings = 0;
@@ -682,6 +1354,7 @@ export async function syncAllWithDrive(
     for (const project of localProjects) {
       if (project.accessRole === 'reader') continue;
       if (root.role === 'reader' && !project.driveFolderId) continue;
+      if (project.importedFrom && project.syncStatus === 'synced') continue;
 
       try {
         const res = await pushProjectToDrive(
@@ -726,7 +1399,12 @@ export async function syncSingleProjectWithDrive(
   settings: AppSettings,
   onProgress?: (update: SyncProgressUpdate) => void,
   clientOverride?: DriveClient,
-): Promise<{ rootFolderId: string; pushedRecordings: number }> {
+): Promise<{
+  rootFolderId: string;
+  pushedRecordings: number;
+  mirroredChapters?: number;
+  sourceUnavailable?: boolean;
+}> {
   return withAuthorizedClient(clientOverride, async (client) => {
     const project = await getProject(projectId);
     const root = await ensureRootFolder(client, settings);
@@ -741,6 +1419,27 @@ export async function syncSingleProjectWithDrive(
       }
       onProgress?.({ phase: 'done', message: 'Refreshed shared book from Drive.' });
       return { rootFolderId: root.id, pushedRecordings: 0 };
+    }
+
+    if (project?.importedFrom?.folderId && project.driveFolderId) {
+      const mirrorRes = await mirrorImportedBookFromSource(client, project, {
+        currentUserEmail: googleAuth.getState().userEmail,
+        onProgress,
+      });
+      onProgress?.({
+        phase: 'done',
+        message: mirrorRes.sourceUnavailable
+          ? 'Original source is unavailable; your local copy is safe.'
+          : mirrorRes.copiedChapters > 0
+            ? `Mirrored ${mirrorRes.copiedChapters} new chapter${mirrorRes.copiedChapters === 1 ? '' : 's'}.`
+            : 'Imported book is up to date.',
+      });
+      return {
+        rootFolderId: root.id,
+        pushedRecordings: 0,
+        mirroredChapters: mirrorRes.copiedChapters,
+        sourceUnavailable: mirrorRes.sourceUnavailable,
+      };
     }
 
     const { pushedRecordings } = await pushProjectToDrive(

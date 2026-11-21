@@ -431,7 +431,8 @@
   position: relative;
 }
 
-.book-card__shared-dot {
+.book-card__shared-dot,
+.book-card__imported-dot {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -445,6 +446,10 @@
   align-items: center;
   justify-content: center;
   color: var(--accent-amber);
+}
+
+.book-card__imported-dot {
+  color: var(--accent-sage);
 }
 
 .book-card__sync-dot {

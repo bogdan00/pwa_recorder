@@ -150,6 +150,47 @@
   color: var(--accent-amber);
 }
 
+.project-imported-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--accent-sage-soft);
+  border: 1px solid var(--accent-sage-border);
+  color: var(--ink-primary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.project-imported-banner--unavailable {
+  background: var(--accent-amber-soft);
+  border-color: var(--accent-amber-border);
+}
+
+.project-imported-banner__text {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.project-imported-banner__text svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent-sage);
+}
+
+.project-imported-banner--unavailable .project-imported-banner__text svg {
+  color: var(--accent-amber);
+}
+
+.project-imported-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Primary action row */
 .project-cta-row {
   display: grid;

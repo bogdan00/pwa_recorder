@@ -3,15 +3,22 @@ import type { BookProject, DriveProjectMetadataFile, Recording } from '../../typ
 import { getDefaultSettings } from '../../storage/settings';
 import {
   getProject,
+  getProjectCover,
   getRecording,
   getRecordingBlob,
+  listProjectRecordings,
   putProject,
   putProjectCover,
   putRecording,
   resetDbConnectionForTests,
 } from '../../storage/db';
 import { DriveClient } from '../driveClient';
-import { downloadCloudRecording, syncAllWithDrive } from '../syncService';
+import {
+  downloadCloudRecording,
+  importSharedBookIntoLibrary,
+  mirrorImportedBookFromSource,
+  syncAllWithDrive,
+} from '../syncService';
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
@@ -997,5 +1004,611 @@ describe('Google Drive client & two-way syncService', () => {
       expect.objectContaining({ id: 'book-personal' }),
       'personal-meta-1',
     );
+  });
+
+  it('imports a colleague book copy server-side via files.copy, caches cover, records importedFrom, and never writes to the source folder', async () => {
+    const sourceMeta: DriveProjectMetadataFile = {
+      schemaVersion: 1,
+      id: 'colleague-book-id',
+      title: 'Dragon Stories',
+      author: 'Alex',
+      narrator: 'Alex',
+      dedicatedTo: 'Kids',
+      description: 'Bedtime dragon adventures.',
+      language: 'English',
+      tags: ['Fantasy'],
+      coverColor: '#3D6352',
+      coverFileName: 'cover.jpg',
+      coverMimeType: 'image/jpeg',
+      coverUpdatedAt: 1500,
+      createdAt: 1000,
+      updatedAt: 2000,
+      recordings: [
+        {
+          id: 'src-rec-1',
+          name: 'The Silver Egg',
+          notes: 'Chapter 1',
+          recordedBy: 'Alex',
+          orderIndex: 0,
+          durationMs: 4200,
+          mimeType: 'audio/mp4',
+          extension: 'm4a',
+          sampleRate: 48000,
+          bitrateKbps: 128,
+          channels: 1,
+          fileSizeBytes: 64,
+          peaks: [0.3, 0.7],
+          driveFileId: 'src-audio-1',
+          driveFileName: '01 - The Silver Egg.m4a',
+          createdAt: 1100,
+          updatedAt: 1100,
+        },
+        {
+          id: 'src-rec-deleted',
+          name: 'Deleted Take',
+          notes: '',
+          recordedBy: 'Alex',
+          orderIndex: 1,
+          durationMs: 1000,
+          mimeType: 'audio/mp4',
+          extension: 'm4a',
+          sampleRate: 48000,
+          channels: 1,
+          fileSizeBytes: 32,
+          peaks: [0.2],
+          driveFileId: 'src-audio-deleted',
+          driveFileName: '02 - Deleted Take.m4a',
+          createdAt: 1200,
+          updatedAt: 1200,
+        },
+      ],
+      deletedRecordingIds: ['src-rec-deleted'],
+    };
+
+    const copyCalls: Array<{ sourceId: string; name: string; parentId: string }> = [];
+    const writeTargets: string[] = [];
+    let uploadedManifest: DriveProjectMetadataFile | null = null;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method || 'GET').toUpperCase();
+
+      // Own family root folder
+      if (url.includes('/drive/v3/files/family-root-1?fields=') && method === 'GET') {
+        return jsonResponse({
+          id: 'family-root-1',
+          name: 'StoryTape Audiobooks',
+          mimeType: 'application/vnd.google-apps.folder',
+          ownedByMe: true,
+        });
+      }
+      if (url.includes('family-root-1') && url.includes('in+parents') && method === 'GET') {
+        return jsonResponse({ files: [] });
+      }
+
+      // Colleague source folder (read-only)
+      if (url.includes('/drive/v3/files/colleague-folder-1?fields=') && method === 'GET') {
+        return jsonResponse({
+          id: 'colleague-folder-1',
+          name: 'Dragon Stories',
+          mimeType: 'application/vnd.google-apps.folder',
+          ownedByMe: false,
+          shared: true,
+          capabilities: { canEdit: false, canAddChildren: false },
+        });
+      }
+      if (url.includes('colleague-folder-1') && url.includes('in+parents') && method === 'GET') {
+        return jsonResponse({
+          files: [
+            { id: 'src-meta-1', name: 'project.json', mimeType: 'application/json' },
+            { id: 'src-cover-1', name: 'cover.jpg', mimeType: 'image/jpeg' },
+            { id: 'src-audio-1', name: '01 - The Silver Egg.m4a', mimeType: 'audio/mp4' },
+          ],
+        });
+      }
+      if (url.includes('/files/src-meta-1?alt=media') && method === 'GET') {
+        return jsonResponse(sourceMeta);
+      }
+      if (url.includes('/files/src-cover-1?alt=media') && method === 'GET') {
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/jpeg' },
+        });
+      }
+
+      // Create destination folder inside family-root-1
+      if (url.includes('/drive/v3/files?fields=') && method === 'POST') {
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          name: string;
+          parents?: string[];
+        };
+        if (body.parents?.[0]) writeTargets.push(body.parents[0]);
+        return jsonResponse({
+          id: 'copied-book-folder-1',
+          name: body.name,
+          mimeType: 'application/vnd.google-apps.folder',
+          ownedByMe: true,
+        });
+      }
+
+      // Server-side copyFile
+      const copyMatch = url.match(/\/drive\/v3\/files\/([^/?]+)\/copy/);
+      if (copyMatch && method === 'POST') {
+        const sourceId = decodeURIComponent(copyMatch[1]);
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          name: string;
+          parents: string[];
+        };
+        copyCalls.push({ sourceId, name: body.name, parentId: body.parents[0] });
+        writeTargets.push(body.parents[0]);
+        return jsonResponse({
+          id: `copied-${sourceId}`,
+          name: body.name,
+          mimeType: sourceId.includes('cover') ? 'image/jpeg' : 'audio/mp4',
+        });
+      }
+
+      // Multipart upload of copied project.json
+      if (url.includes('uploadType=multipart') && method === 'POST') {
+        uploadedManifest = extractMultipartJsonPayload<DriveProjectMetadataFile>(
+          String(init?.body || ''),
+        );
+        return jsonResponse({
+          id: 'copied-meta-1',
+          name: 'project.json',
+          mimeType: 'application/json',
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    });
+
+    const client = new DriveClient('test-token');
+    const settings = {
+      ...getDefaultSettings(),
+      driveRootFolderId: 'family-root-1',
+      driveLibraryMode: 'personal' as const,
+    };
+
+    const result = await importSharedBookIntoLibrary('colleague-folder-1', settings, {
+      currentUserEmail: 'bogdan@example.com',
+      clientOverride: client,
+    });
+
+    expect(result.alreadyExisted).toBe(false);
+    expect(result.copiedChapters).toBe(1);
+    expect(result.title).toBe('Dragon Stories');
+
+    // Server-side files.copy copied cover + non-deleted chapter into copied-book-folder-1
+    expect(copyCalls).toEqual([
+      { sourceId: 'src-cover-1', name: 'cover.jpg', parentId: 'copied-book-folder-1' },
+      {
+        sourceId: 'src-audio-1',
+        name: '01 - The Silver Egg.m4a',
+        parentId: 'copied-book-folder-1',
+      },
+    ]);
+
+    // Zero writes ever hit colleague-folder-1
+    expect(writeTargets).not.toContain('colleague-folder-1');
+
+    // Local project has fresh ID, Drive ownership, importedFrom metadata, and cached cover
+    const importedProject = await getProject(result.projectId);
+    expect(importedProject).toBeTruthy();
+    expect(importedProject?.id).not.toBe('colleague-book-id');
+    expect(importedProject?.driveFolderId).toBe('copied-book-folder-1');
+    expect(importedProject?.accessRole).toBe('owner');
+    expect(importedProject?.importedFrom?.folderId).toBe('colleague-folder-1');
+    expect(importedProject?.importedFrom?.importedByEmail).toBe('bogdan@example.com');
+    expect(importedProject?.importedFrom?.sourceUnavailable).toBe(false);
+
+    const coverBlob = await getProjectCover(result.projectId);
+    expect(coverBlob).toBeTruthy();
+
+    const recs = await listProjectRecordings(result.projectId);
+    expect(recs).toHaveLength(1);
+    expect(recs[0].id).not.toBe('src-rec-1');
+    expect(recs[0].sourceRecordingId).toBe('src-rec-1');
+    expect(recs[0].driveFileId).toBe('copied-src-audio-1');
+    expect(recs[0].recordedBy).toBe('Alex');
+
+    // Uploaded manifest inside family Drive carries importedFrom and sourceRecordingId
+    expect(uploadedManifest).toBeTruthy();
+    expect((uploadedManifest as unknown as DriveProjectMetadataFile).importedFrom?.folderId).toBe(
+      'colleague-folder-1',
+    );
+    expect((uploadedManifest as unknown as DriveProjectMetadataFile).recordings[0]?.sourceRecordingId).toBe(
+      'src-rec-1',
+    );
+  });
+
+  it('falls back to download + resumable upload when server-side files.copy fails during import', async () => {
+    const sourceMeta: DriveProjectMetadataFile = {
+      schemaVersion: 1,
+      id: 'colleague-book-fallback',
+      title: 'Fallback Tale',
+      author: 'Alex',
+      narrator: 'Alex',
+      dedicatedTo: '',
+      description: '',
+      language: 'English',
+      tags: [],
+      coverColor: '#2F4562',
+      createdAt: 1000,
+      updatedAt: 2000,
+      recordings: [
+        {
+          id: 'src-fb-1',
+          name: 'Opening',
+          notes: '',
+          recordedBy: 'Alex',
+          orderIndex: 0,
+          durationMs: 2500,
+          mimeType: 'audio/mp4',
+          extension: 'm4a',
+          sampleRate: 48000,
+          channels: 1,
+          fileSizeBytes: 8,
+          peaks: [0.5],
+          driveFileId: 'src-fb-audio-1',
+          driveFileName: '01 - Opening.m4a',
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      ],
+    };
+
+    let resumableUploadCount = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method || 'GET').toUpperCase();
+
+      if (url.includes('/drive/v3/files/family-root-fb?fields=') && method === 'GET') {
+        return jsonResponse({
+          id: 'family-root-fb',
+          name: 'StoryTape Audiobooks',
+          mimeType: 'application/vnd.google-apps.folder',
+          ownedByMe: true,
+        });
+      }
+      if (url.includes('family-root-fb') && url.includes('in+parents') && method === 'GET') {
+        return jsonResponse({ files: [] });
+      }
+      if (url.includes('/drive/v3/files/colleague-fb?fields=') && method === 'GET') {
+        return jsonResponse({
+          id: 'colleague-fb',
+          name: 'Fallback Tale',
+          mimeType: 'application/vnd.google-apps.folder',
+          ownedByMe: false,
+          shared: true,
+          capabilities: { canEdit: false, canAddChildren: false },
+        });
+      }
+      if (url.includes('colleague-fb') && url.includes('in+parents') && method === 'GET') {
+        return jsonResponse({
+          files: [
+            { id: 'src-fb-meta', name: 'project.json', mimeType: 'application/json' },
+            { id: 'src-fb-audio-1', name: '01 - Opening.m4a', mimeType: 'audio/mp4' },
+          ],
+        });
+      }
+      if (url.includes('/files/src-fb-meta?alt=media') && method === 'GET') {
+        return jsonResponse(sourceMeta);
+      }
+      if (url.includes('/drive/v3/files?fields=') && method === 'POST') {
+        return jsonResponse({
+          id: 'copied-fb-folder',
+          name: 'Fallback Tale',
+          mimeType: 'application/vnd.google-apps.folder',
+          ownedByMe: true,
+        });
+      }
+      if (url.includes('/copy') && method === 'POST') {
+        return jsonResponse({ error: { message: 'Copy restricted' } }, 403);
+      }
+      if (url.includes('/files/src-fb-audio-1?alt=media') && method === 'GET') {
+        return new Response(new Uint8Array([1, 2, 3, 4]), {
+          status: 200,
+          headers: { 'Content-Type': 'audio/mp4' },
+        });
+      }
+      if (url.includes('uploadType=resumable') && method === 'POST') {
+        return new Response('', {
+          status: 200,
+          headers: { Location: 'https://upload.fallback.test/put/1' },
+        });
+      }
+      if (url === 'https://upload.fallback.test/put/1' && method === 'PUT') {
+        resumableUploadCount += 1;
+        return jsonResponse({
+          id: 'reuploaded-audio-1',
+          name: '01 - Opening.m4a',
+          mimeType: 'audio/mp4',
+        });
+      }
+      if (url.includes('uploadType=multipart') && method === 'POST') {
+        return jsonResponse({
+          id: 'copied-fb-meta',
+          name: 'project.json',
+          mimeType: 'application/json',
+        });
+      }
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    });
+
+    const client = new DriveClient('test-token');
+    const result = await importSharedBookIntoLibrary(
+      'colleague-fb',
+      { ...getDefaultSettings(), driveRootFolderId: 'family-root-fb' },
+      { currentUserEmail: 'bogdan@example.com', clientOverride: client },
+    );
+
+    expect(result.copiedChapters).toBe(1);
+    expect(resumableUploadCount).toBe(1);
+    const recs = await listProjectRecordings(result.projectId);
+    expect(recs[0]?.driveFileId).toBe('reuploaded-audio-1');
+  });
+
+  it('mirrors new chapters and upstream deletions into the family copy, skips non-importer family devices, and survives source 404 revocation', async () => {
+    const importedBook: BookProject = {
+      id: 'book-imported-local',
+      title: 'Dragon Stories',
+      author: 'Alex',
+      narrator: 'Alex',
+      dedicatedTo: '',
+      description: '',
+      language: 'English',
+      tags: [],
+      coverColor: '#3D6352',
+      hasCover: false,
+      driveFolderId: 'family-copy-folder-1',
+      driveMetadataFileId: 'family-copy-meta-1',
+      isShared: false,
+      accessRole: 'owner',
+      importedFrom: {
+        folderId: 'colleague-src-folder',
+        sourceTitle: 'Dragon Stories',
+        sourceProjectId: 'colleague-book-id',
+        importedByEmail: 'bogdan@example.com',
+        importedAt: 1000,
+        lastMirrorSyncAt: 1000,
+        sourceUnavailable: false,
+      },
+      syncStatus: 'synced',
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+
+    const existingCopiedRec: Recording = {
+      id: 'local-copy-rec-1',
+      projectId: importedBook.id,
+      sourceRecordingId: 'src-rec-1',
+      name: 'The Silver Egg',
+      notes: '',
+      recordedBy: 'Alex',
+      orderIndex: 0,
+      durationMs: 3000,
+      mimeType: 'audio/mp4',
+      extension: 'm4a',
+      sampleRate: 48000,
+      channels: 1,
+      fileSizeBytes: 50,
+      peaks: [0.4],
+      driveFileId: 'family-audio-1',
+      driveFileName: '01 - The Silver Egg.m4a',
+      syncStatus: 'cloud_only',
+      createdAt: 1000,
+      updatedAt: 1000,
+    };
+
+    await putProject(importedBook);
+    await putRecording(existingCopiedRec);
+
+    // 1. Non-importer family member (wife@example.com) silently skips upstream Drive requests!
+    const wifeFetchSpy = vi.spyOn(globalThis, 'fetch');
+    const wifeClient = new DriveClient('wife-token');
+    const wifeSkipRes = await mirrorImportedBookFromSource(wifeClient, importedBook, {
+      currentUserEmail: 'wife@example.com',
+    });
+    expect(wifeSkipRes).toEqual({
+      updated: false,
+      copiedChapters: 0,
+      removedChapters: 0,
+    });
+    expect(wifeFetchSpy).not.toHaveBeenCalled();
+    wifeFetchSpy.mockRestore();
+
+    // 2. Importer (bogdan@example.com) mirrors Chapter 2 + upstream deletion of Chapter 1
+    let sourceRevoked = false;
+    const trashedIds: string[] = [];
+    const copiedSourceIds: string[] = [];
+    let latestFamilyManifest: DriveProjectMetadataFile = {
+      schemaVersion: 1,
+      id: importedBook.id,
+      title: importedBook.title,
+      author: importedBook.author,
+      narrator: importedBook.narrator,
+      dedicatedTo: '',
+      description: '',
+      language: 'English',
+      tags: [],
+      coverColor: '#3D6352',
+      importedFrom: importedBook.importedFrom,
+      createdAt: 1000,
+      updatedAt: 2000,
+      recordings: [
+        {
+          id: existingCopiedRec.id,
+          sourceRecordingId: existingCopiedRec.sourceRecordingId,
+          name: existingCopiedRec.name,
+          notes: '',
+          recordedBy: 'Alex',
+          orderIndex: 0,
+          durationMs: 3000,
+          mimeType: 'audio/mp4',
+          extension: 'm4a',
+          sampleRate: 48000,
+          channels: 1,
+          fileSizeBytes: 50,
+          peaks: [0.4],
+          driveFileId: 'family-audio-1',
+          driveFileName: '01 - The Silver Egg.m4a',
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      ],
+    };
+
+    const updatedSourceMeta: DriveProjectMetadataFile = {
+      schemaVersion: 1,
+      id: 'colleague-book-id',
+      title: 'Dragon Stories',
+      author: 'Alex',
+      narrator: 'Alex',
+      dedicatedTo: '',
+      description: 'Updated with Chapter 2',
+      language: 'English',
+      tags: [],
+      coverColor: '#3D6352',
+      deletedRecordingIds: ['src-rec-1'],
+      createdAt: 1000,
+      updatedAt: 5000,
+      recordings: [
+        {
+          id: 'src-rec-2',
+          name: 'The Ember Bridge',
+          notes: 'New chapter!',
+          recordedBy: 'Alex',
+          orderIndex: 0,
+          durationMs: 4000,
+          mimeType: 'audio/mp4',
+          extension: 'm4a',
+          sampleRate: 48000,
+          channels: 1,
+          fileSizeBytes: 80,
+          peaks: [0.6, 0.8],
+          driveFileId: 'src-audio-2',
+          driveFileName: '01 - The Ember Bridge.m4a',
+          createdAt: 4000,
+          updatedAt: 4000,
+        },
+      ],
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method || 'GET').toUpperCase();
+
+      if (url.includes('/drive/v3/files/colleague-src-folder?fields=') && method === 'GET') {
+        if (sourceRevoked) {
+          return jsonResponse({ error: { message: 'Not found' } }, 404);
+        }
+        return jsonResponse({
+          id: 'colleague-src-folder',
+          name: 'Dragon Stories',
+          mimeType: 'application/vnd.google-apps.folder',
+          ownedByMe: false,
+          shared: true,
+        });
+      }
+      if (url.includes('colleague-src-folder') && url.includes('in+parents') && method === 'GET') {
+        return jsonResponse({
+          files: [
+            { id: 'src-meta', name: 'project.json', mimeType: 'application/json' },
+            { id: 'src-audio-2', name: '01 - The Ember Bridge.m4a', mimeType: 'audio/mp4' },
+          ],
+        });
+      }
+      if (url.includes('/files/src-meta?alt=media') && method === 'GET') {
+        return jsonResponse(updatedSourceMeta);
+      }
+
+      if (url.includes('/drive/v3/files/family-copy-folder-1?fields=') && method === 'GET') {
+        return jsonResponse({
+          id: 'family-copy-folder-1',
+          name: 'Dragon Stories',
+          mimeType: 'application/vnd.google-apps.folder',
+          ownedByMe: true,
+        });
+      }
+      if (url.includes('family-copy-folder-1') && url.includes('in+parents') && method === 'GET') {
+        return jsonResponse({
+          files: [
+            { id: 'family-copy-meta-1', name: 'project.json', mimeType: 'application/json' },
+          ],
+        });
+      }
+      if (url.includes('/files/family-copy-meta-1?alt=media') && method === 'GET') {
+        return jsonResponse(latestFamilyManifest);
+      }
+
+      const copyMatch = url.match(/\/drive\/v3\/files\/([^/?]+)\/copy/);
+      if (copyMatch && method === 'POST') {
+        const srcId = decodeURIComponent(copyMatch[1]);
+        copiedSourceIds.push(srcId);
+        return jsonResponse({
+          id: `copied-${srcId}`,
+          name: '01 - The Ember Bridge.m4a',
+          mimeType: 'audio/mp4',
+        });
+      }
+
+      const patchMatch = url.match(/\/drive\/v3\/files\/([^/?]+)$/);
+      if (patchMatch && method === 'PATCH') {
+        const targetId = decodeURIComponent(patchMatch[1]);
+        const body = JSON.parse(String(init?.body || '{}')) as { trashed?: boolean };
+        if (body.trashed) trashedIds.push(targetId);
+        return jsonResponse({ id: targetId });
+      }
+
+      if (url.includes('uploadType=multipart') && method === 'PATCH') {
+        latestFamilyManifest = extractMultipartJsonPayload<DriveProjectMetadataFile>(
+          String(init?.body || ''),
+        );
+        return jsonResponse({
+          id: 'family-copy-meta-1',
+          name: 'project.json',
+          mimeType: 'application/json',
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    });
+
+    const importerClient = new DriveClient('bogdan-token');
+    const mirrorRes = await mirrorImportedBookFromSource(importerClient, importedBook, {
+      currentUserEmail: 'bogdan@example.com',
+    });
+
+    expect(mirrorRes.updated).toBe(true);
+    expect(mirrorRes.copiedChapters).toBe(1);
+    expect(mirrorRes.removedChapters).toBe(1);
+    expect(mirrorRes.sourceUnavailable).toBe(false);
+    expect(copiedSourceIds).toEqual(['src-audio-2']);
+    expect(trashedIds).toEqual(['family-audio-1']);
+
+    const afterRecs = await listProjectRecordings(importedBook.id);
+    expect(afterRecs).toHaveLength(1);
+    expect(afterRecs[0].name).toBe('The Ember Bridge');
+    expect(afterRecs[0].sourceRecordingId).toBe('src-rec-2');
+
+    const afterBook = await getProject(importedBook.id);
+    expect(afterBook?.deletedRecordingIds).toContain('local-copy-rec-1');
+    expect(afterBook?.description).toBe('Updated with Chapter 2');
+
+    // 3. Upstream source is revoked (404) -> copy stays 100% intact and marks sourceUnavailable!
+    sourceRevoked = true;
+    const revokedRes = await mirrorImportedBookFromSource(importerClient, afterBook!, {
+      currentUserEmail: 'bogdan@example.com',
+    });
+    expect(revokedRes.sourceUnavailable).toBe(true);
+    expect(revokedRes.updated).toBe(false);
+
+    const preservedBook = await getProject(importedBook.id);
+    expect(preservedBook?.importedFrom?.sourceUnavailable).toBe(true);
+    const preservedRecs = await listProjectRecordings(importedBook.id);
+    expect(preservedRecs).toHaveLength(1);
+    expect(preservedRecs[0].name).toBe('The Ember Bridge');
   });
 });

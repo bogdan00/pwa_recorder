@@ -3,11 +3,13 @@ import {
   BookOpen,
   CheckCircle2,
   Cloud,
+  Copy,
   ExternalLink,
   FolderOpen,
   Headphones,
   KeyRound,
   Library,
+  Link2,
   Loader2,
   Mic,
   RefreshCw,
@@ -16,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import type { AppSettings } from '../types/models';
+import type { JoinBookMode } from '../hooks/useDriveSync';
 import { googleAuth } from '../drive/googleAuth';
 import { pickSharedDriveFolder } from '../drive/googlePicker';
 import {
@@ -30,6 +33,7 @@ export interface JoinShareModalProps {
   settings: AppSettings;
   isDriveConnected: boolean;
   isJoining: boolean;
+  canImportToLibrary?: boolean;
   onClose: () => void;
   onConnectDrive: () => void;
   onJoinFolder: (options: {
@@ -37,6 +41,7 @@ export interface JoinShareModalProps {
     name: string;
     scope: 'library' | 'book';
     role: 'writer' | 'reader';
+    mode?: JoinBookMode;
   }) => Promise<{ ok: boolean; needsPicker?: boolean; error?: string }>;
   onToast: (message: string) => void;
 }
@@ -47,6 +52,7 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
   settings,
   isDriveConnected,
   isJoining,
+  canImportToLibrary = true,
   onClose,
   onConnectDrive,
   onJoinFolder,
@@ -56,16 +62,22 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
   const [pickingFolder, setPickingFolder] = useState(false);
   const [requestedAccess, setRequestedAccess] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [joinMode, setJoinMode] = useState<JoinBookMode>('import');
 
   const busy = isJoining || pickingFolder;
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !invite) return;
     setNeedsPicker(false);
     setPickingFolder(false);
     setRequestedAccess(false);
     setJoinError(null);
-  }, [open, invite?.folderId, invite?.scope, invite?.role]);
+    const defaultMode: JoinBookMode =
+      invite.scope === 'book' && invite.role === 'reader' && canImportToLibrary
+        ? 'import'
+        : 'link';
+    setJoinMode(defaultMode);
+  }, [open, invite, canImportToLibrary]);
 
   useEffect(() => {
     if (!open) return;
@@ -80,14 +92,19 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
 
   const isLibrary = invite.scope === 'library';
   const isCoNarrator = invite.role === 'writer';
+  const effectiveMode: JoinBookMode =
+    !isLibrary && canImportToLibrary ? joinMode : 'link';
+  const isImportMode = !isLibrary && effectiveMode === 'import';
 
   const roleDescription = isLibrary
     ? isCoNarrator
       ? 'Listen to every book in this family library and record new chapters together.'
       : 'Stream and download all audiobooks in this shared family library.'
-    : isCoNarrator
-      ? 'This shared book will appear on your shelf so you can listen and co-narrate chapters.'
-      : 'This shared book will appear on your shelf for listening anytime.';
+    : isImportMode
+      ? 'Saves a copy into your Google Drive library so it syncs across your devices and shared family library, and mirrors new chapters when you sync.'
+      : isCoNarrator
+        ? 'Links directly to this shared book on your shelf so you can listen and co-narrate chapters.'
+        : 'Links directly to this shared book on your shelf for listening anytime without copying files.';
 
   const handleConfirmJoin = async () => {
     if (busy) return;
@@ -98,6 +115,7 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
         name: invite.name,
         scope: invite.scope,
         role: invite.role,
+        mode: isLibrary ? undefined : effectiveMode,
       });
       if (result.ok) {
         setNeedsPicker(false);
@@ -145,6 +163,7 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
         name: picked.name,
         scope: invite.scope,
         role: invite.role,
+        mode: isLibrary ? undefined : effectiveMode,
       });
       if (result.ok) {
         setNeedsPicker(false);
@@ -220,6 +239,59 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
             <p className="join-invite-card__desc">{roleDescription}</p>
           </div>
 
+          {/* Single-book mode choice: Import Copy (default for Listeners) vs Link Live */}
+          {!isLibrary && canImportToLibrary && (
+            <div
+              className="join-mode-selector"
+              role="radiogroup"
+              aria-label="How to add this shared book"
+              data-testid="join-book-mode-selector"
+            >
+              <button
+                type="button"
+                role="radio"
+                id="join-mode-import"
+                aria-checked={effectiveMode === 'import'}
+                className={`join-mode-option ${
+                  effectiveMode === 'import' ? 'join-mode-option--active' : ''
+                }`}
+                onClick={() => setJoinMode('import')}
+                disabled={busy}
+              >
+                <span className="join-mode-option__head">
+                  <Copy size={15} />
+                  Import Copy to My Library
+                </span>
+                <span className="join-mode-option__sub">
+                  Copies into your Drive library so family members sharing your
+                  library see it automatically, and mirrors new chapters on sync.
+                </span>
+              </button>
+
+              <button
+                type="button"
+                role="radio"
+                id="join-mode-link"
+                aria-checked={effectiveMode === 'link'}
+                className={`join-mode-option ${
+                  effectiveMode === 'link' ? 'join-mode-option--active' : ''
+                }`}
+                onClick={() => setJoinMode('link')}
+                disabled={busy}
+              >
+                <span className="join-mode-option__head">
+                  <Link2 size={15} />
+                  {isCoNarrator ? 'Link Live (Co-Narrate)' : 'Link Live (No Copy)'}
+                </span>
+                <span className="join-mode-option__sub">
+                  {isCoNarrator
+                    ? 'Connects directly to the shared folder so you can record chapters together.'
+                    : 'Connects directly to the shared folder on this device without copying files.'}
+                </span>
+              </button>
+            </div>
+          )}
+
           {/* Two-step progress indicator */}
           <div className="join-steps" aria-label="Join steps">
             <span
@@ -238,7 +310,7 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
                 isDriveConnected ? 'join-step-chip--active' : ''
               }`}
             >
-              2. Link &amp; Sync
+              {isImportMode ? '2. Import & Sync' : '2. Link & Sync'}
             </span>
           </div>
 
@@ -250,7 +322,7 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
               </h4>
               <p className="join-action-card__desc">
                 Sign in with the Google account that received this invite so
-                StoryTape can sync{' '}
+                StoryTape can {isImportMode ? 'import' : 'sync'}{' '}
                 {isLibrary ? 'the shared library' : `"${invite.name}"`}.
               </p>
               <div className="join-action-card__buttons">
@@ -267,15 +339,27 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
               </div>
             </div>
           ) : (
-            /* Step 2 — Link & Sync Shared Folder */
+            /* Step 2 — Import or Link Shared Folder */
             <div className="join-action-card">
               <h4 className="join-action-card__title">
-                Step 2 — Link &amp; Sync Shared Folder
+                {isImportMode
+                  ? 'Step 2 — Import Copy to Your Library'
+                  : 'Step 2 — Link & Sync Shared Folder'}
               </h4>
               <p className="join-action-card__desc">
-                You&apos;re connected to Google Drive. Tap below to link{' '}
-                <strong>{invite.name}</strong> and sync its audiobooks to this
-                device.
+                {isImportMode ? (
+                  <>
+                    You&apos;re connected to Google Drive. Tap below to import a
+                    synced copy of <strong>{invite.name}</strong> into your
+                    library folder.
+                  </>
+                ) : (
+                  <>
+                    You&apos;re connected to Google Drive. Tap below to link{' '}
+                    <strong>{invite.name}</strong> and sync its audiobooks to
+                    this device.
+                  </>
+                )}
               </p>
               <div className="join-action-card__buttons">
                 <button
@@ -288,7 +372,12 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
                   {isJoining ? (
                     <>
                       <Loader2 size={16} className="spin" />
-                      Joining &amp; syncing…
+                      {isImportMode ? 'Importing copy…' : 'Joining & syncing…'}
+                    </>
+                  ) : isImportMode ? (
+                    <>
+                      <Copy size={16} />
+                      Import to My Library
                     </>
                   ) : (
                     <>

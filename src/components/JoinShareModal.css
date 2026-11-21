@@ -221,6 +221,51 @@
   line-height: 1.45;
 }
 
+/* Single-book join mode selector (Import Copy vs Link Live) */
+.join-mode-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.join-mode-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+  transition: border-color 140ms var(--ease-out), background 140ms var(--ease-out);
+}
+
+.join-mode-option--active {
+  background: var(--accent-sage-soft);
+  border-color: var(--accent-sage-border);
+}
+
+.join-mode-option__head {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+
+.join-mode-option--active .join-mode-option__head svg {
+  color: var(--accent-sage);
+}
+
+.join-mode-option__sub {
+  font-size: 12.5px;
+  color: var(--ink-secondary);
+  line-height: 1.4;
+}
+
 /* Inline error alert */
 .join-error-banner {
   padding: 10px 12px;

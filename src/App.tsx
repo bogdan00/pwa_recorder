@@ -262,6 +262,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
         data.coverChange === 'remove' ? undefined : editingBook?.driveCoverFileId,
       isShared: editingBook?.isShared ?? settings.driveLibraryMode === 'shared',
       accessRole: editingBook?.accessRole ?? 'owner',
+      importedFrom: editingBook?.importedFrom,
       deletedRecordingIds: editingBook?.deletedRecordingIds,
       syncStatus: hasLinkedDrive ? 'pending_upload' : 'local_only',
       createdAt: editingBook?.createdAt ?? now,
@@ -690,6 +691,17 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           onDeleteRecording={(recId) =>
             handleDeleteRecording(activeBook, recId)
           }
+          onDetachImportedBook={() =>
+            drive.handleDetachImportedBook(activeBook.id)
+          }
+          onRemoveImportedBook={() => {
+            if (player.project?.id === activeBook.id) {
+              player.closePlayer();
+            }
+            return drive.handleRemoveImportedBook(activeBook.id, () =>
+              navigate({ view: 'library' }),
+            );
+          }}
         />
       ) : (
         <LibraryView
@@ -845,6 +857,12 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
         settings={settings}
         isDriveConnected={drive.authState.status === 'connected'}
         isJoining={drive.isJoiningShare}
+        canImportToLibrary={
+          !(
+            settings.driveLibraryMode === 'shared' &&
+            settings.driveAccessRole === 'reader'
+          )
+        }
         onClose={() => {
           setPendingJoinInvite(null);
           clearJoinHash();

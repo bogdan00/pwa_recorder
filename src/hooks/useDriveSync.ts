@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AppSettings, SharedBookLink } from '../types/models';
+import {
+  deleteProject,
+  getProject,
+  putProject,
+} from '../storage/db';
 import { DriveApiError, DriveClient } from '../drive/driveClient';
 import { googleAuth, type GoogleAuthState } from '../drive/googleAuth';
 import { pickSharedDriveFolder } from '../drive/googlePicker';
@@ -8,10 +13,14 @@ import {
   parseJoinInviteInput,
 } from '../drive/shareUtils';
 import {
+  importSharedBookIntoLibrary,
   inspectSharedDriveFolder,
   syncAllWithDrive,
   syncSingleProjectWithDrive,
+  trashDriveFolder,
 } from '../drive/syncService';
+
+export type JoinBookMode = 'import' | 'link';
 
 export interface UseDriveSyncOptions {
   settingsRef: React.MutableRefObject<AppSettings>;
@@ -124,7 +133,19 @@ export function useDriveSync({
           });
         }
         await reloadData();
-        if (!silent) showToast('Book synced to Google Drive');
+        if (!silent) {
+          if (res.sourceUnavailable) {
+            showToast('Original source is unavailable — your copy stays safe');
+          } else if (res.mirroredChapters && res.mirroredChapters > 0) {
+            showToast(
+              `Mirrored ${res.mirroredChapters} new ${res.mirroredChapters === 1 ? 'chapter' : 'chapters'}`,
+            );
+          } else if (res.mirroredChapters === 0) {
+            showToast('Imported book is up to date');
+          } else {
+            showToast('Book synced to Google Drive');
+          }
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Drive sync failed';
         setSyncStatusMessage(msg);
@@ -194,7 +215,13 @@ export function useDriveSync({
       name: string;
       scope: 'library' | 'book';
       role: 'writer' | 'reader';
-    }): Promise<{ ok: boolean; needsPicker?: boolean; error?: string }> => {
+      mode?: JoinBookMode;
+    }): Promise<{
+      ok: boolean;
+      needsPicker?: boolean;
+      error?: string;
+      importedProjectId?: string;
+    }> => {
       if (!canAutoSyncDrive()) {
         return { ok: false, error: 'Please connect Google Drive first.' };
       }
@@ -207,9 +234,44 @@ export function useDriveSync({
           info.accessRole === 'reader' ? 'reader' : 'writer';
         const resolvedName = info.name || options.name || 'Shared Audiobooks';
 
+        const activeSettings = settingsRef.current;
+        const canImportToActiveLibrary = !(
+          activeSettings.driveLibraryMode === 'shared' &&
+          activeSettings.driveAccessRole === 'reader'
+        );
+
+        if (
+          resolvedScope === 'book' &&
+          options.mode === 'import' &&
+          canImportToActiveLibrary
+        ) {
+          const imported = await importSharedBookIntoLibrary(
+            info.folderId,
+            activeSettings,
+            {
+              onProgress: (u) => setSyncStatusMessage(u.message),
+            },
+          );
+          if (imported.rootFolderId !== activeSettings.driveRootFolderId) {
+            onUpdateSettings({
+              ...activeSettings,
+              driveRootFolderId: imported.rootFolderId,
+            });
+          }
+          onSetPendingJoinInvite(null);
+          onClearJoinHash();
+          await reloadData();
+          showToast(
+            imported.alreadyExisted
+              ? `Updated "${imported.title}" from source`
+              : `Imported "${imported.title}" into your library`,
+          );
+          return { ok: true, importedProjectId: imported.projectId };
+        }
+
         let nextSettings: AppSettings;
         if (resolvedScope === 'book') {
-          const existing = settingsRef.current.sharedBookFolders ?? [];
+          const existing = activeSettings.sharedBookFolders ?? [];
           const nextEntry: SharedBookLink = {
             folderId: info.folderId,
             title: resolvedName,
@@ -218,12 +280,12 @@ export function useDriveSync({
           };
           const filtered = existing.filter((b) => b.folderId !== info.folderId);
           nextSettings = {
-            ...settingsRef.current,
+            ...activeSettings,
             sharedBookFolders: [...filtered, nextEntry],
           };
         } else {
           nextSettings = {
-            ...settingsRef.current,
+            ...activeSettings,
             driveLibraryMode: 'shared',
             driveRootFolderId: info.folderId,
             driveSharedFolderName: resolvedName,
@@ -264,6 +326,7 @@ export function useDriveSync({
       onClearJoinHash,
       onSetPendingJoinInvite,
       onUpdateSettings,
+      reloadData,
       settingsRef,
       showToast,
     ],
@@ -287,7 +350,7 @@ export function useDriveSync({
         onSetPendingJoinInvite(invite);
         return;
       }
-      const res = await handleJoinFolder(invite);
+      const res = await handleJoinFolder({ ...invite, mode: 'link' });
       if (!res.ok && res.needsPicker) {
         onCloseSettings();
         onSetPendingJoinInvite(invite);
@@ -359,6 +422,45 @@ export function useDriveSync({
     [onUpdateSettings, settingsRef, showToast],
   );
 
+  const handleDetachImportedBook = useCallback(
+    async (projectId: string) => {
+      const project = await getProject(projectId);
+      if (!project || !project.importedFrom) return;
+      const canAutoSync = canAutoSyncDrive();
+      const hasLinkedDrive = canAutoSync || googleAuth.getState().wasConnected;
+      await putProject({
+        ...project,
+        importedFrom: undefined,
+        syncStatus: hasLinkedDrive ? 'pending_upload' : 'local_only',
+        updatedAt: Date.now(),
+      });
+      await reloadData();
+      showToast('Detached copy — you can now record and edit chapters');
+      if (canAutoSync) {
+        void handleSyncProject(projectId, true);
+      }
+    },
+    [handleSyncProject, reloadData, showToast],
+  );
+
+  const handleRemoveImportedBook = useCallback(
+    async (projectId: string, onAfterRemove?: () => void) => {
+      const project = await getProject(projectId);
+      await deleteProject(projectId);
+      if (
+        project?.driveFolderId &&
+        project.accessRole !== 'reader' &&
+        canAutoSyncDrive()
+      ) {
+        await trashDriveFolder(project.driveFolderId).catch(() => {});
+      }
+      await reloadData();
+      onAfterRemove?.();
+      showToast('Removed imported copy from library');
+    },
+    [reloadData, showToast],
+  );
+
   return {
     authState,
     isSyncing,
@@ -374,5 +476,7 @@ export function useDriveSync({
     handlePickSharedFolder,
     handleSwitchToPersonalLibrary,
     handleUnlinkSharedBook,
+    handleDetachImportedBook,
+    handleRemoveImportedBook,
   };
 }
