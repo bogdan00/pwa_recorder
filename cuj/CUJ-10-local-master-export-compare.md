@@ -20,12 +20,13 @@ A parent can opt in to saving an uncompressed, full-detail local lossless master
 
 2. **Quality Lab — Guided Blind A/B Threshold Finder**
    - Open the chapter menu (`⋮`) → **Export & Quality Lab** (navigates to `#/book/:projectId/compare/:recordingId`).
-   - Verify the **Find Threshold** tab loads the lossless master summary, bitrate ladder (`32k`–`320k`), and blind **Sample A** / **Sample B** playback buttons.
+   - Verify the **Find Threshold** tab loads the lossless master summary, bitrate ladder (`32k`–`320k`), blind **Sample A** / **Sample B** toggle buttons, and a playback progress bar (without a separate redundant play/pause button).
+   - Tap **Sample A** to start playback from `00:00` (its button switches to **Pause**), tap it again to pause and resume in place, and tap **Sample B** while Sample A is playing (or paused) to stop Sample A and play Sample B from `00:00` (Sample A returns to **Play** while Sample B switches to **Pause**).
    - Run a blind comparison at a low bitrate and at a higher bitrate, recording verdicts (**Sample A sounds better**, **Sample B sounds better**, or **Can't tell / Same**).
    - **Expected:** Each verdict reveals which sample was Master vs. Compressed, updates the threshold ladder with exact encoded file size and `% smaller` savings, and once a transparent bitrate is reached, displays a **Recommended Sweet Spot** card with a 1-tap **Apply to Recording Settings** button that updates Studio Settings.
 
 3. **Quality Lab — Open Side-by-Side A/B & Single / Batch Export**
-   - Switch to **Side-by-Side A/B**, pick a target format/bitrate/sample rate, verify exact encoded size & compression ratio against the Master, and toggle synchronized **Master ↔ Export** playback.
+   - Switch to **Side-by-Side A/B**, pick a target format/bitrate/sample rate, verify exact encoded size & compression ratio against the Master, and toggle **Master** / **Export** playback (each sample button turns into **Pause** while playing, and tapping the other sample stops the active one and replays the newly selected sample from the start).
    - Switch to **Export Files**, encode a single custom bitrate or select multiple bitrates in **Batch Comparison Set** and run **Encode Comparison Set**.
    - **Expected:** Every selected tier encodes from the lossless master, reports exact bytes and `% smaller`, and provides labeled file downloads (e.g. `01_Chapter_1_64kbps_48kHz.m4a` / `.webm` / `.wav`).
 

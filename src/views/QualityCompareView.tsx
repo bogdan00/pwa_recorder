@@ -122,10 +122,10 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
   );
   const [windowStartSec, setWindowStartSec] = useState(0);
 
-  // Shared synchronized A/B audio player
+  // Shared A/B audio player
   const playerRef = useRef<AbComparePlayer | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [activeSlot, setActiveSlot] = useState<CompareTrackSlot>('master');
+  const [activeSlot, setActiveSlot] = useState<CompareTrackSlot | null>(null);
   const [playheadSec, setPlayheadSec] = useState(0);
   const [playDurationSec, setPlayDurationSec] = useState(0);
 
@@ -293,6 +293,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
   const stopPlayback = useCallback(() => {
     playerRef.current?.stop();
     setIsPlaying(false);
+    setActiveSlot(null);
     setPlayheadSec(0);
   }, []);
 
@@ -421,23 +422,24 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
     await micTest.start();
   };
 
-  const handlePlaySlot = async (slot: CompareTrackSlot) => {
+  const handleToggleSlot = async (slot: CompareTrackSlot) => {
     const ab = playerRef.current;
     if (!ab) return;
-    setActiveSlot(slot);
-    await ab.play(slot);
-    setIsPlaying(true);
-  };
-
-  const handleTogglePause = () => {
-    const ab = playerRef.current;
-    if (!ab) return;
-    if (isPlaying) {
+    if (ab.getIsPlaying() && ab.getActiveSlot() === slot) {
       ab.pause();
       setIsPlaying(false);
-    } else {
-      void handlePlaySlot(activeSlot);
+      setActiveSlot(ab.getActiveSlot());
+      setPlayheadSec(ab.getCurrentTimeSec());
+      return;
     }
+    if (ab.getActiveSlot() !== slot) {
+      setPlayheadSec(0);
+    }
+    setActiveSlot(slot);
+    await ab.play(slot);
+    setIsPlaying(ab.getIsPlaying());
+    setActiveSlot(ab.getActiveSlot());
+    setPlayheadSec(ab.getCurrentTimeSec());
   };
 
   const handleBlindVote = (pickedLabel: 'A' | 'B' | 'same') => {
@@ -490,6 +492,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
   };
 
   const handleNextBlindTrial = () => {
+    stopPlayback();
     setLastReveal(null);
     setAIsMaster(Math.random() < 0.5);
   };
@@ -800,8 +803,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
             playDurationSec={playDurationSec}
             onChangeFormat={setBlindFormat}
             onChangeBitrate={setBlindBitrate}
-            onPlaySlot={(slot) => void handlePlaySlot(slot)}
-            onTogglePause={handleTogglePause}
+            onToggleSlot={(slot) => void handleToggleSlot(slot)}
             onVote={handleBlindVote}
             onNextTrial={handleNextBlindTrial}
             onAdvanceBitrate={handleAdvanceBitrate}
@@ -819,8 +821,7 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
             playheadSec={playheadSec}
             playDurationSec={playDurationSec}
             onChangeSpec={(patch) => setAbSpec((prev) => ({ ...prev, ...patch }))}
-            onPlaySlot={(slot) => void handlePlaySlot(slot)}
-            onTogglePause={handleTogglePause}
+            onToggleSlot={(slot) => void handleToggleSlot(slot)}
           />
         ) : (
           <ExportFilesTab

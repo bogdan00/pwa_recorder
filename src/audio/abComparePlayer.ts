@@ -2,23 +2,22 @@ import type { DecodedPcmAudio } from './audioExporter';
 
 export type CompareTrackSlot = 'master' | 'candidate';
 
-const CROSSFADE_SEC = 0.015; // 15ms click-free instant switch
+const FADE_IN_SEC = 0.005; // 5ms click-free fade-in on start/resume
 
 /**
- * Gapless, sample-synchronized Web Audio A/B player.
- * Plays Master and Candidate simultaneously from the exact same AudioContext clock
- * and crossfades dedicated GainNodes in 15ms so toggling A <-> B mid-syllable has
- * zero silence gap, zero clicks, and zero timestamp drift.
+ * Web Audio A/B sample comparison player.
+ * Each sample button toggles Play / Pause for its own slot (resuming in place),
+ * while activating the other sample stops the current one and replays the newly
+ * selected sample cleanly from the beginning (00:00).
  */
 export class AbComparePlayer {
   private ctx: AudioContext | null = null;
   private masterBuffer: AudioBuffer | null = null;
   private candidateBuffer: AudioBuffer | null = null;
 
-  private masterSource: AudioBufferSourceNode | null = null;
-  private candidateSource: AudioBufferSourceNode | null = null;
-  private masterGain: GainNode | null = null;
-  private candidateGain: GainNode | null = null;
+  private activeSource: AudioBufferSourceNode | null = null;
+  private activeGain: GainNode | null = null;
+  private activeSlot: CompareTrackSlot | null = null;
 
   private isPlaying = false;
   private loop = true;
@@ -26,6 +25,7 @@ export class AbComparePlayer {
   private startOffsetSec = 0;
   private pausedOffsetSec = 0;
   private durationSec = 0;
+  private playToken = 0;
 
   private ensureContext(sampleRate?: number): AudioContext {
     if (this.ctx && this.ctx.state !== 'closed') {
@@ -63,6 +63,7 @@ export class AbComparePlayer {
       this.candidateBuffer.duration,
     );
     this.pausedOffsetSec = 0;
+    this.activeSlot = null;
   }
 
   getDurationSec(): number {
@@ -71,6 +72,10 @@ export class AbComparePlayer {
 
   getIsPlaying(): boolean {
     return this.isPlaying;
+  }
+
+  getActiveSlot(): CompareTrackSlot | null {
+    return this.activeSlot;
   }
 
   getCurrentTimeSec(): number {
@@ -83,129 +88,120 @@ export class AbComparePlayer {
   }
 
   async play(slot: CompareTrackSlot, offsetSec?: number): Promise<void> {
-    if (!this.masterBuffer || !this.candidateBuffer) return;
+    const buffer =
+      slot === 'master' ? this.masterBuffer : this.candidateBuffer;
+    if (!buffer || this.durationSec <= 0) return;
 
-    // If already playing and no explicit seek requested, just crossfade instantaneously!
-    if (this.isPlaying && offsetSec === undefined) {
-      this.switchSlot(slot);
+    const switchingSlot = this.activeSlot !== slot;
+    if (this.isPlaying && !switchingSlot && offsetSec === undefined) {
       return;
     }
 
-    const ctx = this.ensureContext();
-    if (ctx.state !== 'running') {
-      await Promise.race([
-        ctx.resume().catch(() => {}),
-        new Promise<void>((r) => window.setTimeout(r, 1200)),
-      ]);
-    }
+    const token = ++this.playToken;
 
-    this.teardownSources();
-
+    // Switching to the other sample always stops the first and restarts from 0:00.
+    const maxOffset = Math.max(0, this.durationSec - 0.01);
     const startOffset =
       offsetSec !== undefined
-        ? Math.max(0, Math.min(this.durationSec - 0.01, offsetSec))
-        : this.pausedOffsetSec >= this.durationSec - 0.05
+        ? Math.max(0, Math.min(maxOffset, offsetSec))
+        : switchingSlot
           ? 0
-          : this.pausedOffsetSec;
+          : this.pausedOffsetSec >= this.durationSec - 0.05
+            ? 0
+            : this.pausedOffsetSec;
 
-    const mSrc = ctx.createBufferSource();
-    mSrc.buffer = this.masterBuffer;
-    mSrc.loop = this.loop;
-    mSrc.loopStart = 0;
-    mSrc.loopEnd = this.durationSec;
+    this.teardownSource();
+    this.isPlaying = false;
+    this.activeSlot = slot;
+    this.pausedOffsetSec = startOffset;
 
-    const cSrc = ctx.createBufferSource();
-    cSrc.buffer = this.candidateBuffer;
-    cSrc.loop = this.loop;
-    cSrc.loopStart = 0;
-    cSrc.loopEnd = this.durationSec;
+    const ctx = this.ensureContext();
+    if (ctx.state !== 'running') {
+      // Trigger AudioContext.resume() synchronously inside the tap gesture for iOS PWAs.
+      const resumePromise = ctx.resume().catch(() => {});
+      await Promise.race([
+        resumePromise,
+        new Promise<void>((r) => window.setTimeout(r, 1200)),
+      ]);
+      if (token !== this.playToken || !this.ctx) {
+        return;
+      }
+    }
 
-    const mGain = ctx.createGain();
-    const cGain = ctx.createGain();
-    mGain.gain.value = slot === 'master' ? 1 : 0;
-    cGain.gain.value = slot === 'candidate' ? 1 : 0;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = this.loop;
+    src.loopStart = 0;
+    src.loopEnd = this.durationSec;
 
-    mSrc.connect(mGain);
-    mGain.connect(ctx.destination);
-    cSrc.connect(cGain);
-    cGain.connect(ctx.destination);
-
+    const gain = ctx.createGain();
     const startAt = ctx.currentTime + 0.01;
-    mSrc.start(startAt, startOffset);
-    cSrc.start(startAt, startOffset);
+    gain.gain.setValueAtTime(0, startAt);
+    gain.gain.linearRampToValueAtTime(1, startAt + FADE_IN_SEC);
 
-    mSrc.onended = () => {
-      if (this.masterSource === mSrc && !this.loop) {
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    src.start(startAt, startOffset);
+
+    src.onended = () => {
+      if (this.activeSource === src && !this.loop) {
         this.isPlaying = false;
         this.pausedOffsetSec = 0;
-        this.teardownSources();
+        this.teardownSource();
       }
     };
 
-    this.masterSource = mSrc;
-    this.candidateSource = cSrc;
-    this.masterGain = mGain;
-    this.candidateGain = cGain;
+    this.activeSource = src;
+    this.activeGain = gain;
     this.startCtxTime = startAt;
     this.startOffsetSec = startOffset;
     this.isPlaying = true;
   }
 
-  switchSlot(slot: CompareTrackSlot): void {
-    if (!this.isPlaying || !this.ctx || !this.masterGain || !this.candidateGain) {
-      return;
+  async toggle(slot: CompareTrackSlot): Promise<boolean> {
+    if (this.isPlaying && this.activeSlot === slot) {
+      this.pause();
+      return false;
     }
-    const now = this.ctx.currentTime;
-    const mTarget = slot === 'master' ? 1 : 0;
-    const cTarget = slot === 'candidate' ? 1 : 0;
-
-    this.masterGain.gain.cancelScheduledValues(now);
-    this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
-    this.masterGain.gain.linearRampToValueAtTime(mTarget, now + CROSSFADE_SEC);
-
-    this.candidateGain.gain.cancelScheduledValues(now);
-    this.candidateGain.gain.setValueAtTime(this.candidateGain.gain.value, now);
-    this.candidateGain.gain.linearRampToValueAtTime(cTarget, now + CROSSFADE_SEC);
+    await this.play(slot);
+    return this.isPlaying;
   }
 
   pause(): void {
+    this.playToken += 1;
     if (!this.isPlaying) return;
     this.pausedOffsetSec = this.getCurrentTimeSec();
     this.isPlaying = false;
-    this.teardownSources();
+    this.teardownSource();
   }
 
   stop(): void {
+    this.playToken += 1;
     this.isPlaying = false;
     this.pausedOffsetSec = 0;
-    this.teardownSources();
+    this.activeSlot = null;
+    this.teardownSource();
   }
 
-  private teardownSources(): void {
-    for (const src of [this.masterSource, this.candidateSource]) {
-      if (src) {
-        try {
-          src.onended = null;
-          src.stop();
-          src.disconnect();
-        } catch {
-          // Ignore already stopped sources
-        }
+  private teardownSource(): void {
+    if (this.activeSource) {
+      try {
+        this.activeSource.onended = null;
+        this.activeSource.stop();
+        this.activeSource.disconnect();
+      } catch {
+        // Ignore already stopped sources
       }
+      this.activeSource = null;
     }
-    for (const g of [this.masterGain, this.candidateGain]) {
-      if (g) {
-        try {
-          g.disconnect();
-        } catch {
-          // Ignore
-        }
+    if (this.activeGain) {
+      try {
+        this.activeGain.disconnect();
+      } catch {
+        // Ignore
       }
+      this.activeGain = null;
     }
-    this.masterSource = null;
-    this.candidateSource = null;
-    this.masterGain = null;
-    this.candidateGain = null;
   }
 
   dispose(): void {

@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   Eye,
   Loader2,
-  Play,
   RefreshCw,
   Sliders,
 } from 'lucide-react';
@@ -25,7 +24,10 @@ import {
 import type { CodecCapabilities } from '../../audio/qualityPresets';
 import { CodecPillPicker } from '../../components/AudioFormatControls';
 import { formatBytes, formatSampleRate } from '../../utils/format';
-import { QualityLabTransportBar } from './QualityLabTransportBar';
+import {
+  QualityLabSampleButton,
+  QualityLabTransportBar,
+} from './QualityLabTransportBar';
 
 export interface BlindRevealInfo {
   bitrateKbps: BitrateKbpsOption;
@@ -50,13 +52,12 @@ export interface ThresholdFinderTabProps {
   tierResults: Record<number, BlindTierResult>;
   recommendation: ThresholdRecommendation | null;
   isPlaying: boolean;
-  activeSlot: CompareTrackSlot;
+  activeSlot: CompareTrackSlot | null;
   playheadSec: number;
   playDurationSec: number;
   onChangeFormat: (format: AudioFormatOption) => void;
   onChangeBitrate: (kbps: BitrateKbpsOption) => void;
-  onPlaySlot: (slot: CompareTrackSlot) => void;
-  onTogglePause: () => void;
+  onToggleSlot: (slot: CompareTrackSlot) => void;
   onVote: (pickedLabel: 'A' | 'B' | 'same') => void;
   onNextTrial: () => void;
   onAdvanceBitrate: () => void;
@@ -81,144 +82,132 @@ export const ThresholdFinderTab: React.FC<ThresholdFinderTabProps> = ({
   playDurationSec,
   onChangeFormat,
   onChangeBitrate,
-  onPlaySlot,
-  onTogglePause,
+  onToggleSlot,
   onVote,
   onNextTrial,
   onAdvanceBitrate,
   onApplyRecommendation,
-}) => (
-  <div className="ql-stack" data-testid="ql-panel-threshold">
-    {/* Codec selector */}
-    <div className="ql-card">
-      <div className="ql-card__head">
-        <span className="field-label">Test Codec</span>
-        <span className="font-mono ql-muted-mono">
-          {formatSampleRate(blindSampleRate)}
-        </span>
-      </div>
-      <CodecPillPicker
-        value={blindFormat}
-        caps={caps}
-        onChange={onChangeFormat}
-      />
+}) => {
+  const slotA: CompareTrackSlot = aIsMaster ? 'master' : 'candidate';
+  const slotB: CompareTrackSlot = aIsMaster ? 'candidate' : 'master';
+  const isPlayingA = isPlaying && activeSlot === slotA;
+  const isPlayingB = isPlaying && activeSlot === slotB;
+  const isPausedA = !isPlaying && activeSlot === slotA && playheadSec > 0.05;
+  const isPausedB = !isPlaying && activeSlot === slotB && playheadSec > 0.05;
 
-      {/* Bitrate ladder selector */}
-      <div className="field" style={{ marginTop: 12 }}>
-        <span className="field-label">Bitrate Ladder</span>
-        <div className="ql-ladder-grid">
-          {THRESHOLD_LADDER_KBPS.map((kbps) => {
-            const status = classifyBlindTier(tierResults[kbps]);
-            return (
-              <button
-                key={kbps}
-                type="button"
-                className={`ql-ladder-pill font-mono ${
-                  blindBitrate === kbps ? 'ql-ladder-pill--active' : ''
-                } ${
-                  status === 'audible'
-                    ? 'ql-ladder-pill--audible'
-                    : status === 'transparent'
-                      ? 'ql-ladder-pill--transparent'
-                      : ''
-                }`}
-                onClick={() => onChangeBitrate(kbps)}
-                data-testid={`ladder-tier-${kbps}`}
-              >
-                <span>{kbps}k</span>
-                {status !== 'untested' && (
-                  <span className="ql-ladder-pill__dot" aria-hidden="true">
-                    {status === 'transparent' ? '✓' : '!'}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-
-    {/* Active Blind A/B Card */}
-    <div className="ql-card" data-testid="blind-trial-card">
-      <div className="ql-card__head">
-        <h2 className="ql-card__title">Blind Test · {blindBitrate} kbps</h2>
-        {blindCandidate && (
-          <span className="badge badge-sage font-mono">
-            {blindCandidate.savingsPercent >= 0
-              ? `${blindCandidate.savingsPercent}% smaller`
-              : 'Same size'}
+  return (
+    <div className="ql-stack" data-testid="ql-panel-threshold">
+      {/* Codec selector */}
+      <div className="ql-card">
+        <div className="ql-card__head">
+          <span className="field-label">Test Codec</span>
+          <span className="font-mono ql-muted-mono">
+            {formatSampleRate(blindSampleRate)}
           </span>
-        )}
+        </div>
+        <CodecPillPicker
+          value={blindFormat}
+          caps={caps}
+          onChange={onChangeFormat}
+        />
+
+        {/* Bitrate ladder selector */}
+        <div className="field" style={{ marginTop: 12 }}>
+          <span className="field-label">Bitrate Ladder</span>
+          <div className="ql-ladder-grid">
+            {THRESHOLD_LADDER_KBPS.map((kbps) => {
+              const status = classifyBlindTier(tierResults[kbps]);
+              return (
+                <button
+                  key={kbps}
+                  type="button"
+                  className={`ql-ladder-pill font-mono ${
+                    blindBitrate === kbps ? 'ql-ladder-pill--active' : ''
+                  } ${
+                    status === 'audible'
+                      ? 'ql-ladder-pill--audible'
+                      : status === 'transparent'
+                        ? 'ql-ladder-pill--transparent'
+                        : ''
+                  }`}
+                  onClick={() => onChangeBitrate(kbps)}
+                  data-testid={`ladder-tier-${kbps}`}
+                >
+                  <span>{kbps}k</span>
+                  {status !== 'untested' && (
+                    <span className="ql-ladder-pill__dot" aria-hidden="true">
+                      {status === 'transparent' ? '✓' : '!'}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
-      <p className="ql-helper-text">
-        One sample is your{' '}
-        <strong>{usingLocalMaster ? 'Lossless Master' : 'Original'}</strong>{' '}
-        and the other is{' '}
-        <strong>
-          {blindCandidate?.encoded.bitrateKbps ?? blindBitrate} kbps{' '}
-          {(blindCandidate?.encoded.extension ?? 'm4a').toUpperCase()}
-        </strong>
-        {blindCandidate && (
-          <>
-            {' '}
-            (~{formatBytes(blindCandidate.bytesPerMinute)}/min). Switch freely
-            mid-sentence — can you hear a difference?
-          </>
-        )}
-      </p>
-
-      {blindEncoding ? (
-        <div className="ql-inline-loading">
-          <Loader2 size={16} className="spin" />
-          <span>Encoding {blindBitrate} kbps test sample…</span>
+      {/* Active Blind A/B Card */}
+      <div className="ql-card" data-testid="blind-trial-card">
+        <div className="ql-card__head">
+          <h2 className="ql-card__title">Blind Test · {blindBitrate} kbps</h2>
+          {blindCandidate && (
+            <span className="badge badge-sage font-mono">
+              {blindCandidate.savingsPercent >= 0
+                ? `${blindCandidate.savingsPercent}% smaller`
+                : 'Same size'}
+            </span>
+          )}
         </div>
-      ) : (
-        <>
-          <div className="ql-ab-grid">
-            <button
-              type="button"
-              className={`ql-sample-btn ${
-                isPlaying &&
-                ((aIsMaster && activeSlot === 'master') ||
-                  (!aIsMaster && activeSlot === 'candidate'))
-                  ? 'ql-sample-btn--playing'
-                  : ''
-              }`}
-              onClick={() => onPlaySlot(aIsMaster ? 'master' : 'candidate')}
-              data-testid="blind-play-a"
-            >
-              <Play size={16} />
-              <span>Sample A</span>
-            </button>
 
-            <button
-              type="button"
-              className={`ql-sample-btn ${
-                isPlaying &&
-                ((!aIsMaster && activeSlot === 'master') ||
-                  (aIsMaster && activeSlot === 'candidate'))
-                  ? 'ql-sample-btn--playing'
-                  : ''
-              }`}
-              onClick={() => onPlaySlot(aIsMaster ? 'candidate' : 'master')}
-              data-testid="blind-play-b"
-            >
-              <Play size={16} />
-              <span>Sample B</span>
-            </button>
+        <p className="ql-helper-text">
+          One sample is your{' '}
+          <strong>{usingLocalMaster ? 'Lossless Master' : 'Original'}</strong>{' '}
+          and the other is{' '}
+          <strong>
+            {blindCandidate?.encoded.bitrateKbps ?? blindBitrate} kbps{' '}
+            {(blindCandidate?.encoded.extension ?? 'm4a').toUpperCase()}
+          </strong>
+          {blindCandidate && (
+            <>
+              {' '}
+              (~{formatBytes(blindCandidate.bytesPerMinute)}/min). Listen to
+              both samples — can you hear a difference?
+            </>
+          )}
+        </p>
+
+        {blindEncoding ? (
+          <div className="ql-inline-loading">
+            <Loader2 size={16} className="spin" />
+            <span>Encoding {blindBitrate} kbps test sample…</span>
           </div>
+        ) : (
+          <>
+            <div className="ql-ab-grid">
+              <QualityLabSampleButton
+                label="Sample A"
+                isPlaying={isPlayingA}
+                isPaused={isPausedA}
+                onClick={() => onToggleSlot(slotA)}
+                testId="blind-play-a"
+              />
+              <QualityLabSampleButton
+                label="Sample B"
+                isPlaying={isPlayingB}
+                isPaused={isPausedB}
+                onClick={() => onToggleSlot(slotB)}
+                testId="blind-play-b"
+              />
+            </div>
 
-          <QualityLabTransportBar
-            isPlaying={isPlaying}
-            playheadSec={playheadSec}
-            playDurationSec={playDurationSec}
-            onTogglePause={onTogglePause}
-          />
+            <QualityLabTransportBar
+              playheadSec={playheadSec}
+              playDurationSec={playDurationSec}
+            />
 
-          {!lastReveal ? (
-            <div className="ql-verdict-block">
-              <span className="field-label">Which sounds cleaner?</span>
+            {!lastReveal ? (
+              <div className="ql-verdict-block">
+                <span className="field-label">Which sounds cleaner?</span>
               <div className="ql-verdict-grid">
                 <button
                   type="button"
@@ -362,4 +351,5 @@ export const ThresholdFinderTab: React.FC<ThresholdFinderTabProps> = ({
       </div>
     )}
   </div>
-);
+  );
+};

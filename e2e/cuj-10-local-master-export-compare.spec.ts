@@ -94,9 +94,29 @@ test.describe('CUJ-10: Local Lossless Master Archival, Multi-Bitrate Export & Qu
     );
 
     // 4. Tab 1: Guided Blind A/B Threshold Finder
-    await expect(page.getByTestId('blind-play-a')).toBeVisible();
-    await page.getByTestId('blind-play-a').click();
-    await page.getByTestId('blind-play-b').click();
+    const blindA = page.getByTestId('blind-play-a');
+    const blindB = page.getByTestId('blind-play-b');
+    await expect(blindA).toBeVisible();
+    await expect(page.getByTestId('ql-progress-bar').locator('button')).toHaveCount(0);
+
+    // Sample A toggles Play -> Pause -> Play, and switching to Sample B stops A and turns B into Pause
+    await expect(blindA).toHaveAttribute('aria-pressed', 'false');
+    await blindA.click();
+    await expect(blindA).toHaveAttribute('aria-pressed', 'true');
+    await expect(blindA).toHaveAttribute('aria-label', 'Pause Sample A');
+    await expect(blindB).toHaveAttribute('aria-pressed', 'false');
+
+    await blindA.click();
+    await expect(blindA).toHaveAttribute('aria-pressed', 'false');
+
+    await blindA.click();
+    await expect(blindA).toHaveAttribute('aria-pressed', 'true');
+
+    await blindB.click();
+    await expect(blindA).toHaveAttribute('aria-pressed', 'false');
+    await expect(blindA).toHaveAttribute('aria-label', 'Play Sample A');
+    await expect(blindB).toHaveAttribute('aria-pressed', 'true');
+    await expect(blindB).toHaveAttribute('aria-label', 'Pause Sample B');
 
     // Mark 64k as indistinguishable ("Can't tell") -> should reveal & recommend 64 kbps!
     await page.getByTestId('blind-vote-same').click();
@@ -113,8 +133,21 @@ test.describe('CUJ-10: Local Lossless Master Archival, Multi-Bitrate Export & Qu
     await page.getByTestId('ql-tab-ab').click();
     await expect(page.getByTestId('ql-panel-ab')).toBeVisible();
     await expect(page.getByTestId('ab-savings-badge')).toBeVisible();
-    await page.getByTestId('ab-play-master').click();
-    await page.getByTestId('ab-play-export').click();
+    await expect(page.getByTestId('ql-progress-bar').locator('button')).toHaveCount(0);
+
+    const abMaster = page.getByTestId('ab-play-master');
+    const abExport = page.getByTestId('ab-play-export');
+    await abMaster.click();
+    await expect(abMaster).toHaveAttribute('aria-pressed', 'true');
+    await expect(abMaster).toHaveAttribute('aria-label', 'Pause Master');
+
+    await abExport.click();
+    await expect(abMaster).toHaveAttribute('aria-pressed', 'false');
+    await expect(abMaster).toHaveAttribute('aria-label', 'Play Master');
+    await expect(abExport).toHaveAttribute('aria-pressed', 'true');
+
+    await abExport.click();
+    await expect(abExport).toHaveAttribute('aria-pressed', 'false');
 
     // 6. Tab 3: Export Files (Single + Batch Comparison Set)
     await page.getByTestId('ql-tab-export').click();
