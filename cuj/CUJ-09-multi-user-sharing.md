@@ -20,7 +20,7 @@ Family members can share either their entire StoryTape Family Library or an indi
    - Invite a collaborator by Google email via the Drive Permissions API as either **Co-Narrator** (`writer`) or **Listener** (`reader`).
    - **Expected:** New collaborator appears in the active collaborators list with their email and assigned role; revoking access prompts for confirmation before removing their Drive permission and updating the list immediately.
    - Toggle **"Anyone with link can listen"** (read-only link access), copy or natively share (`navigator.share`) the 1-tap StoryTape join link (`#/join?folderId=...&name=...&scope=library|book&role=...`), and tap **Open in Google Drive**.
-   - **Expected:** Link-sharing toggle creates/removes the Drive `anyone` (`reader`) permission, generated join link encodes the folder ID, display name, scope (`library` or `book`), and role (without exposing any OAuth Client ID), copy/native share feedback confirms success, and the Drive folder link opens cleanly.
+   - **Expected:** Link-sharing toggle creates/removes the Drive `anyone` (`reader`) permission, generated join link encodes the folder ID, display name, scope (`library` or `book`), and role (without exposing any OAuth Client ID), the invite link preview wraps cleanly across multiple lines without cropping or horizontal scrolling (so tapping, focusing, or swiping never scrolls the text out of view into an empty-looking input), copy/native share feedback confirms success, and the Drive folder link opens cleanly.
 
 2. **Guided Collaborator Join Experience (`JoinShareModal` & Settings)**
    - Open a StoryTape join link (`#/join?folderId=...&name=...&scope=library|book&role=...`) as a second user.

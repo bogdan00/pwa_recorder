@@ -203,18 +203,46 @@
   gap: 6px;
 }
 
+.share-link-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.share-link-mirror,
 .share-link-input {
+  grid-area: 1 / 1;
   width: 100%;
+  min-width: 0;
   min-height: 40px;
+  margin: 0;
   padding: 9px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
-  background: var(--bg-input);
-  color: var(--ink-secondary);
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+  word-spacing: 0;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.share-link-mirror {
+  visibility: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.share-link-input {
+  background: var(--bg-input);
+  color: var(--ink-secondary);
+  resize: none;
+  overflow: hidden;
+  field-sizing: content;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .share-link-input:focus {

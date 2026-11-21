@@ -622,6 +622,47 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     await expect(inviteLinkInput).toHaveValue(/scope=book/);
     await expect(inviteLinkInput).not.toHaveValue(/clientId=/);
 
+    // Invite link must wrap cleanly without cropping or horizontal scrolling (never scrolling into an empty box)
+    const beforeMetrics = await inviteLinkInput.evaluate((el) => ({
+      tagName: el.tagName,
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+      scrollLeft: el.scrollLeft,
+      scrollTop: el.scrollTop,
+    }));
+    expect(beforeMetrics.tagName).toBe('TEXTAREA');
+    expect(beforeMetrics.scrollWidth).toBeLessThanOrEqual(beforeMetrics.clientWidth + 1);
+    expect(beforeMetrics.scrollHeight).toBeLessThanOrEqual(beforeMetrics.clientHeight + 1);
+    expect(beforeMetrics.scrollLeft).toBe(0);
+    expect(beforeMetrics.scrollTop).toBe(0);
+    expect(beforeMetrics.clientHeight).toBeGreaterThan(44);
+
+    // Focusing, attempting horizontal scroll, and blurring must keep scroll offsets locked at 0
+    await inviteLinkInput.click();
+    const afterInteractionMetrics = await inviteLinkInput.evaluate((el) => {
+      el.scrollLeft = 500;
+      el.scrollTop = 200;
+      el.blur();
+      return {
+        scrollLeft: el.scrollLeft,
+        scrollTop: el.scrollTop,
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+      };
+    });
+    expect(afterInteractionMetrics.scrollLeft).toBe(0);
+    expect(afterInteractionMetrics.scrollTop).toBe(0);
+    expect(afterInteractionMetrics.scrollWidth).toBeLessThanOrEqual(
+      afterInteractionMetrics.clientWidth + 1,
+    );
+    expect(afterInteractionMetrics.scrollHeight).toBeLessThanOrEqual(
+      afterInteractionMetrics.clientHeight + 1,
+    );
+
     // Trigger native Share Invite Link (Web Share API)
     await page.locator('#share-link-native-btn').click();
     await expect

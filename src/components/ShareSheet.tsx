@@ -646,14 +646,28 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
                 />
 
                 <div className="share-link-preview-box">
-                  <input
-                    type="text"
-                    readOnly
-                    className="share-link-input"
-                    value={inviteUrl}
-                    aria-label="StoryTape invite link"
-                    onFocus={(e) => e.currentTarget.select()}
-                  />
+                  <div className="share-link-field">
+                    <div className="share-link-mirror" aria-hidden="true">
+                      {inviteUrl}
+                    </div>
+                    <textarea
+                      readOnly
+                      rows={1}
+                      wrap="soft"
+                      spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      className="share-link-input"
+                      value={inviteUrl}
+                      aria-label="StoryTape invite link"
+                      onFocus={(e) => {
+                        const target = e.currentTarget;
+                        target.select();
+                        target.scrollLeft = 0;
+                        target.scrollTop = 0;
+                      }}
+                    />
+                  </div>
                   <span className="field-hint">
                     Send this link after inviting — opening it guides family
                     members straight into{' '}
