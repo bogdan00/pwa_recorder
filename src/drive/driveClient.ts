@@ -4,6 +4,13 @@ const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
+const FILE_SUMMARY_FIELDS =
+  'id,name,mimeType,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare)';
+const FILE_LIST_FIELDS =
+  'nextPageToken,files(id,name,mimeType,size,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare))';
+const UPLOAD_SUMMARY_FIELDS = 'id,name,mimeType,size,modifiedTime';
+const PERMISSION_FIELDS = 'id,type,role,emailAddress,displayName';
+
 export class DriveApiError extends Error {
   public readonly status: number;
   constructor(status: number, message: string) {
@@ -60,15 +67,42 @@ export class DriveClient {
     };
   }
 
+  private async request(
+    url: string,
+    init: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: BodyInit;
+      ignore404?: boolean;
+    } = {},
+  ): Promise<Response> {
+    const res = await fetch(url, {
+      method: init.method,
+      headers: this.authHeaders(init.headers),
+      body: init.body,
+    });
+    if (!res.ok && !(init.ignore404 && res.status === 404)) {
+      throw await parseErrorResponse(res);
+    }
+    return res;
+  }
+
+  private async requestJson<T>(
+    url: string,
+    init: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: BodyInit;
+    } = {},
+  ): Promise<T> {
+    const res = await this.request(url, init);
+    return (await res.json()) as T;
+  }
+
   async getUserInfo(): Promise<{ email: string | null; displayName: string | null }> {
-    const res = await fetch(
-      `${DRIVE_API_BASE}/about?fields=user(displayName,emailAddress)`,
-      { headers: this.authHeaders() },
-    );
-    if (!res.ok) throw await parseErrorResponse(res);
-    const data = (await res.json()) as {
+    const data = await this.requestJson<{
       user?: { displayName?: string; emailAddress?: string };
-    };
+    }>(`${DRIVE_API_BASE}/about?fields=user(displayName,emailAddress)`);
     return {
       email: data.user?.emailAddress ?? null,
       displayName: data.user?.displayName ?? null,
@@ -83,11 +117,9 @@ export class DriveClient {
       ? ` and '${escapeQueryValue(parentId)}' in parents`
       : ` and 'root' in parents`;
     const q = `name = '${escapeQueryValue(name)}' and mimeType = '${FOLDER_MIME}' and trashed = false${parentClause}`;
-    const url = `${DRIVE_API_BASE}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare))&pageSize=5`;
+    const url = `${DRIVE_API_BASE}/files?q=${encodeURIComponent(q)}&fields=files(${FILE_SUMMARY_FIELDS})&pageSize=5`;
 
-    const res = await fetch(url, { headers: this.authHeaders() });
-    if (!res.ok) throw await parseErrorResponse(res);
-    const data = (await res.json()) as { files?: DriveFileSummary[] };
+    const data = await this.requestJson<{ files?: DriveFileSummary[] }>(url);
     return data.files?.[0] ?? null;
   }
 
@@ -98,16 +130,14 @@ export class DriveClient {
     };
     if (parentId) metadata.parents = [parentId];
 
-    const res = await fetch(
-      `${DRIVE_API_BASE}/files?fields=id,name,mimeType,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare)`,
+    return this.requestJson<DriveFileSummary>(
+      `${DRIVE_API_BASE}/files?fields=${FILE_SUMMARY_FIELDS}`,
       {
         method: 'POST',
-        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(metadata),
       },
     );
-    if (!res.ok) throw await parseErrorResponse(res);
-    return (await res.json()) as DriveFileSummary;
   }
 
   async findOrCreateFolder(
@@ -120,12 +150,11 @@ export class DriveClient {
   }
 
   async verifyFileExists(fileId: string): Promise<DriveFileSummary | null> {
-    const res = await fetch(
+    const res = await this.request(
       `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,trashed,ownedByMe,shared,webViewLink,capabilities(canEdit,canAddChildren,canShare)`,
-      { headers: this.authHeaders() },
+      { ignore404: true },
     );
     if (res.status === 404) return null;
-    if (!res.ok) throw await parseErrorResponse(res);
     const data = (await res.json()) as DriveFileSummary & { trashed?: boolean };
     if (!data?.id || data.trashed) return null;
     return data;
@@ -139,20 +168,15 @@ export class DriveClient {
       const q = `'${escapeQueryValue(folderId)}' in parents and trashed = false`;
       const params = new URLSearchParams({
         q,
-        fields:
-          'nextPageToken,files(id,name,mimeType,size,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare))',
+        fields: FILE_LIST_FIELDS,
         pageSize: '100',
       });
       if (pageToken) params.set('pageToken', pageToken);
 
-      const res = await fetch(`${DRIVE_API_BASE}/files?${params.toString()}`, {
-        headers: this.authHeaders(),
-      });
-      if (!res.ok) throw await parseErrorResponse(res);
-      const data = (await res.json()) as {
+      const data = await this.requestJson<{
         files?: DriveFileSummary[];
         nextPageToken?: string;
-      };
+      }>(`${DRIVE_API_BASE}/files?${params.toString()}`);
       if (data.files) files.push(...data.files);
       pageToken = data.nextPageToken;
     } while (pageToken);
@@ -185,18 +209,16 @@ export class DriveClient {
     ].join('\r\n');
 
     const url = existingFileId
-      ? `${DRIVE_UPLOAD_BASE}/files/${encodeURIComponent(existingFileId)}?uploadType=multipart&fields=id,name,mimeType,size,modifiedTime`
-      : `${DRIVE_UPLOAD_BASE}/files?uploadType=multipart&fields=id,name,mimeType,size,modifiedTime`;
+      ? `${DRIVE_UPLOAD_BASE}/files/${encodeURIComponent(existingFileId)}?uploadType=multipart&fields=${UPLOAD_SUMMARY_FIELDS}`
+      : `${DRIVE_UPLOAD_BASE}/files?uploadType=multipart&fields=${UPLOAD_SUMMARY_FIELDS}`;
 
-    const res = await fetch(url, {
+    return this.requestJson<DriveFileSummary>(url, {
       method: existingFileId ? 'PATCH' : 'POST',
-      headers: this.authHeaders({
+      headers: {
         'Content-Type': `multipart/related; boundary=${boundary}`,
-      }),
+      },
       body: multipartBody,
     });
-    if (!res.ok) throw await parseErrorResponse(res);
-    return (await res.json()) as DriveFileSummary;
   }
 
   /**
@@ -215,20 +237,19 @@ export class DriveClient {
       : { name, mimeType, parents: [parentId] };
 
     const initUrl = existingFileId
-      ? `${DRIVE_UPLOAD_BASE}/files/${encodeURIComponent(existingFileId)}?uploadType=resumable&fields=id,name,mimeType,size,modifiedTime`
-      : `${DRIVE_UPLOAD_BASE}/files?uploadType=resumable&fields=id,name,mimeType,size,modifiedTime`;
+      ? `${DRIVE_UPLOAD_BASE}/files/${encodeURIComponent(existingFileId)}?uploadType=resumable&fields=${UPLOAD_SUMMARY_FIELDS}`
+      : `${DRIVE_UPLOAD_BASE}/files?uploadType=resumable&fields=${UPLOAD_SUMMARY_FIELDS}`;
 
-    const initRes = await fetch(initUrl, {
+    const initRes = await this.request(initUrl, {
       method: existingFileId ? 'PATCH' : 'POST',
-      headers: this.authHeaders({
+      headers: {
         'Content-Type': 'application/json; charset=UTF-8',
         'X-Upload-Content-Type': mimeType,
         'X-Upload-Content-Length': String(blob.size),
-      }),
+      },
       body: JSON.stringify(metadata),
     });
 
-    if (!initRes.ok) throw await parseErrorResponse(initRes);
     const uploadUri = initRes.headers.get('Location') || initRes.headers.get('location');
     if (!uploadUri) {
       throw new DriveApiError(500, 'Google Drive did not return a resumable upload URI.');
@@ -238,9 +259,7 @@ export class DriveClient {
 
     const putRes = await fetch(uploadUri, {
       method: 'PUT',
-      headers: {
-        'Content-Type': mimeType,
-      },
+      headers: { 'Content-Type': mimeType },
       body: blob,
     });
 
@@ -250,47 +269,24 @@ export class DriveClient {
   }
 
   async downloadFileBlob(fileId: string): Promise<Blob> {
-    const res = await fetch(
+    const res = await this.request(
       `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?alt=media`,
-      { headers: this.authHeaders() },
     );
-    if (!res.ok) throw await parseErrorResponse(res);
     return res.blob();
   }
 
   async downloadJsonFile<T>(fileId: string): Promise<T> {
-    const res = await fetch(
+    return this.requestJson<T>(
       `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?alt=media`,
-      { headers: this.authHeaders() },
     );
-    if (!res.ok) throw await parseErrorResponse(res);
-    return (await res.json()) as T;
   }
 
   async renameFile(fileId: string, newName: string): Promise<void> {
-    const res = await fetch(
-      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}`,
-      {
-        method: 'PATCH',
-        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ name: newName }),
-      },
-    );
-    if (!res.ok) throw await parseErrorResponse(res);
-  }
-
-  async trashFile(fileId: string): Promise<void> {
-    const res = await fetch(
-      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}`,
-      {
-        method: 'PATCH',
-        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ trashed: true }),
-      },
-    );
-    if (!res.ok && res.status !== 404) {
-      throw await parseErrorResponse(res);
-    }
+    await this.request(`${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName }),
+    });
   }
 
   // ============================================================================
@@ -298,14 +294,11 @@ export class DriveClient {
   // ============================================================================
 
   async listPermissions(fileId: string): Promise<DriveCollaboratorPermission[]> {
-    const res = await fetch(
-      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions?fields=permissions(id,type,role,emailAddress,displayName)`,
-      { headers: this.authHeaders() },
-    );
-    if (!res.ok) throw await parseErrorResponse(res);
-    const data = (await res.json()) as {
+    const data = await this.requestJson<{
       permissions?: DriveCollaboratorPermission[];
-    };
+    }>(
+      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions?fields=permissions(${PERMISSION_FIELDS})`,
+    );
     return data.permissions ?? [];
   }
 
@@ -317,16 +310,16 @@ export class DriveClient {
   ): Promise<DriveCollaboratorPermission> {
     const params = new URLSearchParams({
       sendNotificationEmail: 'true',
-      fields: 'id,type,role,emailAddress,displayName',
+      fields: PERMISSION_FIELDS,
     });
     if (emailMessage?.trim()) {
       params.set('emailMessage', emailMessage.trim());
     }
-    const res = await fetch(
+    return this.requestJson<DriveCollaboratorPermission>(
       `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions?${params.toString()}`,
       {
         method: 'POST',
-        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: 'user',
           role,
@@ -334,8 +327,6 @@ export class DriveClient {
         }),
       },
     );
-    if (!res.ok) throw await parseErrorResponse(res);
-    return (await res.json()) as DriveCollaboratorPermission;
   }
 
   async setAnyoneLinkAccess(
@@ -355,43 +346,30 @@ export class DriveClient {
 
     if (anyonePerm) {
       if (anyonePerm.role === role) return anyonePerm;
-      const patchRes = await fetch(
-        `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(anyonePerm.id)}?fields=id,type,role,emailAddress,displayName`,
+      return this.requestJson<DriveCollaboratorPermission>(
+        `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(anyonePerm.id)}?fields=${PERMISSION_FIELDS}`,
         {
           method: 'PATCH',
-          headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ role }),
         },
       );
-      if (!patchRes.ok) throw await parseErrorResponse(patchRes);
-      return (await patchRes.json()) as DriveCollaboratorPermission;
     }
 
-    const res = await fetch(
-      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions?fields=id,type,role,emailAddress,displayName`,
+    return this.requestJson<DriveCollaboratorPermission>(
+      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions?fields=${PERMISSION_FIELDS}`,
       {
         method: 'POST',
-        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          type: 'anyone',
-          role,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'anyone', role }),
       },
     );
-    if (!res.ok) throw await parseErrorResponse(res);
-    return (await res.json()) as DriveCollaboratorPermission;
   }
 
   async removePermission(fileId: string, permissionId: string): Promise<void> {
-    const res = await fetch(
+    await this.request(
       `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(permissionId)}`,
-      {
-        method: 'DELETE',
-        headers: this.authHeaders(),
-      },
+      { method: 'DELETE', ignore404: true },
     );
-    if (!res.ok && res.status !== 404) {
-      throw await parseErrorResponse(res);
-    }
   }
 }

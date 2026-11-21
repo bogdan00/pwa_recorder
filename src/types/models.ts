@@ -189,27 +189,31 @@ export interface DriveProjectMetadataFile {
   deletedRecordingIds?: string[];
   createdAt: number;
   updatedAt: number;
-  recordings: Array<{
-    id: string;
-    name: string;
-    notes: string;
-    recordedBy?: string;
-    orderIndex: number;
-    durationMs: number;
-    mimeType: string;
-    extension: AudioExtension;
-    sampleRate: number;
-    bitrateKbps?: number;
-    bitDepth?: number;
-    channels: ChannelCountOption;
-    deviceLabel?: string;
-    fileSizeBytes: number;
-    peaks: number[];
-    driveFileId?: string;
-    driveFileName: string;
-    createdAt: number;
-    updatedAt: number;
-  }>;
+  recordings: Array<
+    Pick<
+      Recording,
+      | 'id'
+      | 'name'
+      | 'notes'
+      | 'recordedBy'
+      | 'orderIndex'
+      | 'durationMs'
+      | 'mimeType'
+      | 'extension'
+      | 'sampleRate'
+      | 'bitrateKbps'
+      | 'bitDepth'
+      | 'channels'
+      | 'deviceLabel'
+      | 'fileSizeBytes'
+      | 'peaks'
+      | 'driveFileId'
+      | 'createdAt'
+      | 'updatedAt'
+    > & {
+      driveFileName: string;
+    }
+  >;
 }
 
 export const BOOK_COVER_PALETTE = [

@@ -4,10 +4,12 @@ import type {
   ChannelCountOption,
 } from '../types/models';
 import type { DecodedPcmAudio } from './audioExporter';
+import { buildStudioInputStrip } from './inputStrip';
 import {
-  buildStudioInputStrip,
-  writeNyquistKeepalive,
-} from './inputStrip';
+  attachPcmCapture,
+  type PcmCaptureHandle,
+  teardownPcmCapture,
+} from './pcmCapture';
 import { encodeWav } from './wavEncoder';
 
 export interface AudioInputDeviceInfo {
@@ -216,11 +218,7 @@ export class MicLevelTester {
   private stream: MediaStream | null = null;
   private audioCtx: AudioContext | null = null;
   private inputStripNodes: AudioNode[] = [];
-  private workletNode: AudioWorkletNode | null = null;
-  private workletOutputGain: GainNode | null = null;
-  private scriptNode: ScriptProcessorNode | null = null;
-  private scriptOutputGain: GainNode | null = null;
-  private scriptKeepaliveSign: 1 | -1 = 1;
+  private captureHandle: PcmCaptureHandle | null = null;
   private rafId: number | null = null;
   private stopped = false;
 
@@ -289,14 +287,12 @@ export class MicLevelTester {
     this.inputStripNodes.push(analyser);
 
     // Attach off-main-thread PCM capture (AudioWorklet with ScriptProcessor fallback)
-    const attachedWorklet = await this.tryAttachCaptureWorklet(
-      ctx,
-      tail,
-      targetChannels,
-    );
-    if (!attachedWorklet && !this.stopped) {
-      this.attachCaptureScriptFallback(ctx, tail, targetChannels);
-    }
+    this.captureHandle = await attachPcmCapture(ctx, tail, {
+      channels: targetChannels,
+      isActive: () => !this.stopped,
+      isAborted: () => this.stopped,
+      onChunk: ({ pcm }) => this.pushInterleavedChunk(pcm),
+    });
 
     if (this.stopped) {
       this.teardownAudioGraph();
@@ -351,113 +347,6 @@ export class MicLevelTester {
     while (this.capturedFrames > maxFrames && this.captureChunks.length > 1) {
       const oldest = this.captureChunks.shift()!;
       this.capturedFrames -= Math.floor(oldest.length / this.captureChannels);
-    }
-  }
-
-  private async tryAttachCaptureWorklet(
-    ctx: AudioContext,
-    sourceNode: AudioNode,
-    channels: ChannelCountOption,
-  ): Promise<boolean> {
-    if (!ctx.audioWorklet || typeof AudioWorkletNode === 'undefined') {
-      return false;
-    }
-    try {
-      const base =
-        (typeof import.meta !== 'undefined' &&
-          import.meta.env &&
-          import.meta.env.BASE_URL) ||
-        '/';
-      const workletUrl = `${base.endsWith('/') ? base : `${base}/`}audio/pcm-capture-worklet.js`;
-      await ctx.audioWorklet.addModule(workletUrl);
-      if (this.stopped) return false;
-
-      const node = new AudioWorkletNode(ctx, 'pcm-capture-processor', {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        outputChannelCount: [1],
-        channelCount: channels,
-        channelCountMode: 'explicit',
-        processorOptions: { channels },
-      });
-
-      node.port.onmessage = (event) => {
-        const msg = event.data;
-        if (!msg || msg.type !== 'chunk' || this.stopped) return;
-        const pcm =
-          msg.pcm instanceof Float32Array ? msg.pcm : new Float32Array(msg.pcm);
-        this.pushInterleavedChunk(pcm);
-      };
-
-      // Unity gain passes only the worklet's inaudible -100 dBFS Nyquist keepalive
-      // (never mic audio), keeping Chromium's hardware sink active past 30s.
-      const outputGain = ctx.createGain();
-      outputGain.gain.value = 1;
-      sourceNode.connect(node);
-      node.connect(outputGain);
-      outputGain.connect(ctx.destination);
-
-      this.workletNode = node;
-      this.workletOutputGain = outputGain;
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private attachCaptureScriptFallback(
-    ctx: AudioContext,
-    sourceNode: AudioNode,
-    channels: ChannelCountOption,
-  ): void {
-    if (typeof ctx.createScriptProcessor !== 'function') return;
-    try {
-      const processor = ctx.createScriptProcessor(4096, channels, channels);
-      const outputGain = ctx.createGain();
-      outputGain.gain.value = 1;
-      this.scriptKeepaliveSign = 1;
-
-      processor.onaudioprocess = (event) => {
-        if (event.outputBuffer && event.outputBuffer.numberOfChannels > 0) {
-          const out0 = event.outputBuffer.getChannelData(0);
-          if (this.stopped) {
-            out0.fill(0);
-          } else {
-            this.scriptKeepaliveSign = writeNyquistKeepalive(
-              out0,
-              this.scriptKeepaliveSign,
-            );
-          }
-          for (let ch = 1; ch < event.outputBuffer.numberOfChannels; ch += 1) {
-            event.outputBuffer.getChannelData(ch).fill(0);
-          }
-        }
-        if (this.stopped) return;
-        const ch0 = event.inputBuffer.getChannelData(0);
-        const ch1 =
-          channels === 2
-            ? event.inputBuffer.numberOfChannels > 1
-              ? event.inputBuffer.getChannelData(1)
-              : ch0
-            : null;
-        const frames = ch0.length;
-        const interleaved = new Float32Array(frames * channels);
-        for (let i = 0; i < frames; i += 1) {
-          interleaved[i * channels] = ch0[i];
-          if (channels === 2 && ch1) {
-            interleaved[i * channels + 1] = ch1[i];
-          }
-        }
-        this.pushInterleavedChunk(interleaved);
-      };
-
-      sourceNode.connect(processor);
-      processor.connect(outputGain);
-      outputGain.connect(ctx.destination);
-      this.scriptNode = processor;
-      this.scriptOutputGain = outputGain;
-    } catch {
-      // Ignore if environment lacks ScriptProcessorNode
     }
   }
 
@@ -518,40 +407,9 @@ export class MicLevelTester {
     }
     this.inputStripNodes = [];
 
-    if (this.workletNode) {
-      try {
-        this.workletNode.port.onmessage = null;
-        this.workletNode.port.postMessage({ type: 'setActive', active: false });
-        this.workletNode.disconnect();
-      } catch {
-        // Ignore
-      }
-      this.workletNode = null;
-    }
-    if (this.workletOutputGain) {
-      try {
-        this.workletOutputGain.disconnect();
-      } catch {
-        // Ignore
-      }
-      this.workletOutputGain = null;
-    }
-    if (this.scriptNode) {
-      try {
-        this.scriptNode.disconnect();
-      } catch {
-        // Ignore
-      }
-      this.scriptNode.onaudioprocess = null;
-      this.scriptNode = null;
-    }
-    if (this.scriptOutputGain) {
-      try {
-        this.scriptOutputGain.disconnect();
-      } catch {
-        // Ignore
-      }
-      this.scriptOutputGain = null;
+    if (this.captureHandle) {
+      teardownPcmCapture(this.captureHandle);
+      this.captureHandle = null;
     }
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop());

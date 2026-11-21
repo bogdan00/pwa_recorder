@@ -20,15 +20,21 @@ import type {
   DriveCollaboratorPermission,
   ShareAccessRole,
 } from '../types/models';
-import { DriveApiError, DriveClient } from '../drive/driveClient';
-import { googleAuth } from '../drive/googleAuth';
+import { DriveApiError } from '../drive/driveClient';
 import {
   buildJoinShareUrl,
   copyTextToClipboard,
   getDriveFolderWebUrl,
   shareInviteLink,
 } from '../drive/shareUtils';
-import { ConfirmDialog } from './ConfirmDialog';
+import {
+  listDriveFolderPermissions,
+  removeDriveFolderPermission,
+  setDriveFolderAnyoneLinkAccess,
+  shareDriveFolderWithEmail,
+} from '../drive/syncService';
+import { useConfirm } from './ConfirmDialogContext';
+import { ToggleRow } from './ToggleRow';
 import './ShareSheet.css';
 
 export interface ShareSheetProps {
@@ -95,6 +101,7 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
   onPrepareFolder,
   onToast,
 }) => {
+  const confirm = useConfirm();
   const [preparedFolder, setPreparedFolder] = useState<{
     folderId: string;
     title: string;
@@ -115,8 +122,6 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
 
   const [togglingAnyone, setTogglingAnyone] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
-  const [pendingRemovePerm, setPendingRemovePerm] =
-    useState<DriveCollaboratorPermission | null>(null);
 
   const activeFolderId = folderId || preparedFolder?.folderId || '';
   const activeTitle =
@@ -153,58 +158,21 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [open, onClose]);
 
-  const loadPermissions = useCallback(async (targetFolderId: string) => {
-    const token = googleAuth.getAccessToken();
-    if (!token || !targetFolderId) return;
+  const loadPermissions = useCallback(
+    async (targetFolderId: string, isActive: () => boolean = () => true) => {
+      if (!targetFolderId) return;
 
-    setLoadingPermissions(true);
-    setPermissionsRestricted(false);
-    setPermissionsError(null);
+      setLoadingPermissions(true);
+      setPermissionsRestricted(false);
+      setPermissionsError(null);
 
-    try {
-      const client = new DriveClient(token);
-      const list = await client.listPermissions(targetFolderId);
-      setPermissions(list);
-    } catch (err) {
-      if (err instanceof DriveApiError && err.status === 401) {
-        googleAuth.markExpired();
-        setPermissionsError('Google Drive session expired. Please reconnect to manage sharing.');
-      } else if (err instanceof DriveApiError && (err.status === 403 || err.status === 404)) {
-        setPermissionsRestricted(true);
-      } else {
-        setPermissionsError(
-          err instanceof Error
-            ? err.message
-            : 'Could not load collaborators right now.',
-        );
-      }
-    } finally {
-      setLoadingPermissions(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!open || !isDriveConnected || !activeFolderId) return;
-    let active = true;
-
-    const token = googleAuth.getAccessToken();
-    if (!token) return;
-
-    setLoadingPermissions(true);
-    setPermissionsRestricted(false);
-    setPermissionsError(null);
-
-    const client = new DriveClient(token);
-    void client
-      .listPermissions(activeFolderId)
-      .then((list) => {
-        if (!active) return;
+      try {
+        const list = await listDriveFolderPermissions(targetFolderId);
+        if (!isActive()) return;
         setPermissions(list);
-      })
-      .catch((err) => {
-        if (!active) return;
+      } catch (err) {
+        if (!isActive()) return;
         if (err instanceof DriveApiError && err.status === 401) {
-          googleAuth.markExpired();
           setPermissionsError(
             'Google Drive session expired. Please reconnect to manage sharing.',
           );
@@ -220,15 +188,21 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
               : 'Could not load collaborators right now.',
           );
         }
-      })
-      .finally(() => {
-        if (active) setLoadingPermissions(false);
-      });
+      } finally {
+        if (isActive()) setLoadingPermissions(false);
+      }
+    },
+    [],
+  );
 
+  useEffect(() => {
+    if (!open || !isDriveConnected || !activeFolderId) return;
+    let active = true;
+    void loadPermissions(activeFolderId, () => active);
     return () => {
       active = false;
     };
-  }, [open, isDriveConnected, activeFolderId]);
+  }, [open, isDriveConnected, activeFolderId, loadPermissions]);
 
   const inviteUrl = useMemo(() => {
     if (!activeFolderId) return '';
@@ -261,9 +235,6 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
       setPreparedFolder(result);
       onToast('Share folder ready in Google Drive');
     } catch (err) {
-      if (err instanceof DriveApiError && err.status === 401) {
-        googleAuth.markExpired();
-      }
       setPrepareError(
         err instanceof Error
           ? err.message
@@ -279,17 +250,10 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
     const trimmedEmail = email.trim();
     if (!trimmedEmail || inviting || !activeFolderId || isReadOnly) return;
 
-    const token = googleAuth.getAccessToken();
-    if (!token) {
-      setInviteError('Google Drive session expired. Reconnect to send invites.');
-      return;
-    }
-
     setInviting(true);
     setInviteError(null);
     try {
-      const client = new DriveClient(token);
-      const created = await client.shareWithEmail(
+      const created = await shareDriveFolderWithEmail(
         activeFolderId,
         trimmedEmail,
         selectedRole,
@@ -316,9 +280,6 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
         }`,
       );
     } catch (err) {
-      if (err instanceof DriveApiError && err.status === 401) {
-        googleAuth.markExpired();
-      }
       setInviteError(
         err instanceof Error ? err.message : 'Failed to send Google Drive invite.',
       );
@@ -329,18 +290,12 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
 
   const handleToggleAnyoneLink = async () => {
     if (togglingAnyone || !activeFolderId || isReadOnly) return;
-    const token = googleAuth.getAccessToken();
-    if (!token) {
-      onToast('Reconnect Google Drive to update link access');
-      return;
-    }
 
     const nextEnabled = !anyoneEnabled;
     setTogglingAnyone(true);
     setPermissionsError(null);
     try {
-      const client = new DriveClient(token);
-      const updated = await client.setAnyoneLinkAccess(
+      const updated = await setDriveFolderAnyoneLinkAccess(
         activeFolderId,
         nextEnabled,
         'reader',
@@ -355,9 +310,6 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
           : 'Public link access turned off',
       );
     } catch (err) {
-      if (err instanceof DriveApiError && err.status === 401) {
-        googleAuth.markExpired();
-      }
       setPermissionsError(
         err instanceof Error
           ? err.message
@@ -370,24 +322,15 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
 
   const handleRemovePermission = async (perm: DriveCollaboratorPermission) => {
     if (removingId || !activeFolderId || isReadOnly) return;
-    const token = googleAuth.getAccessToken();
-    if (!token) {
-      onToast('Reconnect Google Drive to remove collaborators');
-      return;
-    }
 
     const label = perm.emailAddress || perm.displayName || 'collaborator';
     setRemovingId(perm.id);
     setPermissionsError(null);
     try {
-      const client = new DriveClient(token);
-      await client.removePermission(activeFolderId, perm.id);
+      await removeDriveFolderPermission(activeFolderId, perm.id);
       setPermissions((prev) => prev.filter((p) => p.id !== perm.id));
       onToast(`Removed ${label}`);
     } catch (err) {
-      if (err instanceof DriveApiError && err.status === 401) {
-        googleAuth.markExpired();
-      }
       setPermissionsError(
         err instanceof Error
           ? err.message
@@ -694,28 +637,13 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
                   </h3>
                 </div>
 
-                <div className="toggle-row">
-                  <div className="toggle-text">
-                    <span className="toggle-title">
-                      Anyone with the link can listen
-                    </span>
-                    <span className="toggle-desc">
-                      Allows family with this link to open &amp; listen even
-                      without an email invite
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={anyoneEnabled}
-                    aria-label="Anyone with the link can listen"
-                    className="switch"
-                    disabled={togglingAnyone || isReadOnly}
-                    onClick={handleToggleAnyoneLink}
-                  >
-                    <span className="switch-thumb" />
-                  </button>
-                </div>
+                <ToggleRow
+                  title="Anyone with the link can listen"
+                  description="Allows family with this link to open & listen even without an email invite"
+                  checked={anyoneEnabled}
+                  disabled={togglingAnyone || isReadOnly}
+                  onToggle={handleToggleAnyoneLink}
+                />
 
                 <div className="share-link-preview-box">
                   <input
@@ -881,7 +809,28 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
                                 className="btn btn-ghost btn-sm share-remove-btn"
                                 aria-label={`Remove ${removeTargetLabel}`}
                                 disabled={removingId === perm.id}
-                                onClick={() => setPendingRemovePerm(perm)}
+                                onClick={() =>
+                                  confirm({
+                                    title: 'Remove Collaborator Access?',
+                                    description: (
+                                      <>
+                                        Revoke Google Drive access for{' '}
+                                        <strong>
+                                          {perm.emailAddress ||
+                                            perm.displayName ||
+                                            'this collaborator'}
+                                        </strong>
+                                        ? They will no longer be able to access
+                                        or sync updates for{' '}
+                                        <strong>{activeTitle}</strong>.
+                                      </>
+                                    ),
+                                    confirmLabel: 'Remove Access',
+                                    tone: 'danger',
+                                    onConfirm: () =>
+                                      handleRemovePermission(perm),
+                                  })
+                                }
                               >
                                 {removingId === perm.id ? (
                                   <Loader2 size={14} className="spin" />
@@ -907,33 +856,6 @@ export const ShareSheet: React.FC<ShareSheetProps> = ({
           </button>
         </div>
       </div>
-
-      <ConfirmDialog
-        open={pendingRemovePerm !== null}
-        title="Remove Collaborator Access?"
-        description={
-          <>
-            Revoke Google Drive access for{' '}
-            <strong>
-              {pendingRemovePerm?.emailAddress ||
-                pendingRemovePerm?.displayName ||
-                'this collaborator'}
-            </strong>
-            ? They will no longer be able to access or sync updates for{' '}
-            <strong>{activeTitle}</strong>.
-          </>
-        }
-        confirmLabel="Remove Access"
-        tone="danger"
-        isBusy={Boolean(pendingRemovePerm && removingId === pendingRemovePerm.id)}
-        onCancel={() => setPendingRemovePerm(null)}
-        onConfirm={async () => {
-          if (!pendingRemovePerm) return;
-          const target = pendingRemovePerm;
-          await handleRemovePermission(target);
-          setPendingRemovePerm(null);
-        }}
-      />
     </div>
   );
 };

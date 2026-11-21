@@ -99,18 +99,3 @@ export function downsamplePeaks(peaks: number[], targetCount = 120): number[] {
   }
   return result;
 }
-
-export function formatDateShort(ts: number): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year:
-        new Date(ts).getFullYear() === new Date().getFullYear()
-          ? undefined
-          : 'numeric',
-    }).format(new Date(ts));
-  } catch {
-    return new Date(ts).toLocaleDateString();
-  }
-}

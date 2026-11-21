@@ -6,6 +6,7 @@ import type {
   PlaybackProgress,
   Recording,
 } from '../types/models';
+import { blobToArrayBuffer } from '../utils/blob';
 
 const DB_NAME = 'storytape-db';
 const DB_VERSION = 2;
@@ -15,23 +16,17 @@ interface StoredBinaryRecord {
   type: string;
 }
 
+type StoredBinaryValue = Blob | StoredBinaryRecord;
+type BinaryStoreName = 'projectCovers' | 'recordingBlobs' | 'recordingMasters';
+
 async function blobToStoredRecord(blob: Blob): Promise<StoredBinaryRecord> {
   const type = blob.type || 'application/octet-stream';
-  if (typeof blob.arrayBuffer === 'function') {
-    const buffer = await blob.arrayBuffer();
-    return { buffer, type };
-  }
-  const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as ArrayBuffer);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsArrayBuffer(blob);
-  });
+  const buffer = await blobToArrayBuffer(blob);
   return { buffer, type };
 }
 
 function storedRecordToBlob(
-  value: Blob | StoredBinaryRecord | undefined,
+  value: StoredBinaryValue | undefined,
 ): Blob | undefined {
   if (!value) return undefined;
   if (value instanceof Blob) return value;
@@ -39,6 +34,24 @@ function storedRecordToBlob(
     return new Blob([value.buffer], { type: value.type || 'application/octet-stream' });
   }
   return undefined;
+}
+
+function storedBinaryByteLength(value: StoredBinaryValue | undefined): number {
+  if (!value) return 0;
+  if (value instanceof Blob) return value.size;
+  if ('buffer' in value && value.buffer) return value.buffer.byteLength;
+  return 0;
+}
+
+function stripLocalMasterFields(rec: Recording): Recording {
+  return {
+    ...rec,
+    hasLocalMaster: false,
+    localMasterBytes: undefined,
+    localMasterSampleRate: undefined,
+    localMasterBitDepth: undefined,
+    localMasterChannels: undefined,
+  };
 }
 
 interface StoryTapeDBSchema extends DBSchema {
@@ -49,7 +62,7 @@ interface StoryTapeDBSchema extends DBSchema {
   };
   projectCovers: {
     key: string;
-    value: Blob | StoredBinaryRecord;
+    value: StoredBinaryValue;
   };
   recordings: {
     key: string;
@@ -58,11 +71,11 @@ interface StoryTapeDBSchema extends DBSchema {
   };
   recordingBlobs: {
     key: string;
-    value: Blob | StoredBinaryRecord;
+    value: StoredBinaryValue;
   };
   recordingMasters: {
     key: string;
-    value: Blob | StoredBinaryRecord;
+    value: StoredBinaryValue;
   };
   playbackProgress: {
     key: string;
@@ -130,6 +143,25 @@ export async function resetDbConnectionForTests(): Promise<void> {
   }
 }
 
+async function putBinary(
+  store: BinaryStoreName,
+  key: string,
+  blob: Blob,
+): Promise<void> {
+  const stored = await blobToStoredRecord(blob);
+  const db = await getDb();
+  await db.put(store, stored, key);
+}
+
+async function getBinary(
+  store: BinaryStoreName,
+  key: string,
+): Promise<Blob | undefined> {
+  const db = await getDb();
+  const raw = await db.get(store, key);
+  return storedRecordToBlob(raw);
+}
+
 // ============================================================================
 // Book Projects
 // ============================================================================
@@ -175,21 +207,12 @@ export async function deleteProject(projectId: string): Promise<void> {
   await tx.done;
 }
 
-export async function putProjectCover(
-  projectId: string,
-  blob: Blob,
-): Promise<void> {
-  const stored = await blobToStoredRecord(blob);
-  const db = await getDb();
-  await db.put('projectCovers', stored, projectId);
+export function putProjectCover(projectId: string, blob: Blob): Promise<void> {
+  return putBinary('projectCovers', projectId, blob);
 }
 
-export async function getProjectCover(
-  projectId: string,
-): Promise<Blob | undefined> {
-  const db = await getDb();
-  const raw = await db.get('projectCovers', projectId);
-  return storedRecordToBlob(raw);
+export function getProjectCover(projectId: string): Promise<Blob | undefined> {
+  return getBinary('projectCovers', projectId);
 }
 
 export async function deleteProjectCover(projectId: string): Promise<void> {
@@ -249,43 +272,16 @@ export async function putRecording(
   }
 }
 
-export async function putRecordingBlob(
-  recordingId: string,
-  blob: Blob,
-): Promise<void> {
-  const stored = await blobToStoredRecord(blob);
-  const db = await getDb();
-  await db.put('recordingBlobs', stored, recordingId);
+export function putRecordingBlob(recordingId: string, blob: Blob): Promise<void> {
+  return putBinary('recordingBlobs', recordingId, blob);
 }
 
-export async function getRecordingBlob(
-  recordingId: string,
-): Promise<Blob | undefined> {
-  const db = await getDb();
-  const raw = await db.get('recordingBlobs', recordingId);
-  return storedRecordToBlob(raw);
+export function getRecordingBlob(recordingId: string): Promise<Blob | undefined> {
+  return getBinary('recordingBlobs', recordingId);
 }
 
-export async function deleteRecordingBlob(recordingId: string): Promise<void> {
-  const db = await getDb();
-  await db.delete('recordingBlobs', recordingId);
-}
-
-export async function putRecordingMaster(
-  recordingId: string,
-  blob: Blob,
-): Promise<void> {
-  const stored = await blobToStoredRecord(blob);
-  const db = await getDb();
-  await db.put('recordingMasters', stored, recordingId);
-}
-
-export async function getRecordingMaster(
-  recordingId: string,
-): Promise<Blob | undefined> {
-  const db = await getDb();
-  const raw = await db.get('recordingMasters', recordingId);
-  return storedRecordToBlob(raw);
+export function getRecordingMaster(recordingId: string): Promise<Blob | undefined> {
+  return getBinary('recordingMasters', recordingId);
 }
 
 export async function deleteRecordingMaster(recordingId: string): Promise<void> {
@@ -294,14 +290,7 @@ export async function deleteRecordingMaster(recordingId: string): Promise<void> 
   await tx.objectStore('recordingMasters').delete(recordingId);
   const rec = await tx.objectStore('recordings').get(recordingId);
   if (rec && rec.hasLocalMaster) {
-    await tx.objectStore('recordings').put({
-      ...rec,
-      hasLocalMaster: false,
-      localMasterBytes: undefined,
-      localMasterSampleRate: undefined,
-      localMasterBitDepth: undefined,
-      localMasterChannels: undefined,
-    });
+    await tx.objectStore('recordings').put(stripLocalMasterFields(rec));
   }
   await tx.done;
 }
@@ -314,11 +303,7 @@ export async function getLocalMastersSummary(): Promise<{
   const all = await db.getAll('recordingMasters');
   let totalBytes = 0;
   for (const item of all) {
-    if (item instanceof Blob) {
-      totalBytes += item.size;
-    } else if (item && 'buffer' in item && item.buffer) {
-      totalBytes += item.buffer.byteLength;
-    }
+    totalBytes += storedBinaryByteLength(item);
   }
   return { count: all.length, totalBytes };
 }
@@ -333,24 +318,13 @@ export async function clearAllLocalMasters(): Promise<{
   let freedBytes = 0;
   for (const key of keys) {
     const raw = await tx.objectStore('recordingMasters').get(key);
-    if (raw instanceof Blob) {
-      freedBytes += raw.size;
-    } else if (raw && 'buffer' in raw && raw.buffer) {
-      freedBytes += raw.buffer.byteLength;
-    }
+    freedBytes += storedBinaryByteLength(raw);
     await tx.objectStore('recordingMasters').delete(key);
   }
   const recs = await tx.objectStore('recordings').getAll();
   for (const rec of recs) {
     if (rec.hasLocalMaster) {
-      await tx.objectStore('recordings').put({
-        ...rec,
-        hasLocalMaster: false,
-        localMasterBytes: undefined,
-        localMasterSampleRate: undefined,
-        localMasterBitDepth: undefined,
-        localMasterChannels: undefined,
-      });
+      await tx.objectStore('recordings').put(stripLocalMasterFields(rec));
     }
   }
   await tx.done;

@@ -20,7 +20,6 @@ export class AbComparePlayer {
   private masterGain: GainNode | null = null;
   private candidateGain: GainNode | null = null;
 
-  private activeSlot: CompareTrackSlot = 'master';
   private isPlaying = false;
   private loop = true;
   private startCtxTime = 0;
@@ -66,22 +65,12 @@ export class AbComparePlayer {
     this.pausedOffsetSec = 0;
   }
 
-  setLoop(enabled: boolean): void {
-    this.loop = enabled;
-    if (this.masterSource) this.masterSource.loop = enabled;
-    if (this.candidateSource) this.candidateSource.loop = enabled;
-  }
-
   getDurationSec(): number {
     return this.durationSec;
   }
 
   getIsPlaying(): boolean {
     return this.isPlaying;
-  }
-
-  getActiveSlot(): CompareTrackSlot {
-    return this.activeSlot;
   }
 
   getCurrentTimeSec(): number {
@@ -111,7 +100,6 @@ export class AbComparePlayer {
     }
 
     this.teardownSources();
-    this.activeSlot = slot;
 
     const startOffset =
       offsetSec !== undefined
@@ -164,7 +152,6 @@ export class AbComparePlayer {
   }
 
   switchSlot(slot: CompareTrackSlot): void {
-    this.activeSlot = slot;
     if (!this.isPlaying || !this.ctx || !this.masterGain || !this.candidateGain) {
       return;
     }
@@ -192,14 +179,6 @@ export class AbComparePlayer {
     this.isPlaying = false;
     this.pausedOffsetSec = 0;
     this.teardownSources();
-  }
-
-  async seek(sec: number): Promise<void> {
-    const clamped = Math.max(0, Math.min(this.durationSec, sec));
-    this.pausedOffsetSec = clamped;
-    if (this.isPlaying) {
-      await this.play(this.activeSlot, clamped);
-    }
   }
 
   private teardownSources(): void {

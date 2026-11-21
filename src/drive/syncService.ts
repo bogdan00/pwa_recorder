@@ -1,6 +1,7 @@
 import type {
   AppSettings,
   BookProject,
+  DriveCollaboratorPermission,
   DriveProjectMetadataFile,
   Recording,
   ShareAccessRole,
@@ -785,6 +786,48 @@ export async function downloadCloudRecording(
     });
     return blob;
   });
+}
+
+export function listDriveFolderPermissions(
+  folderId: string,
+  clientOverride?: DriveClient,
+): Promise<DriveCollaboratorPermission[]> {
+  return withAuthorizedClient(clientOverride, (client) =>
+    client.listPermissions(folderId),
+  );
+}
+
+export function shareDriveFolderWithEmail(
+  folderId: string,
+  email: string,
+  role: 'writer' | 'reader',
+  emailMessage?: string,
+  clientOverride?: DriveClient,
+): Promise<DriveCollaboratorPermission> {
+  return withAuthorizedClient(clientOverride, (client) =>
+    client.shareWithEmail(folderId, email, role, emailMessage),
+  );
+}
+
+export function setDriveFolderAnyoneLinkAccess(
+  folderId: string,
+  enabled: boolean,
+  role: 'reader' | 'writer' = 'reader',
+  clientOverride?: DriveClient,
+): Promise<DriveCollaboratorPermission | null> {
+  return withAuthorizedClient(clientOverride, (client) =>
+    client.setAnyoneLinkAccess(folderId, enabled, role),
+  );
+}
+
+export function removeDriveFolderPermission(
+  folderId: string,
+  permissionId: string,
+  clientOverride?: DriveClient,
+): Promise<void> {
+  return withAuthorizedClient(clientOverride, (client) =>
+    client.removePermission(folderId, permissionId),
+  );
 }
 
 async function withAuthorizedClient<T>(

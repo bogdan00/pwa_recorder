@@ -45,10 +45,6 @@ export class PcmTimeline {
     return this.peaks;
   }
 
-  getInterleavedChunks(): Float32Array[] {
-    return this.chunks;
-  }
-
   canUndoTruncate(): boolean {
     return this.undoSnapshot !== null;
   }
@@ -63,11 +59,6 @@ export class PcmTimeline {
       this.totalFrames,
       Math.max(0, Math.round((clampedMs / 1000) * this.sampleRate)),
     );
-  }
-
-  frameToMs(frame: number): number {
-    const clamped = Math.max(0, Math.min(frame, this.totalFrames));
-    return (clamped / this.sampleRate) * 1000;
   }
 
   /**

@@ -1,3 +1,5 @@
+import { downloadBlob } from '../utils/blob';
+
 export type ShareScope = 'library' | 'book';
 
 export interface JoinShareInvite {
@@ -185,13 +187,6 @@ export async function shareAudioChapter(params: {
     }
   }
 
-  const url = URL.createObjectURL(params.blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = params.fileName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(params.blob, params.fileName);
   return 'downloaded';
 }

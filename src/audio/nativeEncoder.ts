@@ -322,60 +322,39 @@ export async function encodeAudio(
 
   onProgress?.(0.05);
 
-  if (preferred === 'wav') {
-    const resampled = await resampleChannelData(
-      sourceChannels,
-      sourceSampleRate,
-      quality.sampleRate,
-    );
-    const prepared =
-      quality.wavBitDepth === 32
-        ? resampled
-        : applyPeakCeilingToChannels(resampled);
-    onProgress?.(0.6);
-    const blob = encodeWav(prepared, quality.sampleRate, quality.wavBitDepth);
-    onProgress?.(1);
-    return {
-      blob,
-      mimeType: 'audio/wav',
-      extension: 'wav',
-      sampleRate: quality.sampleRate,
-      bitDepth: quality.wavBitDepth,
-      channels: numChannels,
-    };
-  }
+  if (preferred !== 'wav') {
+    // Try preferred compressed format, then alternate compressed format, then WAV fallback
+    const attempts: Array<'m4a' | 'webm'> =
+      preferred === 'm4a' ? ['m4a', 'webm'] : ['webm', 'm4a'];
 
-  // Try preferred compressed format, then alternate compressed format, then WAV fallback
-  const attempts: Array<'m4a' | 'webm'> =
-    preferred === 'm4a' ? ['m4a', 'webm'] : ['webm', 'm4a'];
-
-  for (const fmt of attempts) {
-    const targetRate =
-      fmt === 'webm'
-        ? mapSampleRateForOpus(quality.sampleRate)
-        : Math.min(48000, quality.sampleRate); // AAC-LC standard max 48 kHz in most OS WebCodecs encoders
-    try {
-      const resampled = await resampleChannelData(
-        sourceChannels,
-        sourceSampleRate,
-        targetRate,
-      );
-      // Bound inter-sample/post-resample peaks at -1.0 dBFS before lossy AAC/Opus encoding
-      const bounded = applyPeakCeilingToChannels(resampled);
-      const encoded = await encodeViaWebCodecs(
-        fmt,
-        bounded,
-        targetRate,
-        quality,
-        onProgress,
-      );
-      if (encoded) return encoded;
-    } catch {
-      // Try next fallback format
+    for (const fmt of attempts) {
+      const targetRate =
+        fmt === 'webm'
+          ? mapSampleRateForOpus(quality.sampleRate)
+          : Math.min(48000, quality.sampleRate); // AAC-LC standard max 48 kHz in most OS WebCodecs encoders
+      try {
+        const resampled = await resampleChannelData(
+          sourceChannels,
+          sourceSampleRate,
+          targetRate,
+        );
+        // Bound inter-sample/post-resample peaks at -1.0 dBFS before lossy AAC/Opus encoding
+        const bounded = applyPeakCeilingToChannels(resampled);
+        const encoded = await encodeViaWebCodecs(
+          fmt,
+          bounded,
+          targetRate,
+          quality,
+          onProgress,
+        );
+        if (encoded) return encoded;
+      } catch {
+        // Try next fallback format
+      }
     }
   }
 
-  // Guaranteed safety fallback: Lossless WAV
+  // Lossless WAV (explicitly requested or guaranteed safety fallback)
   const resampled = await resampleChannelData(
     sourceChannels,
     sourceSampleRate,
@@ -385,6 +364,7 @@ export async function encodeAudio(
     quality.wavBitDepth === 32
       ? resampled
       : applyPeakCeilingToChannels(resampled);
+  onProgress?.(0.6);
   const wavBlob = encodeWav(prepared, quality.sampleRate, quality.wavBitDepth);
   onProgress?.(1);
   return {

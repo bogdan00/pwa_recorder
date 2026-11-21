@@ -78,7 +78,7 @@ export function usePlayer(): PlayerContextValue {
 
 interface PlayerProviderProps {
   children: React.ReactNode;
-  onProgressUpdated?: () => void;
+  onProgressUpdated?: (progress: import('../types/models').PlaybackProgress) => void;
 }
 
 export const PlayerProvider: React.FC<PlayerProviderProps> = ({
@@ -90,6 +90,8 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
   const coverUrlRef = useRef<string | null>(null);
   const sleepIntervalRef = useRef<number | null>(null);
   const lastSavedSecRef = useRef<number>(-10);
+  const onProgressUpdatedRef = useRef(onProgressUpdated);
+  onProgressUpdatedRef.current = onProgressUpdated;
 
   const [project, setProject] = useState<BookProject | null>(null);
   const [chapters, setChapters] = useState<Recording[]>([]);
@@ -141,20 +143,21 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
         const completedSet = new Set(existing?.completedRecordingIds ?? []);
         if (markCompleted) completedSet.add(rec.id);
 
-        await putPlaybackProgress({
+        const nextProgress = {
           projectId: projId,
           recordingId: rec.id,
           positionSec: Math.max(0, posSec),
           durationSec: Math.max(durSec, rec.durationMs / 1000),
           completedRecordingIds: Array.from(completedSet),
           updatedAt: Date.now(),
-        });
-        onProgressUpdated?.();
+        };
+        await putPlaybackProgress(nextProgress);
+        onProgressUpdatedRef.current?.(nextProgress);
       } catch {
         // Non-fatal
       }
     },
-    [onProgressUpdated],
+    [],
   );
 
   const updateMediaSession = useCallback(

@@ -9,6 +9,7 @@ import type {
   WavBitDepthOption,
 } from '../types/models';
 import { DEFAULT_AUDIO_QUALITY } from '../storage/settings';
+import { blobToArrayBuffer } from '../utils/blob';
 import { sanitizeFileName } from '../utils/format';
 import { encodeAudio, type EncodedAudioResult } from './nativeEncoder';
 import { decodeWav, isWavBuffer } from './wavEncoder';
@@ -66,18 +67,6 @@ export interface ThresholdRecommendation {
   bytesPerMinute: number;
   savingsPercent: number;
   reason: string;
-}
-
-async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
-  if (typeof blob.arrayBuffer === 'function') {
-    return blob.arrayBuffer();
-  }
-  return new Promise<ArrayBuffer>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as ArrayBuffer);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsArrayBuffer(blob);
-  });
 }
 
 /**

@@ -25,6 +25,7 @@ import {
   type StudioSnapshot,
 } from '../audio/recordingEngine';
 import { formatDurationMs } from '../utils/format';
+import { useConfirm } from '../components/ConfirmDialogContext';
 import { SaveRecordingSheet } from '../components/SaveRecordingSheet';
 import { WaveformCanvas } from '../components/WaveformCanvas';
 import './RecordingStudioView.css';
@@ -73,6 +74,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   onRecordingSaved,
   engineFactory,
 }) => {
+  const confirm = useConfirm();
   const engineRef = useRef<RecordingEngine | null>(null);
   if (!engineRef.current) {
     engineRef.current = engineFactory
@@ -93,7 +95,6 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [encodeProgress, setEncodeProgress] = useState(0);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const [confirmExitOpen, setConfirmExitOpen] = useState(false);
 
   useEffect(() => {
@@ -267,10 +268,18 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     setConfirmExitOpen(true);
   };
 
-  const handleDiscardConfirm = async () => {
-    await engineRef.current!.discard();
-    setConfirmDiscardOpen(false);
-    onToast('Take discarded');
+  const handleRequestDiscard = () => {
+    confirm({
+      title: 'Discard this Take?',
+      description: `This will permanently remove the current ${formatDurationMs(snap.durationMs)} unsaved recording.`,
+      confirmLabel: 'Discard Take',
+      cancelLabel: 'Keep Recording',
+      tone: 'danger',
+      onConfirm: async () => {
+        await engineRef.current!.discard();
+        onToast('Take discarded');
+      },
+    });
   };
 
   const statusLabel = isStartingMic
@@ -489,7 +498,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
                 <button
                   type="button"
                   className="discard-btn"
-                  onClick={() => setConfirmDiscardOpen(true)}
+                  onClick={handleRequestDiscard}
                   aria-label="Discard current recording"
                 >
                   <Trash2 size={18} />
@@ -587,39 +596,6 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
         }}
         onConfirmSave={(name, notes) => void handleConfirmSave(name, notes)}
       />
-
-      {/* Discard confirmation sheet */}
-      {confirmDiscardOpen && (
-        <div className="sheet-backdrop" role="dialog" aria-modal="true">
-          <div className="sheet-panel">
-            <div className="sheet-header">
-              <h2 className="sheet-title">Discard this Take?</h2>
-            </div>
-            <div className="sheet-body">
-              <p className="field-hint" style={{ fontSize: 14 }}>
-                This will permanently remove the current{' '}
-                {formatDurationMs(snap.durationMs)} unsaved recording.
-              </p>
-            </div>
-            <div className="sheet-footer">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setConfirmDiscardOpen(false)}
-              >
-                Keep Recording
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={() => void handleDiscardConfirm()}
-              >
-                Discard Take
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Leave studio confirmation sheet */}
       {confirmExitOpen && (
