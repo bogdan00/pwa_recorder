@@ -45,8 +45,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Run automated tests
+      - name: Run automated tests (unit + Tier 1 formal)
         run: npm test
+
+      - name: Run Tier 2 formal Z3 proofs
+        run: npm run test:formal
 
       - name: Generate deploy version (YYYY_MM_DD_HH_MM UTC)
         id: version

@@ -112,8 +112,8 @@ Enforce clear separation of concerns across layers—avoid putting audio DSP, In
 Before pushing any change to `main`, **all checks must pass**:
 
 ```bash
-npm run precheck   # typecheck -> vitest unit tests -> production build -> parallel Playwright CUJ E2E
+npm run precheck   # typecheck -> vitest unit & Tier 1 formal -> Tier 2 Z3 proofs -> production build -> parallel Playwright CUJ E2E
 ```
 
 - **Local Git hook**: [`.githooks/pre-push`](./.githooks/pre-push) automatically runs `npm run precheck` on every `git push` (configured via `prepare` → `git config core.hooksPath .githooks`), using a fast `repoInvariants.test.ts`-only path for docs-only pushes (`README.md`, `AGENTS.md`, `cuj/**`, `adr/**`). Never bypass the hook with `--no-verify`.
-- **GitHub Actions CI**: [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) runs `typecheck`, Vitest, production build, and parallel Playwright CUJ E2E tests before deploying to GitHub Pages (skipping docs-only commits via `paths-ignore`).
+- **GitHub Actions CI**: [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) runs `typecheck`, Vitest (unit + Tier 1 formal), Tier 2 Z3 formal proofs (`npm run test:formal`), production build, and parallel Playwright CUJ E2E tests before deploying to GitHub Pages (skipping docs-only commits via `paths-ignore`).

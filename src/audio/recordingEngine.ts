@@ -270,7 +270,9 @@ export class RecordingEngine {
     this.stopPreviewPlayback();
     const ok = this.timeline.undoTruncate();
     if (ok) {
-      this.playheadMs = this.timeline.getDurationMs();
+      const restoredDurationMs = this.timeline.getDurationMs();
+      this.playheadMs = restoredDurationMs;
+      this.phase = restoredDurationMs > 0 ? 'paused' : 'idle';
       await this.syncFullDraftToDb();
       this.emit();
     }
@@ -296,8 +298,9 @@ export class RecordingEngine {
    * Seek playhead while paused or playing (used by drag-to-scrub waveform & -5s/+5s buttons).
    */
   seekToMs(ms: number): void {
+    const safeMs = Number.isFinite(ms) ? ms : 0;
     const maxMs = this.timeline?.getDurationMs() ?? 0;
-    const clamped = Math.max(0, Math.min(ms, maxMs));
+    const clamped = Math.max(0, Math.min(safeMs, maxMs));
     this.playheadMs = clamped;
 
     if (this.phase === 'playing') {

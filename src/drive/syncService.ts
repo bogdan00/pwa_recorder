@@ -124,9 +124,81 @@ async function ensureProjectFolder(
   return folder.id;
 }
 
-function mergeDeletedIds(a?: string[], b?: string[]): string[] {
+export function mergeDeletedIds(a?: string[], b?: string[]): string[] {
   const set = new Set<string>([...(a ?? []), ...(b ?? [])]);
-  return Array.from(set);
+  return Array.from(set).sort();
+}
+
+function bookMetadataTieBreakKey(meta: {
+  title: string;
+  author?: string;
+  narrator?: string;
+  dedicatedTo?: string;
+  description?: string;
+  language?: string;
+  tags?: string[];
+  coverColor?: string;
+}): string {
+  return JSON.stringify([
+    meta.title || '',
+    meta.author || '',
+    meta.narrator || '',
+    meta.dedicatedTo || '',
+    meta.description || '',
+    meta.language || '',
+    Array.isArray(meta.tags) ? meta.tags : [],
+    meta.coverColor || '#9E4736',
+  ]);
+}
+
+function recordingMetadataTieBreakKey(rec: {
+  name: string;
+  notes?: string;
+  orderIndex: number;
+  recordedBy?: string;
+}): string {
+  return JSON.stringify([
+    rec.name || '',
+    rec.notes || '',
+    rec.orderIndex,
+    rec.recordedBy || '',
+  ]);
+}
+
+/**
+ * Total-order Last-Write-Wins (LWW) comparator for book metadata.
+ * Breaks equal-timestamp ties deterministically via lexicographical content order
+ * so concurrent edits form a strict Join-Semilattice (Idempotent, Commutative, Associative).
+ */
+export function shouldPreferRemoteBookMeta(
+  local: Pick<
+    BookProject,
+    'updatedAt' | 'title' | 'author' | 'narrator' | 'dedicatedTo' | 'description' | 'language' | 'tags' | 'coverColor'
+  >,
+  remote: Pick<
+    DriveProjectMetadataFile,
+    'updatedAt' | 'title' | 'author' | 'narrator' | 'dedicatedTo' | 'description' | 'language' | 'tags' | 'coverColor'
+  >,
+): boolean {
+  if (remote.updatedAt !== local.updatedAt) {
+    return remote.updatedAt > local.updatedAt;
+  }
+  return bookMetadataTieBreakKey(remote) > bookMetadataTieBreakKey(local);
+}
+
+/**
+ * Total-order Last-Write-Wins (LWW) comparator for chapter recording metadata.
+ * Breaks equal-timestamp ties deterministically so concurrent edits converge identically
+ * regardless of sync interleaving order.
+ */
+export function shouldPreferRemoteRecordingMeta(
+  local: Pick<Recording, 'updatedAt' | 'name' | 'notes' | 'orderIndex' | 'recordedBy'>,
+  remote: Pick<Recording, 'updatedAt' | 'name' | 'notes' | 'orderIndex' | 'recordedBy'>,
+): boolean {
+  if (remote.updatedAt !== local.updatedAt) {
+    return remote.updatedAt > local.updatedAt;
+  }
+  return recordingMetadataTieBreakKey(remote) > recordingMetadataTieBreakKey(local);
 }
 
 function buildMetadataPayload(
@@ -227,7 +299,7 @@ export async function pullSingleBookFolderFromDrive(
   const deletedSet = new Set(mergedDeletedIds);
 
   const shouldTakeRemoteBookMeta =
-    !existingLocal || remoteMeta.updatedAt > existingLocal.updatedAt;
+    !existingLocal || shouldPreferRemoteBookMeta(existingLocal, remoteMeta);
 
   let hasCover = existingLocal?.hasCover ?? Boolean(coverFile);
   let coverMimeType = existingLocal?.coverMimeType ?? remoteMeta.coverMimeType;
@@ -339,7 +411,7 @@ export async function pullSingleBookFolderFromDrive(
       };
       await putRecording(imported);
       didUpdate = true;
-    } else if (remoteRec.updatedAt > localRec.updatedAt) {
+    } else if (shouldPreferRemoteRecordingMeta(localRec, remoteRec)) {
       await putRecording({
         ...localRec,
         name: remoteRec.name,

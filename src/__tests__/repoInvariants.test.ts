@@ -177,4 +177,44 @@ describe('Repository E2E, CUJ & ADR systemic invariants', () => {
       'src/styles/global.css must use overflow-x: clip (not overflow-x: hidden) so position: sticky headers keep working',
     ).not.toMatch(/overflow-x\s*:\s*hidden/);
   });
+
+  it('enforces ADR-11 two-tier formal verification parity across precheck, CI, and formal specs', () => {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'),
+    ) as { scripts?: Record<string, string> };
+    const deployYml = fs.readFileSync(
+      path.join(REPO_ROOT, '.github/workflows/deploy.yml'),
+      'utf8',
+    );
+    const viteCfg = fs.readFileSync(
+      path.join(REPO_ROOT, 'vite.config.ts'),
+      'utf8',
+    );
+
+    expect(pkg.scripts?.['test:formal']).toContain('vitest.formal.config.ts');
+    expect(pkg.scripts?.precheck).toContain('npm run test:formal');
+    expect(deployYml).toContain('npm run test:formal');
+    expect(viteCfg).toContain('**/*.formal.test.ts');
+
+    const formalSpecsDir = path.join(REPO_ROOT, 'src/formal/specs');
+    const formalTestsDir = path.join(REPO_ROOT, 'src/formal/__tests__');
+    const specs = fs.readdirSync(formalSpecsDir).filter((f) => f.endsWith('Spec.ts'));
+    const tests = fs.readdirSync(formalTestsDir).filter((f) => f.endsWith('.test.ts'));
+    const z3Tests = tests.filter((f) => f.endsWith('.formal.test.ts'));
+
+    expect(specs.length).toBeGreaterThanOrEqual(4);
+    expect(z3Tests.length).toBeGreaterThanOrEqual(3);
+
+    // Every declarative spec in src/formal/specs/<name>Spec.ts must have at least one Tier 1 test file
+    for (const spec of specs) {
+      const baseName = spec.replace(/Spec\.ts$/, '');
+      const hasTier1 = tests.some(
+        (t) => t.startsWith(baseName) && !t.endsWith('.formal.test.ts'),
+      );
+      expect(
+        hasTier1,
+        `Missing Tier 1 formal verification test for src/formal/specs/${spec}`,
+      ).toBe(true);
+    }
+  });
 });

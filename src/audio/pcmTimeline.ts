@@ -54,6 +54,9 @@ export class PcmTimeline {
   }
 
   msToFrame(ms: number): number {
+    if (!Number.isFinite(ms)) {
+      return ms === Number.POSITIVE_INFINITY ? this.totalFrames : 0;
+    }
     const clampedMs = Math.max(0, Math.min(ms, this.getDurationMs()));
     return Math.min(
       this.totalFrames,
@@ -164,7 +167,12 @@ export class PcmTimeline {
     trimmedMs: number;
     newDurationMs: number;
   } {
-    const clampedFrame = Math.max(0, Math.min(Math.floor(targetFrame), this.totalFrames));
+    const safeTarget = Number.isFinite(targetFrame)
+      ? Math.floor(targetFrame)
+      : targetFrame === Number.POSITIVE_INFINITY
+        ? this.totalFrames
+        : 0;
+    const clampedFrame = Math.max(0, Math.min(safeTarget, this.totalFrames));
     const previousDurationMs = this.getDurationMs();
 
     // Save deep-enough snapshot for 1-level undo
@@ -241,8 +249,18 @@ export class PcmTimeline {
     startFrame = 0,
     endFrame = this.totalFrames,
   ): Float32Array[] {
-    const start = Math.max(0, Math.min(Math.floor(startFrame), this.totalFrames));
-    const end = Math.max(start, Math.min(Math.floor(endFrame), this.totalFrames));
+    const safeStart = Number.isFinite(startFrame)
+      ? Math.floor(startFrame)
+      : startFrame === Number.POSITIVE_INFINITY
+        ? this.totalFrames
+        : 0;
+    const safeEnd = Number.isFinite(endFrame)
+      ? Math.floor(endFrame)
+      : endFrame === Number.POSITIVE_INFINITY
+        ? this.totalFrames
+        : 0;
+    const start = Math.max(0, Math.min(safeStart, this.totalFrames));
+    const end = Math.max(start, Math.min(safeEnd, this.totalFrames));
     const length = end - start;
 
     const outputs: Float32Array[] = [];

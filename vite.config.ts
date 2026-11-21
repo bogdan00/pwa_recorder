@@ -105,7 +105,7 @@ export default defineConfig(({ command, isPreview }) => {
       globals: true,
       setupFiles: ['./src/test/setup.ts'],
       css: true,
-      exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
+      exclude: ['e2e/**', 'node_modules/**', 'dist/**', '**/*.formal.test.ts'],
     },
   };
 });

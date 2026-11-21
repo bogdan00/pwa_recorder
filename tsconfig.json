@@ -17,5 +17,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client", "vite-plugin-pwa/client", "vitest/globals", "node"]
   },
-  "include": ["src", "e2e", "auth-broker", "vite.config.ts", "playwright.config.ts"]
+  "include": ["src", "e2e", "auth-broker", "vite.config.ts", "vitest.formal.config.ts", "playwright.config.ts"]
 }

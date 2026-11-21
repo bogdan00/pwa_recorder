@@ -77,7 +77,7 @@ fi
 echo ""
 echo "================================================================="
 echo "  StoryTape pre-push verification"
-echo "  Running: typecheck -> unit tests -> build -> parallel CUJ E2E"
+echo "  Running: typecheck -> unit & Tier 1 formal -> Tier 2 Z3 proofs -> build -> parallel CUJ E2E"
 echo "================================================================="
 echo ""
 
