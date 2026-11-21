@@ -98,4 +98,42 @@ describe('PcmTimeline', () => {
     expect(restored.getTotalFrames()).toBe(3000);
     expect(restored.getPeaks().length).toBe(timeline.getPeaks().length);
   });
+
+  it('applies idempotent 15ms raised-cosine fade-out on pause and fade-in on resume to prevent splice clicks', () => {
+    const sampleRate = 1000; // 15 ms = 15 frames
+    const timeline = new PcmTimeline(sampleRate, 1);
+
+    timeline.appendFrames(new Float32Array(200).fill(0.8));
+    timeline.markPauseBoundary();
+    // Calling a second time must be idempotent (no double-fading)
+    const [afterFirstPause] = timeline.extractChannelData();
+    timeline.markPauseBoundary();
+    const [afterSecondPause] = timeline.extractChannelData();
+
+    expect(afterFirstPause[180]).toBeCloseTo(0.8, 5);
+    expect(afterFirstPause[199]).toBeCloseTo(0, 5);
+    expect(afterSecondPause[192]).toBeCloseTo(afterFirstPause[192], 6);
+
+    // Appending resumed audio smoothly ramps up from near 0 to full amplitude
+    timeline.appendFrames(new Float32Array(100).fill(0.8));
+    const [spliced] = timeline.extractChannelData();
+    expect(spliced[200]).toBeLessThan(0.05);
+    expect(spliced[207]).toBeGreaterThan(0.35);
+    expect(spliced[207]).toBeLessThan(0.5);
+    expect(spliced[220]).toBeCloseTo(0.8, 5);
+
+    // Adjacent step right across the pause/resume seam is tiny (click-free)
+    expect(Math.abs(spliced[200] - spliced[199])).toBeLessThan(0.05);
+  });
+
+  it('arms fade-in cleanly when resuming a reloaded draft via armResumeFadeIn', () => {
+    const timeline = new PcmTimeline(1000, 1);
+    timeline.loadFromChunks([new Float32Array(100).fill(0.5)]);
+    timeline.armResumeFadeIn();
+    timeline.appendFrames(new Float32Array(50).fill(0.9));
+
+    const [samples] = timeline.extractChannelData();
+    expect(samples[100]).toBeLessThan(0.05);
+    expect(samples[125]).toBeCloseTo(0.9, 5);
+  });
 });

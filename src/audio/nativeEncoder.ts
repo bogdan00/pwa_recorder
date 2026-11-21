@@ -11,6 +11,7 @@ import type {
   AudioQualitySettings,
   ChannelCountOption,
 } from '../types/models';
+import { applyPeakCeilingToChannels } from './inputStrip';
 import {
   probeAudioCapabilities,
   resolveEffectiveFormat,
@@ -327,8 +328,12 @@ export async function encodeAudio(
       sourceSampleRate,
       quality.sampleRate,
     );
+    const prepared =
+      quality.wavBitDepth === 32
+        ? resampled
+        : applyPeakCeilingToChannels(resampled);
     onProgress?.(0.6);
-    const blob = encodeWav(resampled, quality.sampleRate, quality.wavBitDepth);
+    const blob = encodeWav(prepared, quality.sampleRate, quality.wavBitDepth);
     onProgress?.(1);
     return {
       blob,
@@ -355,9 +360,11 @@ export async function encodeAudio(
         sourceSampleRate,
         targetRate,
       );
+      // Bound inter-sample/post-resample peaks at -1.0 dBFS before lossy AAC/Opus encoding
+      const bounded = applyPeakCeilingToChannels(resampled);
       const encoded = await encodeViaWebCodecs(
         fmt,
-        resampled,
+        bounded,
         targetRate,
         quality,
         onProgress,
@@ -374,7 +381,11 @@ export async function encodeAudio(
     sourceSampleRate,
     quality.sampleRate,
   );
-  const wavBlob = encodeWav(resampled, quality.sampleRate, quality.wavBitDepth);
+  const prepared =
+    quality.wavBitDepth === 32
+      ? resampled
+      : applyPeakCeilingToChannels(resampled);
+  const wavBlob = encodeWav(prepared, quality.sampleRate, quality.wavBitDepth);
   onProgress?.(1);
   return {
     blob: wavBlob,

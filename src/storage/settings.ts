@@ -16,7 +16,7 @@ const SETTINGS_STORAGE_KEY = 'storytape.settings.v1';
 export const DEFAULT_AUDIO_QUALITY: AudioQualitySettings = {
   preset: 'standard',
   format: 'auto',
-  sampleRate: 44100,
+  sampleRate: 48000,
   bitrateKbps: 128,
   bitrateMode: 'variable',
   channels: 1,

@@ -500,7 +500,7 @@ button:disabled {
 }
 
 .toast {
-  pointer-events: auto;
+  pointer-events: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -517,6 +517,7 @@ button:disabled {
 }
 
 .toast-action {
+  pointer-events: auto;
   color: var(--accent-amber);
   font-weight: 700;
   font-size: 13px;

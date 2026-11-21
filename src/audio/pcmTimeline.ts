@@ -25,6 +25,7 @@ export class PcmTimeline {
   private peaks: number[] = [];
   private undoSnapshot: TruncateUndoSnapshot | null = null;
   private pendingFadeInFrames = 0;
+  private isTailFaded = false;
 
   constructor(sampleRate: number, channels: ChannelCountOption = 1) {
     this.sampleRate = sampleRate;
@@ -69,6 +70,38 @@ export class PcmTimeline {
     return (clamped / this.sampleRate) * 1000;
   }
 
+  /**
+   * Marks a Pause boundary by applying a smooth 15 ms raised-cosine tail fade-out
+   * (idempotent if already faded) and arming a 15 ms fade-in for resumed audio.
+   */
+  markPauseBoundary(): void {
+    if (this.totalFrames <= 0) return;
+    const fadeFrames = Math.min(
+      this.totalFrames,
+      Math.max(1, Math.round((CROSSFADE_MS / 1000) * this.sampleRate)),
+    );
+    if (!this.isTailFaded && fadeFrames > 0) {
+      this.applyTailFadeOut(fadeFrames);
+      this.isTailFaded = true;
+    }
+    this.armResumeFadeIn();
+  }
+
+  /**
+   * Arms a 15 ms raised-cosine fade-in for the next appended frames when resuming
+   * an existing take (including crash-recovered drafts reloaded from IndexedDB).
+   */
+  armResumeFadeIn(): void {
+    if (this.totalFrames <= 0) {
+      this.pendingFadeInFrames = 0;
+      return;
+    }
+    this.pendingFadeInFrames = Math.max(
+      1,
+      Math.round((CROSSFADE_MS / 1000) * this.sampleRate),
+    );
+  }
+
   appendFrames(interleaved: Float32Array, precomputedPeaks?: number[]): void {
     const frameCount = Math.floor(interleaved.length / this.channels);
     if (frameCount <= 0) return;
@@ -78,7 +111,7 @@ export class PcmTimeline {
         ? new Float32Array(interleaved)
         : interleaved.slice(0, frameCount * this.channels);
 
-    // Apply smooth 15 ms linear fade-in after a punch-in splice to avoid clicks
+    // Apply smooth 15 ms raised-cosine fade-in after pause/resume or punch-in splice
     if (this.pendingFadeInFrames > 0) {
       const fadeTotal = Math.max(
         1,
@@ -87,7 +120,8 @@ export class PcmTimeline {
       const alreadyDone = fadeTotal - this.pendingFadeInFrames;
       const toProcess = Math.min(frameCount, this.pendingFadeInFrames);
       for (let f = 0; f < toProcess; f += 1) {
-        const gain = (alreadyDone + f + 1) / fadeTotal;
+        const t = (alreadyDone + f + 1) / fadeTotal;
+        const gain = 0.5 * (1 - Math.cos(Math.PI * t));
         const base = f * this.channels;
         for (let ch = 0; ch < this.channels; ch += 1) {
           chunk[base + ch] *= gain;
@@ -98,6 +132,7 @@ export class PcmTimeline {
 
     this.chunks.push(chunk);
     this.totalFrames += frameCount;
+    this.isTailFaded = false;
 
     if (precomputedPeaks && precomputedPeaks.length > 0) {
       for (let i = 0; i < precomputedPeaks.length; i += 1) {
@@ -114,6 +149,7 @@ export class PcmTimeline {
     this.peaks = [];
     this.undoSnapshot = null;
     this.pendingFadeInFrames = 0;
+    this.isTailFaded = false;
 
     for (const raw of chunks) {
       const frameCount = Math.floor(raw.length / this.channels);
@@ -172,6 +208,9 @@ export class PcmTimeline {
     );
     if (fadeFrames > 0) {
       this.applyTailFadeOut(fadeFrames);
+      this.isTailFaded = true;
+    } else {
+      this.isTailFaded = false;
     }
 
     // Arm fade-in for newly recorded punch-in audio
@@ -200,6 +239,7 @@ export class PcmTimeline {
     this.peaks = this.undoSnapshot.peaks;
     this.undoSnapshot = null;
     this.pendingFadeInFrames = 0;
+    this.isTailFaded = false;
     return true;
   }
 
@@ -290,9 +330,10 @@ export class PcmTimeline {
       const chunk = this.chunks[cIdx];
       const chunkFrames = Math.floor(chunk.length / this.channels);
       for (let f = chunkFrames - 1; f >= 0 && framesLeftToFade > 0; f -= 1) {
-        // At very last frame -> gain near 0; at start of fade -> gain near 1
+        // At very last frame -> gain 0; at start of fade -> gain near 1 (C1-smooth raised cosine)
         const distanceFromEnd = fadeFrames - framesLeftToFade;
-        const gain = distanceFromEnd / fadeFrames;
+        const t = distanceFromEnd / fadeFrames;
+        const gain = 0.5 * (1 - Math.cos(Math.PI * t));
         const base = f * this.channels;
         for (let ch = 0; ch < this.channels; ch += 1) {
           chunk[base + ch] *= gain;

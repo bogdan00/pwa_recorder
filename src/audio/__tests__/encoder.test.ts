@@ -191,4 +191,33 @@ describe('nativeEncoder resampling & adaptive codec fallback', () => {
     expect(caps.opusMaxStereoKbps).toBe(510);
     expect(caps.autoBestFormat).toBe('m4a');
   });
+
+  it('applies transparent -1 dBFS true-peak ceiling on integer WAV exports while preserving 32-bit float headroom', async () => {
+    const hot = [new Float32Array([0.2, 1.08, -1.15, -0.3])];
+
+    const wav16 = await encodeAudio(hot, 48000, {
+      ...DEFAULT_AUDIO_QUALITY,
+      format: 'wav',
+      sampleRate: 48000,
+      wavBitDepth: 16,
+    });
+    const buf16 = await readBlobBuffer(wav16.blob);
+    const view16 = new DataView(buf16);
+    const peakSample16 = Math.abs(view16.getInt16(44 + 2, true)) / 0x7fff;
+    // Softly limited below -1 dBFS (~0.8913) instead of hard-clipping at 1.0
+    expect(peakSample16).toBeGreaterThan(0.85);
+    expect(peakSample16).toBeLessThan(0.9);
+
+    const wav32 = await encodeAudio(hot, 48000, {
+      ...DEFAULT_AUDIO_QUALITY,
+      format: 'wav',
+      sampleRate: 48000,
+      wavBitDepth: 32,
+    });
+    const buf32 = await readBlobBuffer(wav32.blob);
+    const view32 = new DataView(buf32);
+    // 32-bit float archival master preserves full float headroom (>1.0) untouched
+    expect(view32.getFloat32(44 + 4, true)).toBeCloseTo(1.08, 5);
+    expect(view32.getFloat32(44 + 8, true)).toBeCloseTo(-1.15, 5);
+  });
 });

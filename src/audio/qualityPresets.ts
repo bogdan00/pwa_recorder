@@ -64,11 +64,11 @@ export const QUALITY_PRESETS: QualityPresetDefinition[] = [
   {
     id: 'standard',
     name: 'Audiobook Standard',
-    tagline: '44.1 kHz · 128 kbps · Balanced warmth',
+    tagline: '48 kHz · 128 kbps · Balanced warmth',
     settings: {
       preset: 'standard',
       format: 'auto',
-      sampleRate: 44100,
+      sampleRate: 48000,
       bitrateKbps: 128,
       bitrateMode: 'variable',
       channels: 1,

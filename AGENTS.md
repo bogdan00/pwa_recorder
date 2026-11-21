@@ -60,7 +60,7 @@ Enforce clear separation of concerns across layers—avoid putting audio DSP, In
   - `settings.ts`: `localStorage` persistence, theme resolution, and build-time env defaults (`VITE_GOOGLE_CLIENT_ID`, `VITE_GOOGLE_API_KEY`).
 - `src/audio/` & `public/audio/` — Audio capture, timeline, encoding, quality presets, and device selection:
   - Keep real-time PCM capture off the main thread in `public/audio/pcm-capture-worklet.js` (~25ms flush cadence, 50 peaks/sec).
-  - Route `AudioWorkletNode` (`numberOfOutputs: 1`) through a muted `GainNode(0)` to `ctx.destination` so iOS Safari WebKit and mobile Chrome pull frames reliably. Guard `ctx.audioWorklet.addModule()` so it loads once per `AudioContext`.
+  - Route `AudioWorkletNode` (`numberOfOutputs: 1`) through a unity `GainNode(1)` to `ctx.destination` while `pcm-capture-worklet.js` outputs only an inaudible ultrasonic Nyquist keepalive (`±1e-5` / `-100 dBFS`, never copying mic audio to output) while active. This pulls frames reliably on iOS Safari WebKit AND prevents Chromium's 30-second `SilentSinkSuspender` from switching to `FakeAudioWorker` and dropping 10ms capture chunks. Use `AudioContext({ latencyHint: 'playback' })`, align `getUserMedia` sample rate to `ctx.sampleRate`, and guard `ctx.audioWorklet.addModule()` once per `AudioContext`.
   - Keep `RecordingEngine` lifecycle subscriptions separate from draft-loading effects; never clear active UI listeners inside async `dispose()`.
 - `src/drive/` — Client-side Google Drive integration (zero backend):
   - `googleAuth.ts`: Google Identity Services OAuth using the narrow `drive.file` scope.

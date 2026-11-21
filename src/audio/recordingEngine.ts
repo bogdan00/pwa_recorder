@@ -14,6 +14,10 @@ import {
 } from '../storage/db';
 import { createId, downsamplePeaks } from '../utils/format';
 import { acquireMicStream } from './audioDevices';
+import {
+  buildStudioInputStrip,
+  writeNyquistKeepalive,
+} from './inputStrip';
 import { encodeAudio, type EncodedAudioResult } from './nativeEncoder';
 import { PcmTimeline, PEAKS_PER_SECOND } from './pcmTimeline';
 import { encodeWav } from './wavEncoder';
@@ -71,10 +75,12 @@ export class RecordingEngine {
   private audioCtx: AudioContext | null = null;
   private workletLoadedCtx: AudioContext | null = null;
   private stream: MediaStream | null = null;
+  private inputStripNodes: AudioNode[] = [];
   private workletNode: AudioWorkletNode | null = null;
-  private workletSilentGain: GainNode | null = null;
+  private workletOutputGain: GainNode | null = null;
   private scriptNode: ScriptProcessorNode | null = null;
-  private scriptSilentGain: GainNode | null = null;
+  private scriptOutputGain: GainNode | null = null;
+  private scriptKeepaliveSign: 1 | -1 = 1;
   private activeDeviceLabel = '';
 
   // Preview playback graph
@@ -196,9 +202,10 @@ export class RecordingEngine {
     this.keepScreenAwake = keepScreenAwake;
 
     if (this.timeline) {
-      // Safe default: snap playhead to end and continue appending
+      // Safe default: snap playhead to end and continue appending with click-free fade-in
       this.playheadMs = this.timeline.getDurationMs();
       this.timeline.clearUndo();
+      this.timeline.armResumeFadeIn();
     }
 
     return this.beginMicCapture(deviceSettings, quality);
@@ -275,6 +282,8 @@ export class RecordingEngine {
     if (this.phase !== 'recording') return;
 
     this.teardownMicCapture();
+    // Apply 15ms raised-cosine tail fade-out and arm 15ms fade-in for click-free Resume
+    this.timeline?.markPauseBoundary();
     await this.flushPendingDraftToDb();
     await this.releaseWakeLock();
 
@@ -505,16 +514,22 @@ export class RecordingEngine {
       (window as unknown as { webkitAudioContext: typeof AudioContext })
         .webkitAudioContext;
 
-    if (desiredRate) {
+    // Prefer 'playback' latencyHint (larger OS audio buffer for glitch-free narration without
+    // live monitoring) and native hardware sample rate for fresh takes; nativeEncoder resamples
+    // cleanly offline on export when needed.
+    const options: AudioContextOptions = desiredRate
+      ? { sampleRate: desiredRate, latencyHint: 'playback' }
+      : { latencyHint: 'playback' };
+    try {
+      this.audioCtx = new Ctor(options);
+    } catch {
       try {
-        this.audioCtx = new Ctor({ sampleRate: desiredRate });
+        this.audioCtx = desiredRate
+          ? new Ctor({ sampleRate: desiredRate })
+          : new Ctor();
       } catch {
         this.audioCtx = new Ctor();
       }
-    } else {
-      // Let browser use native hardware sample rate for capture (avoids iOS/Firefox
-      // MediaStreamAudioSourceNode mismatch); nativeEncoder resamples cleanly on export.
-      this.audioCtx = new Ctor();
     }
     this.workletLoadedCtx = null;
     return this.audioCtx;
@@ -549,13 +564,17 @@ export class RecordingEngine {
       void ctx.resume().catch(() => {});
     }
 
-    // 2. Acquire microphone stream (may present mobile OS permission prompt)
-    const acquired = await acquireMicStream(deviceSettings, {
-      ...quality,
-      sampleRate: (this.timeline?.sampleRate ??
-        quality.sampleRate) as AudioQualitySettings['sampleRate'],
-      channels: targetChannels,
-    });
+    // 2. Acquire microphone stream aligned to AudioContext.sampleRate so Chromium/WebRTC
+    //    never inserts a live rate-conversion bridge into MediaStreamAudioSourceNode.
+    const captureSampleRate = this.timeline?.sampleRate ?? ctx.sampleRate;
+    const acquired = await acquireMicStream(
+      deviceSettings,
+      {
+        ...quality,
+        channels: targetChannels,
+      },
+      captureSampleRate,
+    );
 
     // 3. Re-resume AudioContext after permission dialog closes (iOS suspends it during prompt)
     await this.resumeContextSafely(ctx);
@@ -569,34 +588,11 @@ export class RecordingEngine {
       this.persistedChunkCount = 0;
     }
 
-    // Build studio input strip: Mic -> [80Hz HPF] -> Input Gain -> [Soft Limiter] -> Capture
+    // Build studio input strip: Mic -> [80Hz HPF] -> Input Gain -> [Compressor + Soft-Clip Ceiling] -> Capture
     const source = ctx.createMediaStreamSource(this.stream);
-    let tail: AudioNode = source;
-
-    if (quality.highPassFilter) {
-      const hpf = ctx.createBiquadFilter();
-      hpf.type = 'highpass';
-      hpf.frequency.value = 80;
-      hpf.Q.value = 0.707;
-      tail.connect(hpf);
-      tail = hpf;
-    }
-
-    const gainNode = ctx.createGain();
-    gainNode.gain.value = quality.inputGain;
-    tail.connect(gainNode);
-    tail = gainNode;
-
-    if (quality.softLimiter) {
-      const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -3;
-      comp.knee.value = 6;
-      comp.ratio.value = 12;
-      comp.attack.value = 0.002;
-      comp.release.value = 0.08;
-      tail.connect(comp);
-      tail = comp;
-    }
+    const strip = buildStudioInputStrip(ctx, source, quality);
+    this.inputStripNodes = strip.nodes;
+    const tail = strip.tail;
 
     // Attach AudioWorkletNode (preferred) or ScriptProcessorNode fallback
     const attachedWorklet = await this.tryAttachWorklet(
@@ -646,8 +642,11 @@ export class RecordingEngine {
         this.workletLoadedCtx = ctx;
       }
 
-      // Use numberOfOutputs: 1 routed through a muted GainNode(0) -> ctx.destination
-      // so iOS Safari WebKit and mobile Chrome always pull audio frames reliably.
+      // Use numberOfOutputs: 1 routed through unity GainNode(1) -> ctx.destination.
+      // pcm-capture-worklet.js never forwards mic audio to outputs[0]; instead it emits
+      // an inaudible ultrasonic Nyquist keepalive (+/-1e-5, -100 dBFS) while active so:
+      // 1) iOS Safari WebKit continuously pulls render quanta, and
+      // 2) Chromium's SilentSinkSuspender never shuts down the hardware output clock after 30s.
       const node = new AudioWorkletNode(ctx, 'pcm-capture-processor', {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -665,15 +664,15 @@ export class RecordingEngine {
         this.ingestCapturedChunk(pcm, msg.peaks, msg.liveLevel);
       };
 
-      const silentGain = ctx.createGain();
-      silentGain.gain.value = 0;
+      const outputGain = ctx.createGain();
+      outputGain.gain.value = 1;
 
       sourceNode.connect(node);
-      node.connect(silentGain);
-      silentGain.connect(ctx.destination);
+      node.connect(outputGain);
+      outputGain.connect(ctx.destination);
 
       this.workletNode = node;
-      this.workletSilentGain = silentGain;
+      this.workletOutputGain = outputGain;
       return true;
     } catch {
       return false;
@@ -687,10 +686,25 @@ export class RecordingEngine {
   ): void {
     const bufferSize = 4096;
     const processor = ctx.createScriptProcessor(bufferSize, channels, channels);
-    const silentGain = ctx.createGain();
-    silentGain.gain.value = 0;
+    const outputGain = ctx.createGain();
+    outputGain.gain.value = 1;
+    this.scriptKeepaliveSign = 1;
 
     processor.onaudioprocess = (event) => {
+      if (event.outputBuffer && event.outputBuffer.numberOfChannels > 0) {
+        const out0 = event.outputBuffer.getChannelData(0);
+        if (this.phase === 'recording') {
+          this.scriptKeepaliveSign = writeNyquistKeepalive(
+            out0,
+            this.scriptKeepaliveSign,
+          );
+        } else {
+          out0.fill(0);
+        }
+        for (let ch = 1; ch < event.outputBuffer.numberOfChannels; ch += 1) {
+          event.outputBuffer.getChannelData(ch).fill(0);
+        }
+      }
       if (this.phase !== 'recording') return;
       const ch0 = event.inputBuffer.getChannelData(0);
       const ch1 =
@@ -736,10 +750,10 @@ export class RecordingEngine {
     };
 
     sourceNode.connect(processor);
-    processor.connect(silentGain);
-    silentGain.connect(ctx.destination);
+    processor.connect(outputGain);
+    outputGain.connect(ctx.destination);
     this.scriptNode = processor;
-    this.scriptSilentGain = silentGain;
+    this.scriptOutputGain = outputGain;
   }
 
   private ingestCapturedChunk(
@@ -774,8 +788,18 @@ export class RecordingEngine {
   }
 
   private teardownMicCapture(): void {
+    for (const node of this.inputStripNodes) {
+      try {
+        node.disconnect();
+      } catch {
+        // Ignore disconnect errors
+      }
+    }
+    this.inputStripNodes = [];
+
     if (this.workletNode) {
       try {
+        this.workletNode.port.onmessage = null;
         this.workletNode.port.postMessage({ type: 'setActive', active: false });
         this.workletNode.disconnect();
       } catch {
@@ -783,13 +807,13 @@ export class RecordingEngine {
       }
       this.workletNode = null;
     }
-    if (this.workletSilentGain) {
+    if (this.workletOutputGain) {
       try {
-        this.workletSilentGain.disconnect();
+        this.workletOutputGain.disconnect();
       } catch {
         // Ignore
       }
-      this.workletSilentGain = null;
+      this.workletOutputGain = null;
     }
     if (this.scriptNode) {
       try {
@@ -800,13 +824,13 @@ export class RecordingEngine {
       this.scriptNode.onaudioprocess = null;
       this.scriptNode = null;
     }
-    if (this.scriptSilentGain) {
+    if (this.scriptOutputGain) {
       try {
-        this.scriptSilentGain.disconnect();
+        this.scriptOutputGain.disconnect();
       } catch {
         // Ignore
       }
-      this.scriptSilentGain = null;
+      this.scriptOutputGain = null;
     }
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop());

@@ -2,13 +2,20 @@
  * StoryTape AudioWorkletProcessor
  * Captures 32-bit Float Mono or Stereo interleaved PCM frames off the main thread
  * and computes exact 50 peaks/sec (20 ms buckets) for the live 60fps waveform.
+ *
+ * While active, outputs an inaudible ultrasonic Nyquist keepalive (+/-1e-5, -100 dBFS,
+ * zero DC offset, never forwarding microphone audio) so Chromium's SilentSinkSuspender
+ * does not shut down the hardware audio sink after 30s and cause 10ms FIFO drop clicks.
  */
+const KEEPALIVE_AMPLITUDE = 1e-5;
+
 class PcmCaptureProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
     const opts = (options && options.processorOptions) || {};
     this.channels = opts.channels === 2 ? 2 : 1;
     this.active = true;
+    this.keepaliveSign = 1;
     this.peakWindowFrames = Math.max(1, Math.round(sampleRate / 50)); // 50 peaks/sec
     this.flushFrames = Math.max(512, Math.round(sampleRate * 0.025)); // ~25 ms batches (~40 Hz)
 
@@ -56,8 +63,25 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     );
   }
 
-  process(inputs) {
-    if (!this.active) return true;
+  process(inputs, outputs) {
+    const outChannel = outputs && outputs[0] && outputs[0][0];
+    if (!this.active) {
+      if (outChannel) {
+        outChannel.fill(0);
+      }
+      return true;
+    }
+
+    // Keep Chromium's hardware output clock active past 30s without audible sound or loopback
+    if (outChannel) {
+      let sign = this.keepaliveSign;
+      for (let i = 0; i < outChannel.length; i += 1) {
+        outChannel[i] = sign * KEEPALIVE_AMPLITUDE;
+        sign = -sign;
+      }
+      this.keepaliveSign = sign;
+    }
+
     const input = inputs[0];
     if (!input || input.length === 0 || !input[0]) return true;
 

@@ -18,14 +18,14 @@ A parent enters the mobile Recording Studio for a book, starts recording with th
 
 2. **Start Recording & Observe Live Waveform**
    - Tap the big **Start** button.
-   - **Expected:** Status transitions to `REC`, Stop button enables, timer advances smoothly past `00:01.0`, and real PCM audio flows through `AudioWorklet` drawing live waveform bars onto `<canvas>`.
+   - **Expected:** Status transitions to `REC`, Stop button enables, timer advances smoothly past `00:01.0`, and real PCM audio flows through `AudioWorklet` drawing live waveform bars onto `<canvas>` without 30-second silent-sink clock-drop clicks or digital peak clipping.
    - **Smooth 60fps Waveform Rendering:** During active recording, the live waveform scrolls continuously via `requestAnimationFrame` (targeting 60fps with sub-pixel horizontal progression aligned to elapsed recording time) rather than jumping in discrete audio-chunk increments, producing smooth animation with no stair-stepping or visible jank.
 
 3. **Pause & Safe Resume (2nd Worklet Attach)**
    - Tap the big **Pause** button.
-   - **Expected:** Status becomes `PAUSED`, timer freezes at recorded duration, paused review controls appear.
+   - **Expected:** Status becomes `PAUSED`, timer freezes at recorded duration, a 15ms anti-click tail fade-out is applied, and paused review controls appear.
    - Tap the big **Resume** button.
-   - **Expected:** Status returns to `REC` without throwing duplicate `AudioWorklet.addModule()` errors, and timer continues advancing beyond the paused timestamp.
+   - **Expected:** Status returns to `REC` without throwing duplicate `AudioWorklet.addModule()` errors, subsequent audio fades in smoothly over 15ms without a splice click, and timer continues advancing beyond the paused timestamp.
 
 4. **Full Stop & Recording Name Prompt**
    - Tap the smaller **Stop** button.

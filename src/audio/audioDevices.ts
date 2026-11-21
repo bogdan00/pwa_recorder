@@ -4,6 +4,10 @@ import type {
   ChannelCountOption,
 } from '../types/models';
 import type { DecodedPcmAudio } from './audioExporter';
+import {
+  buildStudioInputStrip,
+  writeNyquistKeepalive,
+} from './inputStrip';
 import { encodeWav } from './wavEncoder';
 
 export interface AudioInputDeviceInfo {
@@ -89,9 +93,10 @@ function buildAudioConstraints(
   quality: AudioQualitySettings,
   deviceId?: string,
   exactDevice = false,
+  captureSampleRate?: number,
 ): MediaTrackConstraints {
   const constraints: MediaTrackConstraints = {
-    sampleRate: { ideal: quality.sampleRate },
+    sampleRate: { ideal: captureSampleRate ?? quality.sampleRate },
     channelCount: { ideal: quality.channels },
     noiseSuppression: quality.noiseSuppression,
     autoGainControl: quality.autoGainControl,
@@ -108,6 +113,7 @@ function buildAudioConstraints(
 export async function acquireMicStream(
   deviceSettings: AudioDeviceSettings,
   quality: AudioQualitySettings,
+  captureSampleRate?: number,
 ): Promise<AcquiredMicResult> {
   if (
     typeof navigator === 'undefined' ||
@@ -129,7 +135,12 @@ export async function acquireMicStream(
   if (wantsSpecific) {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: buildAudioConstraints(quality, deviceSettings.deviceId, true),
+        audio: buildAudioConstraints(
+          quality,
+          deviceSettings.deviceId,
+          true,
+          captureSampleRate,
+        ),
       });
     } catch (err) {
       const name = err instanceof Error ? err.name : '';
@@ -141,7 +152,12 @@ export async function acquireMicStream(
         usedFallback = true;
         fallbackReason = `"${deviceSettings.deviceLabel}" is unavailable — using System Default microphone.`;
         stream = await navigator.mediaDevices.getUserMedia({
-          audio: buildAudioConstraints(quality, undefined, false),
+          audio: buildAudioConstraints(
+            quality,
+            undefined,
+            false,
+            captureSampleRate,
+          ),
         });
       } else {
         throw err;
@@ -149,7 +165,12 @@ export async function acquireMicStream(
     }
   } else {
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: buildAudioConstraints(quality, undefined, false),
+      audio: buildAudioConstraints(
+        quality,
+        undefined,
+        false,
+        captureSampleRate,
+      ),
     });
   }
 
@@ -194,10 +215,12 @@ const MAX_MIC_TEST_CAPTURE_SEC = 30;
 export class MicLevelTester {
   private stream: MediaStream | null = null;
   private audioCtx: AudioContext | null = null;
+  private inputStripNodes: AudioNode[] = [];
   private workletNode: AudioWorkletNode | null = null;
-  private workletSilentGain: GainNode | null = null;
+  private workletOutputGain: GainNode | null = null;
   private scriptNode: ScriptProcessorNode | null = null;
-  private scriptSilentGain: GainNode | null = null;
+  private scriptOutputGain: GainNode | null = null;
+  private scriptKeepaliveSign: 1 | -1 = 1;
   private rafId: number | null = null;
   private stopped = false;
 
@@ -218,25 +241,35 @@ export class MicLevelTester {
     this.captureChunks = [];
     this.capturedFrames = 0;
 
-    const acquired = await acquireMicStream(deviceSettings, quality);
-    if (this.stopped) {
-      acquired.stream.getTracks().forEach((t) => t.stop());
-      return { usedFallback: false };
-    }
-
-    this.stream = acquired.stream;
     const AudioCtxCtor =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext })
         .webkitAudioContext;
 
+    // Create native-rate AudioContext with playback latencyHint inside click gesture
     try {
-      this.audioCtx = new AudioCtxCtor({ sampleRate: quality.sampleRate });
+      this.audioCtx = new AudioCtxCtor({ latencyHint: 'playback' });
     } catch {
       this.audioCtx = new AudioCtxCtor();
     }
     if (this.audioCtx.state === 'suspended') {
-      await this.audioCtx.resume();
+      void this.audioCtx.resume().catch(() => {});
+    }
+
+    const acquired = await acquireMicStream(
+      deviceSettings,
+      quality,
+      this.audioCtx.sampleRate,
+    );
+    if (this.stopped) {
+      acquired.stream.getTracks().forEach((t) => t.stop());
+      this.teardownAudioGraph();
+      return { usedFallback: false };
+    }
+
+    this.stream = acquired.stream;
+    if (this.audioCtx.state === 'suspended') {
+      await this.audioCtx.resume().catch(() => {});
     }
 
     const ctx = this.audioCtx;
@@ -246,36 +279,14 @@ export class MicLevelTester {
     this.captureDeviceLabel = acquired.actualDeviceLabel;
 
     const source = ctx.createMediaStreamSource(this.stream);
-    let tail: AudioNode = source;
-
-    if (quality.highPassFilter) {
-      const hpf = ctx.createBiquadFilter();
-      hpf.type = 'highpass';
-      hpf.frequency.value = 80;
-      hpf.Q.value = 0.707;
-      tail.connect(hpf);
-      tail = hpf;
-    }
-
-    const gainNode = ctx.createGain();
-    gainNode.gain.value = quality.inputGain;
-    tail.connect(gainNode);
-    tail = gainNode;
-
-    if (quality.softLimiter) {
-      const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -3;
-      comp.knee.value = 6;
-      comp.ratio.value = 12;
-      comp.attack.value = 0.002;
-      comp.release.value = 0.08;
-      tail.connect(comp);
-      tail = comp;
-    }
+    const strip = buildStudioInputStrip(ctx, source, quality);
+    this.inputStripNodes = strip.nodes;
+    const tail = strip.tail;
 
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 1024;
     tail.connect(analyser);
+    this.inputStripNodes.push(analyser);
 
     // Attach off-main-thread PCM capture (AudioWorklet with ScriptProcessor fallback)
     const attachedWorklet = await this.tryAttachCaptureWorklet(
@@ -378,14 +389,16 @@ export class MicLevelTester {
         this.pushInterleavedChunk(pcm);
       };
 
-      const silentGain = ctx.createGain();
-      silentGain.gain.value = 0;
+      // Unity gain passes only the worklet's inaudible -100 dBFS Nyquist keepalive
+      // (never mic audio), keeping Chromium's hardware sink active past 30s.
+      const outputGain = ctx.createGain();
+      outputGain.gain.value = 1;
       sourceNode.connect(node);
-      node.connect(silentGain);
-      silentGain.connect(ctx.destination);
+      node.connect(outputGain);
+      outputGain.connect(ctx.destination);
 
       this.workletNode = node;
-      this.workletSilentGain = silentGain;
+      this.workletOutputGain = outputGain;
       return true;
     } catch {
       return false;
@@ -400,10 +413,25 @@ export class MicLevelTester {
     if (typeof ctx.createScriptProcessor !== 'function') return;
     try {
       const processor = ctx.createScriptProcessor(4096, channels, channels);
-      const silentGain = ctx.createGain();
-      silentGain.gain.value = 0;
+      const outputGain = ctx.createGain();
+      outputGain.gain.value = 1;
+      this.scriptKeepaliveSign = 1;
 
       processor.onaudioprocess = (event) => {
+        if (event.outputBuffer && event.outputBuffer.numberOfChannels > 0) {
+          const out0 = event.outputBuffer.getChannelData(0);
+          if (this.stopped) {
+            out0.fill(0);
+          } else {
+            this.scriptKeepaliveSign = writeNyquistKeepalive(
+              out0,
+              this.scriptKeepaliveSign,
+            );
+          }
+          for (let ch = 1; ch < event.outputBuffer.numberOfChannels; ch += 1) {
+            event.outputBuffer.getChannelData(ch).fill(0);
+          }
+        }
         if (this.stopped) return;
         const ch0 = event.inputBuffer.getChannelData(0);
         const ch1 =
@@ -424,10 +452,10 @@ export class MicLevelTester {
       };
 
       sourceNode.connect(processor);
-      processor.connect(silentGain);
-      silentGain.connect(ctx.destination);
+      processor.connect(outputGain);
+      outputGain.connect(ctx.destination);
       this.scriptNode = processor;
-      this.scriptSilentGain = silentGain;
+      this.scriptOutputGain = outputGain;
     } catch {
       // Ignore if environment lacks ScriptProcessorNode
     }
@@ -481,8 +509,18 @@ export class MicLevelTester {
   }
 
   private teardownAudioGraph(): void {
+    for (const node of this.inputStripNodes) {
+      try {
+        node.disconnect();
+      } catch {
+        // Ignore
+      }
+    }
+    this.inputStripNodes = [];
+
     if (this.workletNode) {
       try {
+        this.workletNode.port.onmessage = null;
         this.workletNode.port.postMessage({ type: 'setActive', active: false });
         this.workletNode.disconnect();
       } catch {
@@ -490,13 +528,13 @@ export class MicLevelTester {
       }
       this.workletNode = null;
     }
-    if (this.workletSilentGain) {
+    if (this.workletOutputGain) {
       try {
-        this.workletSilentGain.disconnect();
+        this.workletOutputGain.disconnect();
       } catch {
         // Ignore
       }
-      this.workletSilentGain = null;
+      this.workletOutputGain = null;
     }
     if (this.scriptNode) {
       try {
@@ -507,13 +545,13 @@ export class MicLevelTester {
       this.scriptNode.onaudioprocess = null;
       this.scriptNode = null;
     }
-    if (this.scriptSilentGain) {
+    if (this.scriptOutputGain) {
       try {
-        this.scriptSilentGain.disconnect();
+        this.scriptOutputGain.disconnect();
       } catch {
         // Ignore
       }
-      this.scriptSilentGain = null;
+      this.scriptOutputGain = null;
     }
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop());
