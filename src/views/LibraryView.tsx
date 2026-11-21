@@ -9,6 +9,7 @@ import {
   Palette,
   Play,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Users,
@@ -48,6 +49,7 @@ interface LibraryViewProps {
   onOpenSettings: () => void;
   onOpenShareLibrary: () => void;
   onSyncNow: () => void;
+  onReconnectDrive?: () => void;
   onResumeDraft: (draft: ActiveDraft) => void;
   onDiscardDraft: (draftId: string) => void;
   onContinueListening: (project: BookProject) => void;
@@ -76,6 +78,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onOpenSettings,
   onOpenShareLibrary,
   onSyncNow,
+  onReconnectDrive,
   onResumeDraft,
   onDiscardDraft,
   onContinueListening,
@@ -191,14 +194,21 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                   ? pendingCount > 0
                     ? 'drive-pill--pending'
                     : 'drive-pill--connected'
-                  : ''
+                  : authState.status === 'expired'
+                    ? 'drive-pill--pending'
+                    : ''
               }`}
               onClick={
-                authState.status === 'connected' ? onSyncNow : onOpenSettings
+                authState.status === 'connected' ||
+                (authState.status === 'expired' && authState.hasPersistentRefresh)
+                  ? onSyncNow
+                  : authState.status === 'expired' && onReconnectDrive
+                    ? onReconnectDrive
+                    : onOpenSettings
               }
               aria-label="Google Drive sync status"
             >
-              {isSyncing ? (
+              {isSyncing || authState.isRefreshing ? (
                 <>
                   <Loader2 size={14} className="spin" />
                   <span>Syncing…</span>
@@ -215,6 +225,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     <span>Synced</span>
                   </>
                 )
+              ) : authState.status === 'expired' ? (
+                <>
+                  <RefreshCw size={14} />
+                  <span>{authState.hasPersistentRefresh ? 'Sync' : 'Reconnect'}</span>
+                </>
               ) : (
                 <>
                   <CloudOff size={14} />

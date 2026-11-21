@@ -177,4 +177,78 @@ describe('RecordingEngine.trimToPlayhead', () => {
       });
     }
   });
+
+  it('transitions to paused immediately on pause(), detaches worklet onmessage, and ignores late chunks', async () => {
+    const engine = new RecordingEngine('book-pause-test');
+    const timeline = new PcmTimeline(1000, 1);
+    const phases: string[] = [];
+    engine.subscribe((s) => phases.push(s.phase));
+
+    let disconnected = false;
+    const port = {
+      onmessage: (() => {}) as ((ev: MessageEvent) => void) | null,
+      postMessage: () => {},
+    };
+    const fakeWorklet = {
+      port,
+      disconnect: () => {
+        disconnected = true;
+      },
+    };
+
+    const internals = engine as unknown as {
+      draftId: string;
+      timeline: PcmTimeline;
+      phase: string;
+      workletNode: unknown;
+      ingestCapturedChunk: (buf: Float32Array, peaks: number[], level: number) => void;
+    };
+    internals.draftId = 'draft-pause-test';
+    internals.timeline = timeline;
+    internals.phase = 'recording';
+    internals.workletNode = fakeWorklet;
+
+    internals.ingestCapturedChunk(new Float32Array(500).fill(0.4), [0.4], 0.4);
+    expect(engine.getSnapshot().durationMs).toBe(500);
+
+    // Pause should transition synchronously before awaiting IndexedDB flush
+    const pausePromise = engine.pause();
+    expect(engine.getSnapshot().phase).toBe('paused');
+    expect(phases[phases.length - 1]).toBe('paused');
+    expect(port.onmessage).toBeNull();
+    expect(disconnected).toBe(true);
+
+    // Late queued PCM chunk arriving after pause must be ignored
+    internals.ingestCapturedChunk(new Float32Array(500).fill(0.8), [0.8], 0.8);
+    expect(engine.getSnapshot().durationMs).toBe(500);
+
+    await pausePromise;
+    expect(engine.getSnapshot().phase).toBe('paused');
+  });
+
+  it('serializes discard() draft deletion after any in-flight chunk flush so deleted drafts never resurrect', async () => {
+    const { getDraft } = await import('../../storage/db');
+    const engine = new RecordingEngine('book-discard-race');
+    const timeline = new PcmTimeline(1000, 1);
+
+    const internals = engine as unknown as {
+      draftId: string;
+      timeline: PcmTimeline;
+      phase: string;
+      ingestCapturedChunk: (buf: Float32Array, peaks: number[], level: number) => void;
+    };
+    internals.draftId = 'draft-discard-race';
+    internals.timeline = timeline;
+    internals.phase = 'recording';
+
+    // Exceed 2-second flush threshold to kick off an async IndexedDB draft write
+    internals.ingestCapturedChunk(new Float32Array(2000).fill(0.3), [0.3], 0.3);
+
+    // Immediately discard before the background flush resolves
+    await engine.discard();
+
+    // Draft must remain deleted after the serialized queue drains
+    const persisted = await getDraft('draft-discard-race');
+    expect(persisted).toBeUndefined();
+  });
 });

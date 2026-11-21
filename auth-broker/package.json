@@ -1,0 +1,13 @@
+{
+  "name": "storytape-auth-broker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Stateless Google Cloud Run OAuth token broker for StoryTape PWA",
+  "scripts": {
+    "start": "node --experimental-strip-types server.ts"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  }
+}

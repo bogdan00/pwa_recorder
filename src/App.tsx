@@ -356,7 +356,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
   const handleSyncAll = useCallback(
     async (overrideSettings?: AppSettings) => {
       if (isSyncing) return;
-      if (!googleAuth.hasValidToken()) {
+      if (!googleAuth.hasValidToken() && !googleAuth.canRefreshSilently()) {
         setSettingsOpen(true);
         showToast('Connect Google Drive in Settings to sync');
         return;
@@ -402,7 +402,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
 
   const handleSyncProject = useCallback(
     async (projectId: string, silent = false) => {
-      if (!googleAuth.hasValidToken()) return;
+      if (!googleAuth.hasValidToken() && !googleAuth.canRefreshSilently()) return;
       const activeSettings = settingsRef.current;
       setIsSyncing(true);
       setSyncStatusMessage('Syncing book to Google Drive…');
@@ -432,7 +432,10 @@ const StoryTapeShell: React.FC<AppProps> = ({
   );
 
   // Must invoke googleAuth.requestSignIn() synchronously inside button click for iOS PWA
-  const handleConnectDrive = (options?: { skipAutoSync?: boolean }) => {
+  const handleConnectDrive = (options?: {
+    skipAutoSync?: boolean;
+    onConnected?: () => Promise<void> | void;
+  }) => {
     void googleAuth
       .requestSignIn()
       .then(async (token) => {
@@ -444,7 +447,9 @@ const StoryTapeShell: React.FC<AppProps> = ({
           // Optional user profile fetch
         }
         showToast('Connected to Google Drive');
-        if (!options?.skipAutoSync) {
+        if (options?.onConnected) {
+          await options.onConnected();
+        } else if (!options?.skipAutoSync) {
           await handleSyncAll();
         }
       })
@@ -659,7 +664,12 @@ const StoryTapeShell: React.FC<AppProps> = ({
       isShared: editingBook?.isShared ?? settings.driveLibraryMode === 'shared',
       accessRole: editingBook?.accessRole ?? 'owner',
       deletedRecordingIds: editingBook?.deletedRecordingIds,
-      syncStatus: googleAuth.hasValidToken() ? 'pending_upload' : 'local_only',
+      syncStatus:
+        googleAuth.hasValidToken() ||
+        googleAuth.canRefreshSilently() ||
+        googleAuth.getState().wasConnected
+          ? 'pending_upload'
+          : 'local_only',
       createdAt: editingBook?.createdAt ?? now,
       updatedAt: now,
     };
@@ -672,13 +682,25 @@ const StoryTapeShell: React.FC<AppProps> = ({
     }
 
     await reloadData();
-    showToast(isEdit ? 'Book updated' : `"${savedProject.title}" created`);
+    const canAutoSyncBook =
+      googleAuth.hasValidToken() || googleAuth.canRefreshSilently();
+    const bookSavedMsg = isEdit ? 'Book updated' : `"${savedProject.title}" created`;
+    if (!canAutoSyncBook && googleAuth.getState().wasConnected) {
+      showToast(bookSavedMsg, 'Reconnect & Sync', () =>
+        handleConnectDrive({
+          skipAutoSync: true,
+          onConnected: () => handleSyncProject(savedProject.id),
+        }),
+      );
+    } else {
+      showToast(bookSavedMsg);
+    }
 
     if (!isEdit) {
       navigate({ view: 'book', projectId: savedProject.id });
     }
 
-    if (googleAuth.hasValidToken()) {
+    if (canAutoSyncBook) {
       void handleSyncProject(savedProject.id, true);
     }
   };
@@ -706,6 +728,9 @@ const StoryTapeShell: React.FC<AppProps> = ({
       authState.userName?.trim() ||
       project.narrator.trim() ||
       undefined;
+    const canAutoSync =
+      googleAuth.hasValidToken() || googleAuth.canRefreshSilently();
+    const hasLinkedDrive = canAutoSync || googleAuth.getState().wasConnected;
 
     const rec: Recording = {
       id: createId('rec'),
@@ -734,7 +759,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
         saved.name,
         saved.extension,
       ),
-      syncStatus: googleAuth.hasValidToken() ? 'pending_upload' : 'local_only',
+      syncStatus: hasLinkedDrive ? 'pending_upload' : 'local_only',
       createdAt: now,
       updatedAt: now,
     };
@@ -742,20 +767,28 @@ const StoryTapeShell: React.FC<AppProps> = ({
     await putRecording(rec, saved.blob, saved.localMaster?.blob);
     await putProject({
       ...project,
-      syncStatus: googleAuth.hasValidToken() ? 'pending_upload' : project.syncStatus,
+      syncStatus: hasLinkedDrive ? 'pending_upload' : project.syncStatus,
       updatedAt: now,
     });
     await reloadData();
     await player.refreshChaptersForProject(project.id);
 
     navigate({ view: 'book', projectId: project.id });
-    showToast(
-      saved.localMaster
-        ? `Saved "${rec.name}" + local lossless master`
-        : `Saved "${rec.name}"`,
-    );
+    const savedMsg = saved.localMaster
+      ? `Saved "${rec.name}" + local lossless master`
+      : `Saved "${rec.name}"`;
+    if (!canAutoSync && googleAuth.getState().wasConnected) {
+      showToast(savedMsg, 'Reconnect & Sync', () =>
+        handleConnectDrive({
+          skipAutoSync: true,
+          onConnected: () => handleSyncProject(project.id),
+        }),
+      );
+    } else {
+      showToast(savedMsg);
+    }
 
-    if (googleAuth.hasValidToken()) {
+    if (canAutoSync) {
       void handleSyncProject(project.id, true);
     }
   };
@@ -800,7 +833,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
     await putProject({ ...project, updatedAt: now });
     await reloadData();
     await player.refreshChaptersForProject(project.id);
-    if (googleAuth.hasValidToken()) {
+    if (googleAuth.hasValidToken() || googleAuth.canRefreshSilently()) {
       void handleSyncProject(project.id, true);
     }
   };
@@ -813,7 +846,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
     await putProject({ ...project, updatedAt: Date.now() });
     await reloadData();
     await player.refreshChaptersForProject(project.id);
-    if (googleAuth.hasValidToken()) {
+    if (googleAuth.hasValidToken() || googleAuth.canRefreshSilently()) {
       void handleSyncProject(project.id, true);
     }
   };
@@ -897,7 +930,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
           This removes the audio
           {rec?.hasLocalMaster ? ' and its local lossless master' : ''} from this
           device
-          {googleAuth.hasValidToken()
+          {googleAuth.hasValidToken() || googleAuth.canRefreshSilently()
             ? ' and marks it deleted on Google Drive sync'
             : ''}
           . This cannot be undone.
@@ -918,7 +951,7 @@ const StoryTapeShell: React.FC<AppProps> = ({
         await reloadData();
         await player.refreshChaptersForProject(project.id);
         showToast('Recording deleted');
-        if (googleAuth.hasValidToken()) {
+        if (googleAuth.hasValidToken() || googleAuth.canRefreshSilently()) {
           void handleSyncProject(project.id, true);
         }
       },
@@ -1036,7 +1069,12 @@ const StoryTapeShell: React.FC<AppProps> = ({
           project={activeBook}
           recordings={recordingsByProject.get(activeBook.id) ?? []}
           progress={progressByProject.get(activeBook.id)}
-          canSyncDrive={authState.status === 'connected'}
+          canSyncDrive={
+            authState.status === 'connected' || authState.status === 'expired'
+          }
+          needsReconnectForCloudPlay={
+            authState.status === 'expired' && !authState.hasPersistentRefresh
+          }
           isSyncing={isSyncing}
           hasMiniPlayer={hasMiniPlayer}
           onBack={() => navigate({ view: 'library' })}
@@ -1051,7 +1089,31 @@ const StoryTapeShell: React.FC<AppProps> = ({
             player.pauseForRecording();
             navigate({ view: 'record', projectId: activeBook.id });
           }}
-          onSyncProject={() => void handleSyncProject(activeBook.id)}
+          onSyncProject={() => {
+            if (
+              !googleAuth.hasValidToken() &&
+              !googleAuth.canRefreshSilently() &&
+              googleAuth.getState().wasConnected
+            ) {
+              handleConnectDrive({
+                skipAutoSync: true,
+                onConnected: () => handleSyncProject(activeBook.id),
+              });
+              return;
+            }
+            void handleSyncProject(activeBook.id);
+          }}
+          onReconnectAndPlayChapter={(recordingId) => {
+            const book = activeBook;
+            const chapters = recordingsByProject.get(book.id) ?? [];
+            handleConnectDrive({
+              skipAutoSync: true,
+              onConnected: async () => {
+                await player.playChapter(book, chapters, recordingId, false);
+                await reloadData();
+              },
+            });
+          }}
           onRenameRecording={(recId, newName) =>
             handleRenameRecording(activeBook, recId, newName)
           }
@@ -1103,7 +1165,18 @@ const StoryTapeShell: React.FC<AppProps> = ({
           onOpenThemeSwitcher={() => setThemeSwitcherOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenShareLibrary={() => setShareTarget({ scope: 'library' })}
-          onSyncNow={() => void handleSyncAll()}
+          onSyncNow={() => {
+            if (
+              !googleAuth.hasValidToken() &&
+              !googleAuth.canRefreshSilently() &&
+              googleAuth.getState().wasConnected
+            ) {
+              handleConnectDrive();
+              return;
+            }
+            void handleSyncAll();
+          }}
+          onReconnectDrive={() => handleConnectDrive()}
           onResumeDraft={(draft) => {
             player.pauseForRecording();
             navigate({
@@ -1266,7 +1339,17 @@ const StoryTapeShell: React.FC<AppProps> = ({
           googleAuth.signOut();
           showToast('Signed out of Google Drive');
         }}
-        onSyncAll={() => void handleSyncAll()}
+        onSyncAll={() => {
+          if (
+            !googleAuth.hasValidToken() &&
+            !googleAuth.canRefreshSilently() &&
+            googleAuth.getState().wasConnected
+          ) {
+            handleConnectDrive();
+            return;
+          }
+          void handleSyncAll();
+        }}
         onOpenShareLibrary={() => {
           setSettingsOpen(false);
           setShareTarget({ scope: 'library' });

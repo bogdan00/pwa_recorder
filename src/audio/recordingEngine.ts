@@ -93,6 +93,7 @@ export class RecordingEngine {
   private pendingPersistBuffers: Float32Array[] = [];
   private pendingPersistSamples = 0;
   private persistedChunkCount = 0;
+  private draftPersistQueue: Promise<void> = Promise.resolve();
 
   // Wake Lock
   private wakeLock: WakeLockSentinel | null = null;
@@ -284,13 +285,13 @@ export class RecordingEngine {
     this.teardownMicCapture();
     // Apply 15ms raised-cosine tail fade-out and arm 15ms fade-in for click-free Resume
     this.timeline?.markPauseBoundary();
-    await this.flushPendingDraftToDb();
-    await this.releaseWakeLock();
-
     this.liveLevel = 0;
     this.phase = 'paused';
     this.playheadMs = this.timeline?.getDurationMs() ?? 0;
     this.emit();
+
+    await this.flushPendingDraftToDb();
+    await this.releaseWakeLock();
   }
 
   /**
@@ -457,7 +458,9 @@ export class RecordingEngine {
     this.resetInternalState();
 
     if (oldDraftId) {
-      await deleteDraft(oldDraftId).catch(() => {});
+      await this.enqueueDraftPersist(() =>
+        deleteDraft(oldDraftId).catch(() => {}),
+      );
     }
 
     return { encoded, localMaster, durationMs, overviewPeaks, deviceLabel };
@@ -473,7 +476,9 @@ export class RecordingEngine {
     this.emit();
 
     if (oldDraftId) {
-      await deleteDraft(oldDraftId).catch(() => {});
+      await this.enqueueDraftPersist(() =>
+        deleteDraft(oldDraftId).catch(() => {}),
+      );
     }
   }
 
@@ -761,7 +766,7 @@ export class RecordingEngine {
     peaks: number[],
     liveLevel: number,
   ): void {
-    if (!this.timeline) return;
+    if (!this.timeline || this.phase !== 'recording') return;
     const now = nowPerfMs();
     this.timeline.appendFrames(interleaved, peaks);
     this.playheadMs = this.timeline.getDurationMs();
@@ -855,10 +860,17 @@ export class RecordingEngine {
     }
   }
 
-  private async flushPendingDraftToDb(): Promise<void> {
+  private enqueueDraftPersist(task: () => Promise<void>): Promise<void> {
+    const next = this.draftPersistQueue.then(task, task);
+    this.draftPersistQueue = next.catch(() => {});
+    return next;
+  }
+
+  private flushPendingDraftToDb(): Promise<void> {
     if (!this.draftId || !this.timeline || this.pendingPersistSamples === 0) {
-      return;
+      return this.draftPersistQueue;
     }
+    const draftId = this.draftId;
     const buffers = this.pendingPersistBuffers;
     const totalLen = this.pendingPersistSamples;
     this.pendingPersistBuffers = [];
@@ -875,7 +887,7 @@ export class RecordingEngine {
     this.persistedChunkCount += 1;
 
     const draftMeta: ActiveDraft = {
-      id: this.draftId,
+      id: draftId,
       projectId: this.projectId,
       sampleRate: this.timeline.sampleRate,
       channels: this.timeline.channels,
@@ -885,16 +897,18 @@ export class RecordingEngine {
       updatedAt: Date.now(),
     };
 
-    try {
-      await saveDraftChunk(this.draftId, chunkIdx, merged);
-      await saveDraftMeta(draftMeta);
-    } catch {
-      // Non-fatal: recording remains safe in memory
-    }
+    return this.enqueueDraftPersist(async () => {
+      try {
+        await saveDraftChunk(draftId, chunkIdx, merged);
+        await saveDraftMeta(draftMeta);
+      } catch {
+        // Non-fatal: recording remains safe in memory
+      }
+    });
   }
 
-  private async syncFullDraftToDb(): Promise<void> {
-    if (!this.draftId || !this.timeline) return;
+  private syncFullDraftToDb(): Promise<void> {
+    if (!this.draftId || !this.timeline) return this.draftPersistQueue;
     this.pendingPersistBuffers = [];
     this.pendingPersistSamples = 0;
 
@@ -912,11 +926,13 @@ export class RecordingEngine {
       updatedAt: Date.now(),
     };
 
-    try {
-      await replaceDraftSnapshot(draftMeta, blocks);
-    } catch {
-      // Non-fatal
-    }
+    return this.enqueueDraftPersist(async () => {
+      try {
+        await replaceDraftSnapshot(draftMeta, blocks);
+      } catch {
+        // Non-fatal
+      }
+    });
   }
 
   private async requestWakeLock(): Promise<void> {

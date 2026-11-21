@@ -1,6 +1,7 @@
-import { defineConfig } from '@playwright/test';
+import { chromium, defineConfig } from '@playwright/test';
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import type { StoryTapeTestOptions } from './e2e/fixtures';
 
 function resolveChromiumExecutable(): string | undefined {
@@ -12,6 +13,44 @@ function resolveChromiumExecutable(): string | undefined {
   if (process.env.CI) return undefined;
   const candidates = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'];
   return candidates.find((p) => fs.existsSync(p));
+}
+
+const CHROMIUM_LAUNCH_ARGS = [
+  '--use-fake-device-for-media-stream',
+  '--use-fake-ui-for-media-stream',
+  '--autoplay-policy=no-user-gesture-required',
+  '--no-sandbox',
+  '--disable-dev-shm-usage',
+];
+
+function resolveSlowCpuLaunchOptions() {
+  const baseExecutable = resolveChromiumExecutable();
+  const realChromium = baseExecutable ?? chromium.executablePath();
+  const wrapperPath = path.resolve('e2e/single-cpu-chromium.sh');
+
+  if (
+    process.platform === 'linux' &&
+    realChromium &&
+    fs.existsSync(realChromium) &&
+    fs.existsSync('/usr/bin/taskset') &&
+    fs.existsSync(wrapperPath)
+  ) {
+    const cleanEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined) cleanEnv[k] = v;
+    }
+    cleanEnv.STORYTAPE_REAL_CHROMIUM = realChromium;
+    return {
+      executablePath: wrapperPath,
+      args: CHROMIUM_LAUNCH_ARGS,
+      env: cleanEnv,
+    };
+  }
+
+  return {
+    executablePath: baseExecutable,
+    args: CHROMIUM_LAUNCH_ARGS,
+  };
 }
 
 const PORT = Number(process.env.E2E_PORT || 4173);
@@ -47,13 +86,7 @@ export default defineConfig<StoryTapeTestOptions>({
     cpuThrottleRate: Number(process.env.E2E_CPU_THROTTLE || '1'),
     launchOptions: {
       executablePath: resolveChromiumExecutable(),
-      args: [
-        '--use-fake-device-for-media-stream',
-        '--use-fake-ui-for-media-stream',
-        '--autoplay-policy=no-user-gesture-required',
-        '--no-sandbox',
-        '--disable-dev-shm-usage',
-      ],
+      args: CHROMIUM_LAUNCH_ARGS,
     },
   },
   projects: [
@@ -81,6 +114,7 @@ export default defineConfig<StoryTapeTestOptions>({
       testMatch: /cuj-(02|03)-.*\.spec\.ts/,
       use: {
         cpuThrottleRate: 4,
+        launchOptions: resolveSlowCpuLaunchOptions(),
       },
     },
   ],

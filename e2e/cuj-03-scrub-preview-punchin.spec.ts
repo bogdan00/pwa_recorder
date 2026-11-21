@@ -59,17 +59,19 @@ test.describe('CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In
     await expect(punchInBtn).toContainText('Re-record from');
 
     // 3. Play preview from scrubbed position and verify playhead actively advances
-    await page.locator('#studio-preview-play-btn').click();
-    await expect(page.locator('.studio-status-pill')).toHaveText('PLAYING');
     const playStartSec = parseTimerSeconds(
       (await page.getByTestId('studio-timer').textContent()) || '00:00.0',
     );
+    await page.locator('#studio-preview-play-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('PLAYING');
     await waitForStudioTimer(
       page,
       (sec) => sec > playStartSec + 0.15,
       'preview playback should advance playhead beyond start position',
     );
-    await page.locator('#studio-preview-play-btn').click();
+    if ((await page.locator('.studio-status-pill').textContent())?.trim() === 'PLAYING') {
+      await page.locator('#studio-preview-play-btn').click();
+    }
     await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
 
     // Re-scrub back with -5s so playhead is cleanly before the end

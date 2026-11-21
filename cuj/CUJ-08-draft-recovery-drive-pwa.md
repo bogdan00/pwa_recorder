@@ -2,10 +2,10 @@
 
 **Priority:** P0  
 **E2E Spec:** [`e2e/cuj-08-draft-recovery-drive-pwa.spec.ts`](../e2e/cuj-08-draft-recovery-drive-pwa.spec.ts)  
-**Related ADRs:** [ADR-01](../adr/ADR-01-zero-backend-offline-first-pwa.md), [ADR-02](../adr/ADR-02-indexeddb-arraybuffer-storage-and-drafts.md), [ADR-05](../adr/ADR-05-client-side-drive-oauth-and-conflict-safe-sync.md), [ADR-08](../adr/ADR-08-persistent-player-and-media-session.md), [ADR-09](../adr/ADR-09-strict-local-to-ci-verification-parity.md)
+**Related ADRs:** [ADR-01](../adr/ADR-01-zero-backend-offline-first-pwa.md), [ADR-02](../adr/ADR-02-indexeddb-arraybuffer-storage-and-drafts.md), [ADR-05](../adr/ADR-05-client-side-drive-oauth-and-conflict-safe-sync.md), [ADR-08](../adr/ADR-08-persistent-player-and-media-session.md), [ADR-09](../adr/ADR-09-strict-local-to-ci-verification-parity.md), [ADR-10](../adr/ADR-10-stateless-oauth-token-broker-cloud-run.md)
 
 ## Goal
-A parent never loses an in-progress recording if the mobile OS suspends/reloads the PWA, can connect Google Drive to push book folders (`project.json`, `cover.jpg`, and chapter audio via resumable upload) and pull remote `cloud_only` books on demand, can free cached local audio for synced chapters, gets a clear non-intrusive prompt to install StoryTape to their Home Screen (both native `beforeinstallprompt` on Android/Desktop Chromium and guided Add to Home Screen on iOS Safari), and gets a valid subpath PWA at `/pwa_recorder/`.
+A parent never loses an in-progress recording if the mobile OS suspends/reloads the PWA, can connect Google Drive to push book folders (`project.json`, `cover.jpg`, and chapter audio via resumable upload) and pull remote `cloud_only` books on demand, stays signed in seamlessly across PWA updates and multi-day gaps (via silent refresh when the Cloud Run OAuth broker is configured, or 1-tap `login_hint` reconnect in zero-infra mode), can free cached local audio for synced chapters, gets a clear non-intrusive prompt to install StoryTape to their Home Screen (both native `beforeinstallprompt` on Android/Desktop Chromium and guided Add to Home Screen on iOS Safari), and gets a valid subpath PWA at `/pwa_recorder/`.
 
 ## Preconditions
 - Production PWA served under GitHub Pages subpath `/pwa_recorder/`.
@@ -17,12 +17,15 @@ A parent never loses an in-progress recording if the mobile OS suspends/reloads 
    - Return to Library.
    - **Expected:** **Unfinished Recording Found** banner appears showing book name and duration; tapping **Resume** reopens Recording Studio in `PAUSED` state with the full recovered duration and waveform ready to continue or save, and tapping **Discard** requires explicit confirmation before deleting the draft.
 
-2. **Google Drive Sign-In & Two-Way Sync**
-   - Open Settings → **Google Drive Folder** (no manual Client ID or GCP setup guide shown), tap **Connect Google Drive** (with mocked GIS token callback & intercepted Drive v3 API routes), and verify automatic sync.
+2. **Google Drive Sign-In, Persistent Session Across PWA Updates & Two-Way Sync**
+   - Open Settings → **Google Drive Folder** (no manual Client ID or GCP setup guide shown), tap **Connect Google Drive** (with mocked GIS callback & intercepted Drive v3 API routes), and verify automatic sync.
    - **Expected:**
      - Local book folder, `cover.jpg` (if present), `01 - <Chapter>.ext` (resumable upload), and `project.json` are pushed to Drive, flipping local book & chapter sync badges to `Synced`.
      - A remote book present in Drive is pulled into the Library with its chapter marked `cloud_only`.
      - Tapping Play on the `cloud_only` chapter downloads it on demand from Drive, caches it into IndexedDB, and opens playback.
+     - **Persistent Session Across PWA Updates/Restarts:** Reloading the app after a PWA update (even when ephemeral `sessionStorage` is wiped) preserves the active Google Drive session (`Synced` pill in Library header, `Connected` + user email in Settings) without requiring re-login.
+     - **Silent Multi-Day Refresh (Cloud Run OAuth Broker):** When `VITE_GOOGLE_AUTH_BROKER_URL` is configured, initial sign-in exchanges a GIS Authorization Code via `POST /auth/exchange` for an encrypted long-lived refresh token; when the 1-hour access token expires across a PWA update/reload or triggers an HTTP `401`, StoryTape silently refreshes via `POST /auth/refresh` in the background with **zero popups and zero user taps** and stays `Synced`. Explicit **Sign Out** calls `POST /auth/revoke` and clears local storage.
+     - **1-Tap Expired-Token Reconnect (Zero-Infra Fallback):** When running without a broker (or if a refresh token is revoked) and the 1-hour access token expires between sessions, StoryTape remembers the linked Google account (`Reconnect` pill in Library header, `Reconnect Needed` + remembered email and **Sign Out** in Settings). Tapping the Library header `Reconnect` pill, Book **Sync**, a `cloud_only` chapter to play, or the **Reconnect & Sync** toast action after saving a chapter triggers GIS `requestAccessToken({ prompt: '', login_hint })` directly without opening Settings or forcing account selection, then immediately completes the action. Explicit **Sign Out** clears the persisted session and remembered account across reloads.
      - *See also [CUJ-09](./CUJ-09-multi-user-sharing.md) for multi-user family sharing, Google Drive collaborator permissions, conflict-safe co-narration merge, and read-only Listener mode.*
 
 3. **Free Synced Local Audio Cache (with Confirmation)**

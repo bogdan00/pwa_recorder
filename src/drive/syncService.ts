@@ -573,15 +573,14 @@ export async function syncAllWithDrive(
   onProgress?: (update: SyncProgressUpdate) => void,
   clientOverride?: DriveClient,
 ): Promise<SyncResult> {
-  const client = clientOverride ?? createAuthorizedClient();
-  const errors: string[] = [];
+  return withAuthorizedClient(clientOverride, async (client) => {
+    const errors: string[] = [];
 
-  onProgress?.({
-    phase: 'connecting',
-    message: 'Connecting to Google Drive…',
-  });
+    onProgress?.({
+      phase: 'connecting',
+      message: 'Connecting to Google Drive…',
+    });
 
-  try {
     const root = await ensureRootFolder(client, settings);
     const isSharedLibrary = settings.driveLibraryMode === 'shared';
 
@@ -619,7 +618,6 @@ export async function syncAllWithDrive(
         }
       } catch (err) {
         if (err instanceof DriveApiError && err.status === 401) {
-          googleAuth.markExpired();
           throw err;
         }
         const msg = err instanceof Error ? err.message : String(err);
@@ -642,12 +640,7 @@ export async function syncAllWithDrive(
       pulledProjects,
       errors,
     };
-  } catch (err) {
-    if (err instanceof DriveApiError && err.status === 401) {
-      googleAuth.markExpired();
-    }
-    throw err;
-  }
+  });
 }
 
 export async function syncSingleProjectWithDrive(
@@ -656,8 +649,7 @@ export async function syncSingleProjectWithDrive(
   onProgress?: (update: SyncProgressUpdate) => void,
   clientOverride?: DriveClient,
 ): Promise<{ rootFolderId: string; pushedRecordings: number }> {
-  const client = clientOverride ?? createAuthorizedClient();
-  try {
+  return withAuthorizedClient(clientOverride, async (client) => {
     const project = await getProject(projectId);
     const root = await ensureRootFolder(client, settings);
 
@@ -681,12 +673,7 @@ export async function syncSingleProjectWithDrive(
     );
     onProgress?.({ phase: 'done', message: 'Synced to Google Drive.' });
     return { rootFolderId: root.id, pushedRecordings };
-  } catch (err) {
-    if (err instanceof DriveApiError && err.status === 401) {
-      googleAuth.markExpired();
-    }
-    throw err;
-  }
+  });
 }
 
 /**
@@ -696,13 +683,14 @@ export async function ensureShareableLibraryFolder(
   settings: AppSettings,
   clientOverride?: DriveClient,
 ): Promise<{ folderId: string; folderName: string; accessRole: ShareAccessRole }> {
-  const client = clientOverride ?? createAuthorizedClient();
-  const root = await ensureRootFolder(client, settings);
-  return {
-    folderId: root.id,
-    folderName: root.name,
-    accessRole: root.role,
-  };
+  return withAuthorizedClient(clientOverride, async (client) => {
+    const root = await ensureRootFolder(client, settings);
+    return {
+      folderId: root.id,
+      folderName: root.name,
+      accessRole: root.role,
+    };
+  });
 }
 
 /**
@@ -713,30 +701,31 @@ export async function ensureShareableBookFolder(
   settings: AppSettings,
   clientOverride?: DriveClient,
 ): Promise<{ rootFolderId: string; folderId: string; title: string }> {
-  const client = clientOverride ?? createAuthorizedClient();
-  const existing = await getProject(projectId);
-  if (!existing) throw new Error('Book not found.');
-  if (existing.driveFolderId) {
-    const verified = await client.verifyFileExists(existing.driveFolderId);
-    if (verified) {
-      return {
-        rootFolderId: settings.driveRootFolderId || '',
-        folderId: verified.id,
-        title: existing.title,
-      };
+  return withAuthorizedClient(clientOverride, async (client) => {
+    const existing = await getProject(projectId);
+    if (!existing) throw new Error('Book not found.');
+    if (existing.driveFolderId) {
+      const verified = await client.verifyFileExists(existing.driveFolderId);
+      if (verified) {
+        return {
+          rootFolderId: settings.driveRootFolderId || '',
+          folderId: verified.id,
+          title: existing.title,
+        };
+      }
     }
-  }
-  const root = await ensureRootFolder(client, settings);
-  await pushProjectToDrive(client, projectId, root.id);
-  const updated = await getProject(projectId);
-  if (!updated?.driveFolderId) {
-    throw new Error('Could not create Google Drive folder for this book.');
-  }
-  return {
-    rootFolderId: root.id,
-    folderId: updated.driveFolderId,
-    title: updated.title,
-  };
+    const root = await ensureRootFolder(client, settings);
+    await pushProjectToDrive(client, projectId, root.id);
+    const updated = await getProject(projectId);
+    if (!updated?.driveFolderId) {
+      throw new Error('Could not create Google Drive folder for this book.');
+    }
+    return {
+      rootFolderId: root.id,
+      folderId: updated.driveFolderId,
+      title: updated.title,
+    };
+  });
 }
 
 /**
@@ -752,24 +741,25 @@ export async function inspectSharedDriveFolder(
   scope: 'library' | 'book';
   accessRole: ShareAccessRole;
 }> {
-  const client = clientOverride ?? createAuthorizedClient();
-  const summary = await client.verifyFileExists(folderId);
-  if (!summary) {
-    throw new DriveApiError(
-      404,
-      'StoryTape does not have permission to view this folder yet.',
+  return withAuthorizedClient(clientOverride, async (client) => {
+    const summary = await client.verifyFileExists(folderId);
+    if (!summary) {
+      throw new DriveApiError(
+        404,
+        'StoryTape does not have permission to view this folder yet.',
+      );
+    }
+    const children = await client.listFolderChildren(summary.id);
+    const hasBookManifest = children.some(
+      (c) => c.name === PROJECT_METADATA_FILENAME,
     );
-  }
-  const children = await client.listFolderChildren(summary.id);
-  const hasBookManifest = children.some(
-    (c) => c.name === PROJECT_METADATA_FILENAME,
-  );
-  return {
-    folderId: summary.id,
-    name: summary.name || 'Shared Audiobooks',
-    scope: hasBookManifest ? 'book' : 'library',
-    accessRole: resolveAccessRole(summary, 'writer'),
-  };
+    return {
+      folderId: summary.id,
+      name: summary.name || 'Shared Audiobooks',
+      scope: hasBookManifest ? 'book' : 'library',
+      accessRole: resolveAccessRole(summary, 'writer'),
+    };
+  });
 }
 
 export async function downloadCloudRecording(
@@ -785,9 +775,8 @@ export async function downloadCloudRecording(
     throw new Error('This recording is not linked to a Google Drive file.');
   }
 
-  const client = clientOverride ?? createAuthorizedClient();
-  try {
-    const blob = await client.downloadFileBlob(rec.driveFileId);
+  return withAuthorizedClient(clientOverride, async (client) => {
+    const blob = await client.downloadFileBlob(rec.driveFileId!);
     await putRecordingBlob(recordingId, blob);
     await putRecording({
       ...rec,
@@ -795,18 +784,50 @@ export async function downloadCloudRecording(
       syncError: undefined,
     });
     return blob;
+  });
+}
+
+async function withAuthorizedClient<T>(
+  clientOverride: DriveClient | undefined,
+  run: (client: DriveClient) => Promise<T>,
+): Promise<T> {
+  if (clientOverride) {
+    try {
+      return await run(clientOverride);
+    } catch (err) {
+      if (err instanceof DriveApiError && err.status === 401) {
+        googleAuth.markExpired();
+      }
+      throw err;
+    }
+  }
+
+  const token = await googleAuth.ensureValidAccessToken();
+  if (!token) {
+    throw new Error('Please connect Google Drive in Settings first.');
+  }
+
+  try {
+    return await run(new DriveClient(token));
   } catch (err) {
     if (err instanceof DriveApiError && err.status === 401) {
+      if (googleAuth.canRefreshSilently()) {
+        const refreshed = await googleAuth.refreshAccessTokenSilently({
+          force: true,
+        });
+        if (refreshed) {
+          try {
+            return await run(new DriveClient(refreshed));
+          } catch (retryErr) {
+            if (retryErr instanceof DriveApiError && retryErr.status === 401) {
+              googleAuth.markExpired();
+            }
+            throw retryErr;
+          }
+        }
+      }
       googleAuth.markExpired();
     }
     throw err;
   }
-}
-
-function createAuthorizedClient(): DriveClient {
-  const token = googleAuth.getAccessToken();
-  if (!token) {
-    throw new Error('Please connect Google Drive in Settings first.');
-  }
-  return new DriveClient(token);
 }

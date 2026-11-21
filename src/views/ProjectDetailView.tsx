@@ -26,6 +26,7 @@ interface ProjectDetailViewProps {
   recordings: Recording[];
   progress?: PlaybackProgress;
   canSyncDrive: boolean;
+  needsReconnectForCloudPlay?: boolean;
   isSyncing: boolean;
   hasMiniPlayer: boolean;
   onBack: () => void;
@@ -33,6 +34,7 @@ interface ProjectDetailViewProps {
   onShareBook: () => void;
   onStartRecording: () => void;
   onSyncProject: () => void;
+  onReconnectAndPlayChapter?: (recordingId: string) => void;
   onRenameRecording: (recordingId: string, newName: string) => Promise<void>;
   onReorderRecordings: (orderedIds: string[]) => Promise<void>;
   onDownloadRecording: (recording: Recording) => Promise<void>;
@@ -47,6 +49,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   recordings,
   progress,
   canSyncDrive,
+  needsReconnectForCloudPlay = false,
   isSyncing,
   hasMiniPlayer,
   onBack,
@@ -54,6 +57,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   onShareBook,
   onStartRecording,
   onSyncProject,
+  onReconnectAndPlayChapter,
   onRenameRecording,
   onReorderRecordings,
   onDownloadRecording,
@@ -285,9 +289,17 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                     isCompleted={completedIds.has(rec.id)}
                     canSyncDrive={canSyncDrive}
                     isReadOnly={isReadOnly}
-                    onPlay={() =>
-                      void player.playChapter(project, recordings, rec.id, false)
-                    }
+                    onPlay={() => {
+                      if (
+                        rec.syncStatus === 'cloud_only' &&
+                        needsReconnectForCloudPlay &&
+                        onReconnectAndPlayChapter
+                      ) {
+                        onReconnectAndPlayChapter(rec.id);
+                        return;
+                      }
+                      void player.playChapter(project, recordings, rec.id, false);
+                    }}
                     onRename={(newName) => onRenameRecording(rec.id, newName)}
                     onMoveUp={() => handleMove(idx, -1)}
                     onMoveDown={() => handleMove(idx, 1)}

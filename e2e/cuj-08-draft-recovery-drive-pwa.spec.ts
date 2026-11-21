@@ -355,6 +355,341 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     await expect(page.getByTestId('mini-player-bar')).toContainText('The Witch’s Cat');
   });
 
+  test('persists Google Drive session across PWA update reloads even if sessionStorage clears, and reconnects in 1 tap with login_hint when token expires', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const requestLog: Array<Record<string, unknown> | undefined> = [];
+      (window as unknown as Record<string, unknown>).__gisRequestLog = requestLog;
+      (window as unknown as Record<string, unknown>).google = {
+        accounts: {
+          oauth2: {
+            initTokenClient: (cfg: {
+              callback: (resp: { access_token: string; expires_in: number }) => void;
+            }) => ({
+              requestAccessToken: (overrideConfig?: Record<string, unknown>) => {
+                requestLog.push(overrideConfig);
+                cfg.callback({
+                  access_token: `e2e-drive-token-${requestLog.length}`,
+                  expires_in: 3600,
+                });
+              },
+            }),
+            revoke: () => {},
+          },
+        },
+      };
+    });
+
+    await page.route('https://www.googleapis.com/**', async (route) => {
+      const url = route.request().url();
+      const method = route.request().method();
+
+      if (url.includes('/drive/v3/about')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            user: { displayName: 'Story Parent', emailAddress: 'parent@example.com' },
+          }),
+        });
+      }
+      if (url.includes('/drive/v3/files') && method === 'POST') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'drive-root-persist',
+            name: 'StoryTape Audiobooks',
+            mimeType: 'application/vnd.google-apps.folder',
+            ownedByMe: true,
+          }),
+        });
+      }
+      if (url.includes('/drive/v3/files/drive-root-persist?fields=')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'drive-root-persist',
+            name: 'StoryTape Audiobooks',
+            mimeType: 'application/vnd.google-apps.folder',
+            trashed: false,
+            ownedByMe: true,
+          }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ files: [] }),
+      });
+    });
+
+    await page.goto('./');
+    await page.locator('#open-settings-btn').click();
+    await page.getByRole('button', { name: 'Connect Google Drive' }).click();
+    await expect(page.getByText('parent@example.com')).toBeVisible();
+    await expect(page.getByText('Google Drive is up to date.')).toBeVisible();
+    await page.getByLabel('Close settings').click();
+
+    const drivePill = page.getByLabel('Google Drive sync status');
+    await expect(drivePill).toHaveText(/Synced/);
+
+    // 1. Simulate a PWA update / standalone restart where ephemeral sessionStorage is wiped
+    await page.evaluate(() => {
+      window.sessionStorage.clear();
+    });
+    await page.reload();
+
+    // Still connected with ZERO re-login!
+    await expect(drivePill).toHaveText(/Synced/);
+    const callsAfterUpdateReload = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __gisRequestLog: Array<Record<string, unknown> | undefined>;
+          }
+        ).__gisRequestLog.length,
+    );
+    expect(callsAfterUpdateReload).toBe(0);
+
+    await page.locator('#open-settings-btn').click();
+    await expect(page.getByText('Connected', { exact: true })).toBeVisible();
+    await expect(page.getByText('parent@example.com')).toBeVisible();
+    await page.getByLabel('Close settings').click();
+
+    // 2. Simulate the 1-hour OAuth access token expiring before the next PWA launch/update
+    await page.evaluate(() => {
+      const raw = window.localStorage.getItem('storytape.googleAuth.v1');
+      if (!raw) throw new Error('Expected persisted auth in localStorage');
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      parsed.expiresAt = Date.now() - 60_000;
+      window.localStorage.setItem('storytape.googleAuth.v1', JSON.stringify(parsed));
+      window.sessionStorage.clear();
+    });
+    await page.reload();
+
+    // Library header shows 1-tap Reconnect pill (not disconnected Drive)
+    await expect(drivePill).toHaveText(/Reconnect/);
+
+    // Settings remembers the linked email and offers Sign Out even while expired
+    await page.locator('#open-settings-btn').click();
+    await expect(page.getByText('Reconnect Needed')).toBeVisible();
+    await expect(page.getByText(/Linked to.*parent@example\.com/i)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign Out' })).toBeVisible();
+    await page.getByLabel('Close settings').click();
+
+    // Tapping the Library header Reconnect pill refreshes directly with prompt:'' + login_hint without opening Settings
+    await drivePill.click();
+    await expect(drivePill).toHaveText(/Synced/);
+    await expect(page.getByTestId('settings-sheet')).toHaveCount(0);
+
+    const reconnectCalls = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __gisRequestLog: Array<Record<string, unknown> | undefined>;
+          }
+        ).__gisRequestLog,
+    );
+    expect(reconnectCalls).toEqual([
+      { prompt: '', login_hint: 'parent@example.com' },
+    ]);
+
+    // 3. Explicit Sign Out clears persisted session across reloads
+    await page.locator('#open-settings-btn').click();
+    await page.getByRole('button', { name: 'Sign Out' }).click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-confirm').click();
+    await expect(page.getByText('Disconnected')).toBeVisible();
+    await page.getByLabel('Close settings').click();
+
+    await page.reload();
+    await expect(drivePill).toHaveText(/^Drive$/);
+  });
+
+  test('refreshes Google Drive silently across multi-day PWA updates and 401s when Cloud Run OAuth broker is configured, and revokes on Sign Out', async ({
+    page,
+  }) => {
+    const brokerUrl = 'https://auth-broker.example.test';
+    const brokerEvents: string[] = [];
+    let forceOne401 = false;
+    let currentAccessToken = '';
+
+    await page.addInitScript((url: string) => {
+      (window as unknown as Record<string, unknown>).__STORYTAPE_AUTH_BROKER_URL__ = url;
+      (window as unknown as Record<string, unknown>).__gisCodeCalls = 0;
+      (window as unknown as Record<string, unknown>).google = {
+        accounts: {
+          oauth2: {
+            initTokenClient: () => ({
+              requestAccessToken: () => {
+                throw new Error('Expected initCodeClient when broker URL is configured');
+              },
+            }),
+            initCodeClient: (cfg: {
+              callback: (resp: { code: string }) => void;
+            }) => ({
+              requestCode: () => {
+                (window as unknown as { __gisCodeCalls: number }).__gisCodeCalls += 1;
+                cfg.callback({ code: '4/0e2e-auth-code' });
+              },
+            }),
+          },
+        },
+      };
+    }, brokerUrl);
+
+    await page.route(`${brokerUrl}/**`, async (route) => {
+      const url = route.request().url();
+      const body = JSON.parse(route.request().postData() || '{}') as Record<
+        string,
+        unknown
+      >;
+
+      if (url.endsWith('/auth/exchange')) {
+        brokerEvents.push('exchange');
+        currentAccessToken = 'broker-access-1';
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            accessToken: currentAccessToken,
+            expiresIn: 3600,
+            encryptedRefreshToken: 'v1.e2e.enc.refresh.1',
+          }),
+        });
+      }
+
+      if (url.endsWith('/auth/refresh')) {
+        brokerEvents.push(`refresh:${String(body.encryptedRefreshToken || '')}`);
+        currentAccessToken = `broker-access-${brokerEvents.length + 1}`;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            accessToken: currentAccessToken,
+            expiresIn: 3600,
+            encryptedRefreshToken: 'v1.e2e.enc.refresh.2',
+          }),
+        });
+      }
+
+      if (url.endsWith('/auth/revoke')) {
+        brokerEvents.push(`revoke:${String(body.encryptedRefreshToken || '')}`);
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ ok: true }),
+        });
+      }
+
+      return route.fulfill({ status: 404, body: '{}' });
+    });
+
+    await page.route('https://www.googleapis.com/**', async (route) => {
+      const url = route.request().url();
+      const method = route.request().method();
+
+      if (forceOne401 && url.includes('/drive/v3/files')) {
+        forceOne401 = false;
+        return route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { message: 'Token expired' } }),
+        });
+      }
+
+      if (url.includes('/drive/v3/about')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            user: { displayName: 'Story Parent', emailAddress: 'parent@example.com' },
+          }),
+        });
+      }
+      if (url.includes('/drive/v3/files') && method === 'POST') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'drive-root-broker',
+            name: 'StoryTape Audiobooks',
+            mimeType: 'application/vnd.google-apps.folder',
+            ownedByMe: true,
+          }),
+        });
+      }
+      if (url.includes('/drive/v3/files/drive-root-broker?fields=')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'drive-root-broker',
+            name: 'StoryTape Audiobooks',
+            mimeType: 'application/vnd.google-apps.folder',
+            trashed: false,
+            ownedByMe: true,
+          }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ files: [] }),
+      });
+    });
+
+    // 1. Initial Connect via GIS Authorization Code -> Cloud Run /auth/exchange
+    await page.goto('./');
+    await page.locator('#open-settings-btn').click();
+    await page.getByRole('button', { name: 'Connect Google Drive' }).click();
+    await expect(page.getByText(/Stays signed in automatically/i)).toBeVisible();
+    await expect(page.getByText('Google Drive is up to date.')).toBeVisible();
+    await page.getByLabel('Close settings').click();
+
+    const drivePill = page.getByLabel('Google Drive sync status');
+    await expect(drivePill).toHaveText(/Synced/);
+    expect(brokerEvents).toEqual(['exchange']);
+
+    // 2. Simulate opening the PWA 2 days later after a PWA update (token expired + sessionStorage wiped)
+    await page.evaluate(() => {
+      const raw = window.localStorage.getItem('storytape.googleAuth.v1');
+      if (!raw) throw new Error('Expected auth state in localStorage');
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      parsed.expiresAt = Date.now() - 48 * 60 * 60 * 1000;
+      window.localStorage.setItem('storytape.googleAuth.v1', JSON.stringify(parsed));
+      window.sessionStorage.clear();
+    });
+    await page.reload();
+
+    // Silently refreshes via /auth/refresh with ZERO popups and ZERO user clicks!
+    await expect(drivePill).toHaveText(/Synced/);
+    const codeCallsAfterReload = await page.evaluate(
+      () => (window as unknown as { __gisCodeCalls: number }).__gisCodeCalls,
+    );
+    expect(codeCallsAfterReload).toBe(0);
+    expect(brokerEvents).toContain('refresh:v1.e2e.enc.refresh.1');
+
+    // 3. Mid-sync Drive 401 triggers transparent silent refresh + retry without logging out
+    forceOne401 = true;
+    await drivePill.click();
+    await expect(page.getByText('Google Drive is up to date')).toBeVisible();
+    await expect(drivePill).toHaveText(/Synced/);
+    expect(brokerEvents.filter((e) => e.startsWith('refresh:')).length).toBe(2);
+
+    // 4. Explicit Sign Out revokes encrypted refresh token at broker and clears persistence
+    await page.locator('#open-settings-btn').click();
+    await page.getByRole('button', { name: 'Sign Out' }).click();
+    await page.getByTestId('confirm-dialog-confirm').click();
+    await expect(page.getByText('Disconnected')).toBeVisible();
+    await expect
+      .poll(() => brokerEvents.some((e) => e.startsWith('revoke:')))
+      .toBe(true);
+  });
+
   test('serves valid /pwa_recorder/ PWA manifest, icons, AudioWorklet, privacy.html, terms.html, and shows deploy version in Settings', async ({
     page,
     request,

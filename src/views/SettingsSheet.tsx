@@ -920,24 +920,40 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                 className={`badge ${
                   authState.status === 'connected'
                     ? 'badge-sage'
-                    : authState.status === 'expired'
+                    : authState.isRefreshing || authState.status === 'expired'
                       ? 'badge-amber'
                       : ''
                 }`}
               >
-                {authState.status === 'connected'
-                  ? 'Connected'
-                  : authState.status === 'expired'
-                    ? 'Reconnect Needed'
-                    : authState.status === 'disconnected'
-                      ? 'Disconnected'
-                      : 'Not Configured'}
+                {authState.isRefreshing
+                  ? 'Refreshing…'
+                  : authState.status === 'connected'
+                    ? 'Connected'
+                    : authState.status === 'expired'
+                      ? 'Reconnect Needed'
+                      : authState.status === 'disconnected'
+                        ? 'Disconnected'
+                        : 'Not Configured'}
               </span>
             </div>
 
             {authState.userEmail && (
               <span className="field-hint">
-                Signed in as <strong>{authState.userEmail}</strong>
+                {authState.status === 'expired' ? (
+                  <>
+                    Linked to <strong>{authState.userEmail}</strong> · Tap
+                    Reconnect to refresh sync
+                  </>
+                ) : authState.hasPersistentRefresh ? (
+                  <>
+                    Signed in as <strong>{authState.userEmail}</strong> ·
+                    Stays signed in automatically
+                  </>
+                ) : (
+                  <>
+                    Signed in as <strong>{authState.userEmail}</strong>
+                  </>
+                )}
               </span>
             )}
 
@@ -1031,16 +1047,44 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                   </button>
                 </>
               ) : (
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  onClick={onConnectDrive}
-                >
-                  <Cloud size={15} />
-                  {authState.status === 'expired'
-                    ? 'Reconnect Google Drive'
-                    : 'Connect Google Drive'}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={onConnectDrive}
+                  >
+                    <Cloud size={15} />
+                    {authState.status === 'expired'
+                      ? 'Reconnect Google Drive'
+                      : 'Connect Google Drive'}
+                  </button>
+                  {authState.status === 'expired' && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() =>
+                        setPendingConfirm({
+                          title: 'Sign Out of Google Drive?',
+                          description: (
+                            <>
+                              Disconnect Google Drive sync on this device? Your
+                              local books and recordings stay safely stored on
+                              this device, and you can reconnect anytime.
+                            </>
+                          ),
+                          confirmLabel: 'Sign Out',
+                          tone: 'warning',
+                          onConfirm: () => {
+                            onSignOutDrive();
+                          },
+                        })
+                      }
+                      disabled={isSyncing}
+                    >
+                      Sign Out
+                    </button>
+                  )}
+                </>
               )}
             </div>
 

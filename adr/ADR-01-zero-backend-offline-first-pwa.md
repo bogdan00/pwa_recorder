@@ -15,10 +15,10 @@ Build StoryTape as a **zero-backend, offline-first Progressive Web App** using R
 - **Early PWA install capture**: Initialize [`src/pwa/installPrompt.ts`](../src/pwa/installPrompt.ts) in [`src/main.tsx`](../src/main.tsx) before React mounts so Chromium's `beforeinstallprompt` event is never missed, invoke `prompt()` synchronously inside tap handlers, persist banner dismissals for 14 days while retaining a Settings install action, and provide a guided 2-step **Add to Home Screen** sheet ([`src/components/IosInstallGuideModal.tsx`](../src/components/IosInstallGuideModal.tsx)) for iOS/iPadOS Safari.
 
 ## System Invariants
-1. **Zero backend dependency**: Every core capability (creating books, recording, editing, encoding, playback, Drive sync, family sharing) works purely client-side.
+1. **Zero data backend dependency**: Every core capability (creating books, recording, editing, encoding, playback, direct Drive sync, family sharing) works purely client-side without any StoryTape database or media server; an optional stateless OAuth token broker ([ADR-10](./ADR-10-stateless-oauth-token-broker-cloud-run.md)) may be configured solely to refresh Google OAuth tokens silently.
 2. **Subpath integrity**: `manifest.webmanifest` (`id`, `start_url`, `scope` = `/pwa_recorder/`, `display` = `standalone`), `audio/pcm-capture-worklet.js`, icons, `privacy.html`, and `terms.html` must always resolve cleanly under `/pwa_recorder/`.
 3. **Standalone-aware install UX**: Install banners never appear when running in standalone mode (`display-mode: standalone` or `navigator.standalone === true`).
 
 ## Consequences & Trade-offs
-- **Pros:** Zero server maintenance, complete user data ownership, works offline immediately after first load, installable on both Android and iOS.
-- **Cons:** Hash URLs (`#/...`) are required for deep links on static GitHub Pages; third-party integrations (Google Drive, Picker) must use client-side OAuth flows.
+- **Pros:** Zero user-data server maintenance, complete user data ownership, works offline immediately after first load, installable on both Android and iOS.
+- **Cons:** Hash URLs (`#/...`) are required for deep links on static GitHub Pages; without the optional stateless OAuth token broker ([ADR-10](./ADR-10-stateless-oauth-token-broker-cloud-run.md)), client-side Google OAuth access tokens expire after 1 hour.
