@@ -124,4 +124,78 @@ test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV 
     expect(wavHeader.bitDepth).toBe(24);
     expect(wavHeader.byteLength).toBeGreaterThan(44);
   });
+
+  test('activates studio software auto-gain when browser lacks native autoGainControl (iOS Safari) and supports +24 dB manual gain boost', async ({
+    page,
+  }) => {
+    // Simulate iOS Safari / WebKit: getSupportedConstraints() omits autoGainControl & noiseSuppression,
+    // and track.getSettings() reports echoCancellation: false without autoGainControl.
+    await page.addInitScript(() => {
+      if (!navigator.mediaDevices) return;
+      navigator.mediaDevices.getSupportedConstraints = () => ({
+        deviceId: true,
+        echoCancellation: true,
+        sampleRate: true,
+        channelCount: true,
+      });
+      const origGetUserMedia = navigator.mediaDevices.getUserMedia.bind(
+        navigator.mediaDevices,
+      );
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        const stream = await origGetUserMedia(constraints);
+        for (const track of stream.getAudioTracks()) {
+          const origGetSettings = track.getSettings.bind(track);
+          track.getSettings = () => {
+            const s = { ...origGetSettings() };
+            delete (s as Record<string, unknown>).autoGainControl;
+            delete (s as Record<string, unknown>).noiseSuppression;
+            s.echoCancellation = false;
+            return s;
+          };
+        }
+        return stream;
+      };
+    });
+
+    await page.goto('./');
+    await page.locator('#open-settings-btn').click();
+    await expect(page.getByTestId('settings-sheet')).toBeVisible();
+
+    // 1. Live Test Mic on simulated iOS Safari engages automatic studio auto-gain fallback
+    await page.getByRole('button', { name: 'Test Mic' }).click();
+    await expect(page.getByRole('button', { name: 'Stop Test' })).toBeVisible();
+    await expect(page.locator('.mic-telemetry')).toContainText(/-?\d+\s*dB/);
+    await expect(page.locator('.mic-telemetry')).toContainText(/Auto\s*[+-]?\d+\s*dB/);
+    await page.getByRole('button', { name: 'Stop Test' }).click();
+    await expect(page.getByRole('button', { name: 'Test Mic' })).toBeVisible();
+
+    // 2. Manual Input Gain Boost slider, animated guide, logarithmic explainer & clickable quick-stop ticks
+    await expect(page.getByTestId('gain-guide-card')).toBeVisible();
+    await expect(page.getByTestId('gain-log-explainer')).toContainText(/logarithmic scale/i);
+    await expect(page.getByTestId('gain-log-explainer')).toContainText(/\+6 dB doubles/i);
+    await expect(page.getByTestId('gain-guidance-text')).toContainText(/Natural level/i);
+
+    const gainSlider = page.locator('#input-gain-slider');
+    await expect(gainSlider).toHaveAttribute('min', '-6');
+    await expect(gainSlider).toHaveAttribute('max', '24');
+
+    // Tapping quick-stop tick (-6 dB) softens level; tapping +18 dB (8x) boosts heavily
+    await page.getByRole('button', { name: /Set input gain to -6 dB/i }).click();
+    await expect(page.getByTestId('gain-guidance-text')).toContainText(/Softer/i);
+
+    await page.getByRole('button', { name: /Set input gain to \+18 dB/i }).click();
+    await expect(page.getByTestId('input-gain-readout')).toContainText(/\+18\.0 dB/);
+    await expect(page.getByTestId('gain-guidance-text')).toContainText(/Heavy boost/i);
+    await expect(page.getByTestId('quality-preset-badge')).toHaveText('Custom');
+
+    await page.getByLabel('Close settings').click();
+    await page.reload();
+
+    await page.locator('#open-settings-btn').click();
+    await expect(page.getByTestId('settings-sheet')).toBeVisible();
+    await expect(page.getByTestId('input-gain-readout')).toContainText(/\+18\.0 dB/);
+    await page.getByRole('button', { name: 'Reset' }).click();
+    await expect(page.getByTestId('input-gain-readout')).toHaveText('1.00× (0.0 dB)');
+    await expect(page.getByTestId('gain-guidance-text')).toContainText(/Natural level/i);
+  });
 });

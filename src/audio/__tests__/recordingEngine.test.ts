@@ -150,6 +150,12 @@ describe('RecordingEngine.trimToPlayhead', () => {
       });
       expect(createdWaveShaper).not.toBeNull();
       expect(createdWaveShaper!.oversample).toBe('2x');
+      // Because mock mediaDevices omits autoGainControl support (like iOS Safari),
+      // RecordingEngine engages software AGC (+12 dB initial = 4.0x) ahead of the limiter:
+      // createdGains = [manualInputGain (1), softwareAgcGain (4), workletOutputGain (1)]
+      expect(createdGains).toHaveLength(3);
+      expect(createdGains[0].gain.value).toBe(1);
+      expect(createdGains[1].gain.value).toBe(4);
       // Last GainNode is the worklet keepalive output gain — must be 1 (not 0!) to defeat SilentSinkSuspender
       const workletOutputGain = createdGains[createdGains.length - 1];
       expect(workletOutputGain.gain.value).toBe(1);
@@ -163,6 +169,8 @@ describe('RecordingEngine.trimToPlayhead', () => {
           liveLevel: 0.6,
         },
       });
+      // Loud 0.6 chunk should pull software AGC down cleanly from initial 4.0x
+      expect(createdGains[1].gain.value).toBeLessThan(4);
       await engine.pause();
       const internals = engine as unknown as { timeline: PcmTimeline };
       const [samples] = internals.timeline.extractChannelData();

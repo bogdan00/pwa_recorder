@@ -5,12 +5,21 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyPeakCeilingToChannels,
   buildSoftClipCurve,
+  buildStudioInputStrip,
+  gainDbToMultiplier,
+  gainMultiplierToDb,
   KEEPALIVE_AMPLITUDE,
+  MAX_INPUT_GAIN_DB,
+  MIN_INPUT_GAIN_DB,
   SOFT_CLIP_CEILING,
   SOFT_CLIP_THRESHOLD,
+  SOFTWARE_AGC_INITIAL_GAIN,
+  SOFTWARE_AGC_MAX_GAIN,
+  SoftwareAutoGainController,
   softLimitSample,
   writeNyquistKeepalive,
 } from '../inputStrip';
+import { DEFAULT_AUDIO_QUALITY } from '../../storage/settings';
 
 describe('inputStrip DSP & true-peak ceiling', () => {
   it('passes normal voice levels below -3 dBFS at exact 1:1 unity gain and softly bounds extreme peaks below -1 dBFS', () => {
@@ -72,6 +81,120 @@ describe('inputStrip DSP & true-peak ceiling', () => {
     expect(b[0]).toBe(-a[3]); // Continuous alternating phase across buffer boundary
     const dc = (a.reduce((s, v) => s + v, 0) + b.reduce((s, v) => s + v, 0)) / 8;
     expect(Math.abs(dc)).toBeLessThan(1e-12);
+  });
+
+  it('converts manual input gain cleanly between decibels (-6..+24 dB) and linear multipliers', () => {
+    expect(gainMultiplierToDb(1.0)).toBe(0);
+    expect(gainDbToMultiplier(0)).toBe(1.0);
+    expect(gainMultiplierToDb(0.5)).toBe(MIN_INPUT_GAIN_DB);
+    expect(gainMultiplierToDb(16)).toBe(MAX_INPUT_GAIN_DB);
+    expect(gainDbToMultiplier(12)).toBeCloseTo(3.9811, 3);
+    expect(gainDbToMultiplier(24)).toBeCloseTo(15.8489, 3);
+    expect(gainMultiplierToDb(gainDbToMultiplier(18.5))).toBe(18.5);
+    expect(gainMultiplierToDb(-1)).toBe(MIN_INPUT_GAIN_DB);
+    expect(gainDbToMultiplier(99)).toBeCloseTo(15.8489, 3);
+  });
+
+  it('SoftwareAutoGainController boosts quiet raw iPhone speech, holds steady during silence, and tames loud shouts', () => {
+    const agc = new SoftwareAutoGainController();
+    expect(agc.getGain()).toBe(SOFTWARE_AGC_INITIAL_GAIN); // +12 dB starting boost
+
+    // 1. Quiet room silence (-66 dBFS raw) for 1 second -> gain holds steady (zero noise-floor pumping)
+    const silenceChunk = new Float32Array(1200);
+    for (let step = 0; step < 40; step += 1) {
+      const g = agc.getGain();
+      for (let i = 0; i < silenceChunk.length; i += 1) {
+        silenceChunk[i] = 0.0005 * g * (i % 2 === 0 ? 1 : -1);
+      }
+      agc.processSamples(silenceChunk, 0.025);
+    }
+    expect(agc.getGain()).toBeCloseTo(SOFTWARE_AGC_INITIAL_GAIN, 4);
+
+    // 2. Quiet iPhone speech (~-41 dBFS raw RMS = 0.009) -> smoothly boosts toward -18 dBFS (~13.9x)
+    const quietSpeechChunk = new Float32Array(1200);
+    for (let step = 0; step < 80; step += 1) {
+      const g = agc.getGain();
+      for (let i = 0; i < quietSpeechChunk.length; i += 1) {
+        // Sine with RMS = 0.009 (peak = 0.0127)
+        quietSpeechChunk[i] = 0.009 * Math.SQRT2 * g * Math.sin((i / 48) * Math.PI * 2);
+      }
+      agc.processSamples(quietSpeechChunk, 0.025);
+    }
+    expect(agc.getGain()).toBeGreaterThan(12);
+    expect(agc.getGain()).toBeLessThanOrEqual(SOFTWARE_AGC_MAX_GAIN);
+    const boostedGain = agc.getGain();
+
+    // 3. Pause between sentences -> gain remains frozen without creeping to max
+    for (let step = 0; step < 40; step += 1) {
+      for (let i = 0; i < silenceChunk.length; i += 1) {
+        silenceChunk[i] = 0.0005 * agc.getGain() * (i % 2 === 0 ? 1 : -1);
+      }
+      agc.processSamples(silenceChunk, 0.025);
+    }
+    expect(agc.getGain()).toBeCloseTo(boostedGain, 4);
+
+    // 4. Sudden loud speech near mic (raw peak = 0.45, limited at -1 dBFS = 0.89) -> fast attack pulls gain down
+    const loudChunk = new Float32Array(1200);
+    for (let step = 0; step < 25; step += 1) {
+      const g = agc.getGain();
+      for (let i = 0; i < loudChunk.length; i += 1) {
+        const raw = 0.45 * Math.sin((i / 48) * Math.PI * 2);
+        loudChunk[i] = softLimitSample(raw * g);
+      }
+      agc.processSamples(loudChunk, 0.025);
+    }
+    expect(agc.getGain()).toBeLessThan(2.0);
+  });
+
+  it('buildStudioInputStrip inserts software AGC ahead of the safety limiter only when requested', () => {
+    const order: string[] = [];
+    const setTargetAtTime = vi.fn();
+    const mockCtx = {
+      currentTime: 1.25,
+      createBiquadFilter: () => {
+        order.push('hpf');
+        return { type: '', frequency: { value: 0 }, Q: { value: 0 }, connect: vi.fn(), disconnect: vi.fn() };
+      },
+      createGain: () => {
+        order.push('gain');
+        return { gain: { value: 1, setTargetAtTime }, connect: vi.fn(), disconnect: vi.fn() };
+      },
+      createDynamicsCompressor: () => {
+        order.push('comp');
+        return {
+          threshold: { value: 0 },
+          knee: { value: 0 },
+          ratio: { value: 0 },
+          attack: { value: 0 },
+          release: { value: 0 },
+          connect: vi.fn(),
+          disconnect: vi.fn(),
+        };
+      },
+      createWaveShaper: () => {
+        order.push('shaper');
+        return { curve: null, oversample: 'none', connect: vi.fn(), disconnect: vi.fn() };
+      },
+    } as unknown as AudioContext;
+    const mockSource = { connect: vi.fn(), disconnect: vi.fn() } as unknown as AudioNode;
+
+    const withoutAgc = buildStudioInputStrip(mockCtx, mockSource, DEFAULT_AUDIO_QUALITY);
+    expect(withoutAgc.autoGainNode).toBeNull();
+    expect(order).toEqual(['hpf', 'gain', 'comp', 'shaper']);
+
+    order.length = 0;
+    const withAgc = buildStudioInputStrip(mockCtx, mockSource, DEFAULT_AUDIO_QUALITY, {
+      enableSoftwareAgc: true,
+    });
+    expect(withAgc.autoGainNode).not.toBeNull();
+    expect(withAgc.autoGainNode!.gain.value).toBe(SOFTWARE_AGC_INITIAL_GAIN);
+    expect(order).toEqual(['hpf', 'gain', 'gain', 'comp', 'shaper']);
+
+    // Updating with quiet speech schedules smooth gain update via setTargetAtTime
+    const samples = new Float32Array(1200).fill(0.04);
+    const nextGain = withAgc.updateAutoGain(samples, 0.025);
+    expect(nextGain).toBeGreaterThan(SOFTWARE_AGC_INITIAL_GAIN);
+    expect(setTargetAtTime).toHaveBeenCalledWith(nextGain, 1.25, 0.03);
   });
 });
 

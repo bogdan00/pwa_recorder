@@ -39,7 +39,7 @@ export interface AudioQualitySettings {
   bitrateMode: BitrateModeOption;
   channels: ChannelCountOption;
   wavBitDepth: WavBitDepthOption;
-  inputGain: number; // 0.5 to 2.5
+  inputGain: number; // Linear gain multiplier (~0.5 to ~15.85, i.e. -6 dB to +24 dB)
   highPassFilter: boolean; // 80 Hz voice rumble filter
   softLimiter: boolean; // anti-clip safety limiter
   noiseSuppression: boolean;

@@ -77,6 +77,9 @@ export class RecordingEngine {
   private audioCtx: AudioContext | null = null;
   private stream: MediaStream | null = null;
   private inputStripNodes: AudioNode[] = [];
+  private updateAutoGain:
+    | ((samples: Float32Array, durationSec: number) => number)
+    | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private captureHandle: PcmCaptureHandle | null = null;
   private activeDeviceLabel = '';
@@ -618,10 +621,15 @@ export class RecordingEngine {
       this.persistedChunkCount = 0;
     }
 
-    // Build studio input strip: Mic -> [80Hz HPF] -> Input Gain -> [Compressor + Soft-Clip Ceiling] -> Capture
+    // Build studio input strip: Mic -> [80Hz HPF] -> Input Gain -> [Software AGC] -> [Compressor + Soft-Clip Ceiling] -> Capture
+    const enableSoftwareAgc =
+      quality.autoGainControl && !acquired.nativeAgcActive;
     const source = ctx.createMediaStreamSource(this.stream);
-    const strip = buildStudioInputStrip(ctx, source, quality);
+    const strip = buildStudioInputStrip(ctx, source, quality, {
+      enableSoftwareAgc,
+    });
     this.inputStripNodes = strip.nodes;
+    this.updateAutoGain = enableSoftwareAgc ? strip.updateAutoGain : null;
     const tail = strip.tail;
 
     // Attach AudioWorkletNode (preferred) or ScriptProcessorNode fallback
@@ -674,6 +682,12 @@ export class RecordingEngine {
   ): void {
     if (!this.timeline || this.phase !== 'recording') return;
     const now = nowPerfMs();
+    if (this.updateAutoGain && interleaved.length > 0) {
+      const frames = Math.floor(interleaved.length / this.timeline.channels);
+      if (frames > 0) {
+        this.updateAutoGain(interleaved, frames / this.timeline.sampleRate);
+      }
+    }
     this.timeline.appendFrames(interleaved, peaks);
     this.playheadMs = this.timeline.getDurationMs();
     this.liveLevel = Math.min(1, Math.max(0, liveLevel || 0));
@@ -699,6 +713,7 @@ export class RecordingEngine {
   }
 
   private teardownMicCapture(): void {
+    this.updateAutoGain = null;
     for (const node of this.inputStripNodes) {
       try {
         node.disconnect();

@@ -32,6 +32,7 @@ export interface AcquiredMicResult {
   actualDeviceLabel: string;
   actualSampleRate?: number;
   actualChannels?: number;
+  nativeAgcActive: boolean;
 }
 
 export async function listAudioInputDevices(): Promise<DeviceListResult> {
@@ -112,6 +113,35 @@ function buildAudioConstraints(
   return constraints;
 }
 
+/**
+ * Determines whether the browser/OS audio pipeline is actually applying native Automatic Gain Control.
+ *
+ * Safari / iOS WebKit does not support the `autoGainControl` constraint and routes `echoCancellation: false`
+ * through Apple's raw `RemoteIO` capsule (zero AGC, typically -45 to -30 dBFS on normal speech), whereas
+ * `echoCancellation: true` switches to `VoiceProcessingIO` (hardware AGC).
+ * Returns `false` when `quality.autoGainControl` is disabled or when native AGC is absent so callers
+ * can engage StoryTape's speech-gated software auto-gain fallback cleanly without double-AGC.
+ */
+export function detectNativeAgcActive(
+  quality: Pick<AudioQualitySettings, 'autoGainControl' | 'echoCancellation'>,
+  trackSettings?: Partial<MediaTrackSettings>,
+  supportedConstraints?: Partial<MediaTrackSupportedConstraints>,
+): boolean {
+  if (!quality.autoGainControl) {
+    return false;
+  }
+  if (typeof trackSettings?.autoGainControl === 'boolean') {
+    return trackSettings.autoGainControl;
+  }
+  if (supportedConstraints?.autoGainControl === true) {
+    return true;
+  }
+  if (typeof trackSettings?.echoCancellation === 'boolean') {
+    return trackSettings.echoCancellation;
+  }
+  return Boolean(quality.echoCancellation);
+}
+
 export async function acquireMicStream(
   deviceSettings: AudioDeviceSettings,
   quality: AudioQualitySettings,
@@ -178,6 +208,15 @@ export async function acquireMicStream(
 
   const track = stream.getAudioTracks()[0];
   const trackSettings = track?.getSettings?.() ?? {};
+  const supportedConstraints =
+    typeof navigator.mediaDevices.getSupportedConstraints === 'function'
+      ? navigator.mediaDevices.getSupportedConstraints()
+      : undefined;
+  const nativeAgcActive = detectNativeAgcActive(
+    quality,
+    trackSettings,
+    supportedConstraints,
+  );
   const actualDeviceLabel =
     track?.label?.trim() ||
     (usedFallback
@@ -192,6 +231,7 @@ export async function acquireMicStream(
     actualDeviceLabel,
     actualSampleRate: trackSettings.sampleRate,
     actualChannels: trackSettings.channelCount,
+    nativeAgcActive,
   };
 }
 
@@ -203,6 +243,8 @@ export interface MicTestTelemetry {
   actualSampleRate: number;
   actualChannels: number;
   capturedDurationMs: number;
+  softwareAgcActive?: boolean;
+  autoGainDb?: number;
 }
 
 export interface CapturedMicTestAudio {
@@ -276,8 +318,12 @@ export class MicLevelTester {
     this.captureChannels = targetChannels;
     this.captureDeviceLabel = acquired.actualDeviceLabel;
 
+    const enableSoftwareAgc =
+      quality.autoGainControl && !acquired.nativeAgcActive;
     const source = ctx.createMediaStreamSource(this.stream);
-    const strip = buildStudioInputStrip(ctx, source, quality);
+    const strip = buildStudioInputStrip(ctx, source, quality, {
+      enableSoftwareAgc,
+    });
     this.inputStripNodes = strip.nodes;
     const tail = strip.tail;
 
@@ -286,12 +332,23 @@ export class MicLevelTester {
     tail.connect(analyser);
     this.inputStripNodes.push(analyser);
 
+    let hasReceivedPcmChunk = false;
+
     // Attach off-main-thread PCM capture (AudioWorklet with ScriptProcessor fallback)
     this.captureHandle = await attachPcmCapture(ctx, tail, {
       channels: targetChannels,
       isActive: () => !this.stopped,
       isAborted: () => this.stopped,
-      onChunk: ({ pcm }) => this.pushInterleavedChunk(pcm),
+      onChunk: ({ pcm }) => {
+        hasReceivedPcmChunk = true;
+        if (enableSoftwareAgc && pcm.length > 0) {
+          const frames = Math.floor(pcm.length / Math.max(1, targetChannels));
+          if (frames > 0) {
+            strip.updateAutoGain(pcm, frames / Math.max(1, ctx.sampleRate));
+          }
+        }
+        this.pushInterleavedChunk(pcm);
+      },
     });
 
     if (this.stopped) {
@@ -303,10 +360,19 @@ export class MicLevelTester {
     const actualSampleRate =
       acquired.actualSampleRate || ctx.sampleRate;
     const actualChannels = acquired.actualChannels || targetChannels;
+    let lastTickMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
     const tick = () => {
       if (this.stopped) return;
+      const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const dtSec = Math.min(0.1, Math.max(0.005, (nowMs - lastTickMs) / 1000));
+      lastTickMs = nowMs;
+
       analyser.getFloatTimeDomainData(timeData);
+      if (enableSoftwareAgc && !hasReceivedPcmChunk) {
+        strip.updateAutoGain(timeData, dtSec);
+      }
+
       let peak = 0;
       for (let i = 0; i < timeData.length; i += 1) {
         const a = Math.abs(timeData[i]);
@@ -324,6 +390,8 @@ export class MicLevelTester {
         actualSampleRate,
         actualChannels,
         capturedDurationMs,
+        softwareAgcActive: enableSoftwareAgc,
+        autoGainDb: strip.autoGainController?.getGainDb(),
       });
       this.rafId = window.requestAnimationFrame(tick);
     };

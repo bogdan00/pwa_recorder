@@ -687,12 +687,22 @@ export const QualityCompareView: React.FC<QualityCompareViewProps> = ({
                     className={`ql-mic-recorder__fill ${
                       micTest.telemetry?.clipping
                         ? 'ql-mic-recorder__fill--clip'
-                        : (micTest.telemetry?.level ?? 0) > 0.72
+                        : (micTest.telemetry?.db ?? -60) > -3
                           ? 'ql-mic-recorder__fill--hot'
                           : ''
                     }`}
                     style={{
-                      width: `${Math.min(100, Math.round((micTest.telemetry?.level ?? 0) * 100))}%`,
+                      width: `${
+                        micTest.telemetry
+                          ? Math.max(
+                              0,
+                              Math.min(
+                                100,
+                                Math.round(((micTest.telemetry.db + 60) / 60) * 100),
+                              ),
+                            )
+                          : 0
+                      }%`,
                     }}
                   />
                 </div>

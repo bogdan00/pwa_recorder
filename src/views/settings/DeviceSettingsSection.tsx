@@ -154,12 +154,19 @@ export const DeviceSettingsSection: React.FC<DeviceSettingsSectionProps> = ({
           className={`mic-meter-fill ${
             telemetry?.clipping
               ? 'mic-meter-fill--clip'
-              : (telemetry?.level ?? 0) > 0.72
+              : (telemetry?.db ?? -60) > -3
                 ? 'mic-meter-fill--hot'
                 : ''
           }`}
           style={{
-            width: `${Math.min(100, Math.round((telemetry?.level ?? 0) * 100))}%`,
+            width: `${
+              telemetry
+                ? Math.max(
+                    0,
+                    Math.min(100, Math.round(((telemetry.db + 60) / 60) * 100)),
+                  )
+                : 0
+            }%`,
           }}
         />
       </div>
@@ -168,6 +175,11 @@ export const DeviceSettingsSection: React.FC<DeviceSettingsSectionProps> = ({
         <span>
           {telemetry
             ? `${telemetry.db.toFixed(0)} dB${telemetry.clipping ? ' · CLIP' : ''}${
+                telemetry.softwareAgcActive &&
+                typeof telemetry.autoGainDb === 'number'
+                  ? ` · Auto ${telemetry.autoGainDb >= 0 ? '+' : ''}${telemetry.autoGainDb.toFixed(0)} dB`
+                  : ''
+              }${
                 telemetry.capturedDurationMs >= 200
                   ? ` · ${formatDurationMs(telemetry.capturedDurationMs)}`
                   : ''

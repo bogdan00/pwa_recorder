@@ -116,22 +116,181 @@ export function writeNyquistKeepalive(
   return sign;
 }
 
+export const MIN_INPUT_GAIN_DB = -6;
+export const MAX_INPUT_GAIN_DB = 24;
+
+/**
+ * Software Auto-Gain Control (AGC) parameters for browsers like iOS/macOS Safari (WebKit)
+ * that ignore getUserMedia `autoGainControl` and deliver raw MEMS capsule levels
+ * (~-45 to -30 dBFS on normal speech) when `echoCancellation` is disabled.
+ */
+export const SOFTWARE_AGC_INITIAL_GAIN = 4.0; // +12.0 dB starting boost so syllable #1 is clearly audible
+export const SOFTWARE_AGC_MIN_GAIN = 0.5; // -6.0 dB floor to tame unexpectedly hot inputs
+export const SOFTWARE_AGC_MAX_GAIN = 16.0; // +24.0 dB ceiling for quiet raw iPhone / dynamic mics
+export const SOFTWARE_AGC_TARGET_RMS = 0.125; // ~-18 dBFS audiobook narration RMS target
+export const SOFTWARE_AGC_PEAK_CEILING = 0.72; // ~-2.8 dBFS fast-attack peak guard
+export const SOFTWARE_AGC_MIN_SPEECH_RMS = 0.0015; // ~-56.5 dBFS pre-AGC floor below which gain holds
+
+/**
+ * Converts a linear gain multiplier into decibels clamped to [MIN_INPUT_GAIN_DB, MAX_INPUT_GAIN_DB],
+ * snapped to 0.5 dB steps for the Studio Settings slider.
+ */
+export function gainMultiplierToDb(multiplier: number): number {
+  if (!Number.isFinite(multiplier) || multiplier <= 0) {
+    return MIN_INPUT_GAIN_DB;
+  }
+  const db = 20 * Math.log10(multiplier);
+  const clamped = Math.max(MIN_INPUT_GAIN_DB, Math.min(MAX_INPUT_GAIN_DB, db));
+  const snapped = Math.round(clamped * 2) / 2;
+  return Object.is(snapped, -0) ? 0 : snapped;
+}
+
+/**
+ * Converts a decibel gain value back to a linear multiplier (exact 1.0 at 0 dB).
+ */
+export function gainDbToMultiplier(db: number): number {
+  if (!Number.isFinite(db)) return 1.0;
+  const clamped = Math.max(MIN_INPUT_GAIN_DB, Math.min(MAX_INPUT_GAIN_DB, db));
+  if (Math.abs(clamped) < 0.01) return 1.0;
+  return Number(Math.pow(10, clamped / 20).toFixed(4));
+}
+
+export interface SoftwareAutoGainOptions {
+  initialGain?: number;
+  minGain?: number;
+  maxGain?: number;
+  targetRms?: number;
+  peakCeiling?: number;
+  minSpeechRms?: number;
+}
+
+/**
+ * Speech-gated studio Auto-Gain Controller (AGC) used when the user enables Auto Gain Control
+ * on a browser/OS (such as Safari/iOS WebKit with echoCancellation=false) that does not
+ * provide native `autoGainControl` on the MediaStreamTrack.
+ *
+ * - Starts at +12 dB (scaled down if user already boosted manual inputGain) so opening syllables
+ *   are immediately audible rather than fading up from silence.
+ * - Adapts smoothly upward (~450 ms) toward -18 dBFS RMS during active speech above an adaptive
+ *   room-noise floor, holding gain flat during silence so room hiss never pumps between sentences.
+ * - Responds rapidly (~75 ms) to pull gain back when loud speech or peaks exceed -2.8 dBFS.
+ */
+export class SoftwareAutoGainController {
+  private currentGain: number;
+  private noiseFloorRms: number;
+  private readonly minGain: number;
+  private readonly maxGain: number;
+  private readonly targetRms: number;
+  private readonly peakCeiling: number;
+  private readonly minSpeechRms: number;
+
+  constructor(options?: SoftwareAutoGainOptions) {
+    this.minGain = options?.minGain ?? SOFTWARE_AGC_MIN_GAIN;
+    this.maxGain = options?.maxGain ?? SOFTWARE_AGC_MAX_GAIN;
+    this.targetRms = options?.targetRms ?? SOFTWARE_AGC_TARGET_RMS;
+    this.peakCeiling = options?.peakCeiling ?? SOFTWARE_AGC_PEAK_CEILING;
+    this.minSpeechRms = options?.minSpeechRms ?? SOFTWARE_AGC_MIN_SPEECH_RMS;
+    this.currentGain = this.clampGain(
+      options?.initialGain ?? SOFTWARE_AGC_INITIAL_GAIN,
+    );
+    this.noiseFloorRms = this.minSpeechRms * 0.4;
+  }
+
+  getGain(): number {
+    return this.currentGain;
+  }
+
+  getGainDb(): number {
+    return 20 * Math.log10(Math.max(1e-6, this.currentGain));
+  }
+
+  private clampGain(gain: number): number {
+    if (!Number.isFinite(gain)) return this.currentGain;
+    return Math.max(this.minGain, Math.min(this.maxGain, gain));
+  }
+
+  processSamples(samples: Float32Array, durationSec: number): number {
+    if (samples.length === 0 || !Number.isFinite(durationSec) || durationSec <= 0) {
+      return this.currentGain;
+    }
+
+    let sumSq = 0;
+    let peak = 0;
+    for (let i = 0; i < samples.length; i += 1) {
+      const s = samples[i];
+      const abs = Math.abs(s);
+      if (abs > peak) peak = abs;
+      sumSq += s * s;
+    }
+
+    const postRms = Math.sqrt(sumSq / samples.length);
+    const rawRms = postRms / Math.max(1e-4, this.currentGain);
+
+    // Track ambient room noise floor: drop quickly into quiet gaps, creep upward very slowly on steady hum
+    if (rawRms < this.noiseFloorRms) {
+      const alphaDown = 1 - Math.exp(-durationSec / 0.25);
+      this.noiseFloorRms += (rawRms - this.noiseFloorRms) * alphaDown;
+    } else if (rawRms < this.noiseFloorRms * 2.5 || rawRms < this.minSpeechRms) {
+      const alphaUp = 1 - Math.exp(-durationSec / 4.0);
+      this.noiseFloorRms += (rawRms - this.noiseFloorRms) * alphaUp;
+    }
+    this.noiseFloorRms = Math.max(1e-5, Math.min(this.noiseFloorRms, 0.02));
+
+    // Peak guard always reacts quickly to prevent hitting the limiter continuously
+    let desiredGain = this.currentGain;
+    const peakHit = peak >= this.peakCeiling;
+    if (peakHit) {
+      const peakSafeGain = this.currentGain * ((this.peakCeiling * 0.85) / peak);
+      desiredGain = this.clampGain(peakSafeGain);
+    }
+
+    // Speech-gated RMS leveling: only boost when speech sits clearly above the noise floor
+    const speechGateRms = Math.max(this.minSpeechRms, this.noiseFloorRms * 2.5);
+    const isSpeechActive = rawRms >= speechGateRms;
+
+    if (isSpeechActive) {
+      const rmsDesired = this.clampGain(this.targetRms / Math.max(1e-5, rawRms));
+      desiredGain = peakHit ? Math.min(desiredGain, rmsDesired) : rmsDesired;
+    } else if (!peakHit) {
+      // Silence or room tone: hold current gain steady to avoid noise-floor pumping
+      return this.currentGain;
+    }
+
+    // Fast attack when attenuating loud speech; gentle smooth release when lifting quiet speech
+    const tau = desiredGain < this.currentGain ? 0.075 : 0.45;
+    const alpha = 1 - Math.exp(-durationSec / tau);
+    this.currentGain = this.clampGain(
+      this.currentGain + (desiredGain - this.currentGain) * alpha,
+    );
+    return this.currentGain;
+  }
+}
+
+export interface StudioInputStripOptions {
+  enableSoftwareAgc?: boolean;
+}
+
 export interface StudioInputStrip {
   tail: AudioNode;
   nodes: AudioNode[];
+  autoGainNode: GainNode | null;
+  autoGainController: SoftwareAutoGainController | null;
+  updateAutoGain: (samples: Float32Array, durationSec: number) => number;
 }
 
 /**
  * Builds the StoryTape studio input strip:
- *   source -> [80Hz HPF] -> Input Gain -> [DynamicsCompressor + Soft-Clip Ceiling (-1 dBFS)]
+ *   source -> [80Hz HPF] -> Input Gain -> [Software Auto-Gain] -> [DynamicsCompressor + Soft-Clip Ceiling (-1 dBFS)]
  *
- * The WaveShaper soft-clipping ceiling compensates for Chromium/WebKit DynamicsCompressorNode's
- * automatic internal makeup gain and 1ms transient overshoot so vocal peaks stay below -1 dBFS.
+ * Placing Software Auto-Gain ahead of the DynamicsCompressor + WaveShaper ceiling guarantees
+ * that sudden loud voices are immediately protected from clipping at 0 ms overshoot while
+ * quiet iPhone/raw mics are lifted cleanly to narration level.
  */
 export function buildStudioInputStrip(
   ctx: AudioContext,
   source: AudioNode,
   quality: AudioQualitySettings,
+  options?: StudioInputStripOptions,
 ): StudioInputStrip {
   const nodes: AudioNode[] = [source];
   let tail: AudioNode = source;
@@ -151,6 +310,24 @@ export function buildStudioInputStrip(
   tail.connect(gainNode);
   tail = gainNode;
   nodes.push(gainNode);
+
+  let autoGainNode: GainNode | null = null;
+  let autoGainController: SoftwareAutoGainController | null = null;
+  if (options?.enableSoftwareAgc) {
+    const initialGain = Math.max(
+      1.0,
+      Math.min(
+        SOFTWARE_AGC_INITIAL_GAIN,
+        SOFTWARE_AGC_INITIAL_GAIN / Math.max(1, quality.inputGain),
+      ),
+    );
+    autoGainController = new SoftwareAutoGainController({ initialGain });
+    autoGainNode = ctx.createGain();
+    autoGainNode.gain.value = autoGainController.getGain();
+    tail.connect(autoGainNode);
+    tail = autoGainNode;
+    nodes.push(autoGainNode);
+  }
 
   if (quality.softLimiter) {
     const comp = ctx.createDynamicsCompressor();
@@ -173,5 +350,26 @@ export function buildStudioInputStrip(
     }
   }
 
-  return { tail, nodes };
+  const updateAutoGain = (samples: Float32Array, durationSec: number): number => {
+    if (!autoGainController || !autoGainNode) return 1;
+    const nextGain = autoGainController.processSamples(samples, durationSec);
+    const param = autoGainNode.gain;
+    if (
+      typeof param.setTargetAtTime === 'function' &&
+      Number.isFinite(ctx.currentTime)
+    ) {
+      param.setTargetAtTime(nextGain, ctx.currentTime, 0.03);
+    } else {
+      param.value = nextGain;
+    }
+    return nextGain;
+  };
+
+  return {
+    tail,
+    nodes,
+    autoGainNode,
+    autoGainController,
+    updateAutoGain,
+  };
 }

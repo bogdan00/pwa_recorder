@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_AUDIO_QUALITY } from '../../storage/settings';
 import {
   acquireMicStream,
+  detectNativeAgcActive,
   listAudioInputDevices,
   requestMicPermissionAndList,
 } from '../audioDevices';
@@ -90,11 +91,59 @@ describe('audioDevices', () => {
     expect(acquired.usedFallback).toBe(true);
     expect(acquired.fallbackReason).toContain('Shure MV7 USB');
     expect(acquired.actualDeviceLabel).toBe('Built-in Microphone');
+    expect(acquired.nativeAgcActive).toBe(false);
     // Verify raw DSP settings were passed to constraints
     const firstCallArgs = getUserMedia.mock.calls[0][0];
     expect(firstCallArgs.audio.deviceId).toEqual({ exact: 'usb-removed' });
     expect(firstCallArgs.audio.noiseSuppression).toBe(false);
     expect(firstCallArgs.audio.autoGainControl).toBe(false);
     expect(firstCallArgs.audio.echoCancellation).toBe(false);
+  });
+
+  it('detects missing native AGC on iOS Safari RemoteIO while avoiding double-AGC on Android Chrome and iOS VPIO', () => {
+    // 1. iOS Safari default (echoCancellation=false, autoGainControl unsupported) -> needs software AGC!
+    expect(
+      detectNativeAgcActive(
+        { autoGainControl: true, echoCancellation: false },
+        { echoCancellation: false, sampleRate: 48000 },
+        { echoCancellation: true },
+      ),
+    ).toBe(false);
+
+    // 2. iOS Safari with echoCancellation=true (Apple VoiceProcessingIO already runs hardware AGC)
+    expect(
+      detectNativeAgcActive(
+        { autoGainControl: true, echoCancellation: true },
+        { echoCancellation: true, sampleRate: 48000 },
+        { echoCancellation: true },
+      ),
+    ).toBe(true);
+
+    // 3. Android Chrome default (autoGainControl supported and active even with echoCancellation=false)
+    expect(
+      detectNativeAgcActive(
+        { autoGainControl: true, echoCancellation: false },
+        { autoGainControl: true, echoCancellation: false },
+        { autoGainControl: true, echoCancellation: true },
+      ),
+    ).toBe(true);
+
+    // 4. Hardware/driver explicitly failed to enable AGC despite request -> engage software AGC
+    expect(
+      detectNativeAgcActive(
+        { autoGainControl: true, echoCancellation: false },
+        { autoGainControl: false, echoCancellation: false },
+        { autoGainControl: true, echoCancellation: true },
+      ),
+    ).toBe(false);
+
+    // 5. Studio Raw / user disabled AGC -> returns false
+    expect(
+      detectNativeAgcActive(
+        { autoGainControl: false, echoCancellation: false },
+        { autoGainControl: false, echoCancellation: false },
+        { autoGainControl: true, echoCancellation: true },
+      ),
+    ).toBe(false);
   });
 });
