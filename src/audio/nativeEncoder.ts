@@ -11,8 +11,10 @@ import type {
   AudioQualitySettings,
   ChannelCountOption,
 } from '../types/models';
+import { normalizeAacDecoderDescription } from './aacEsds';
 import { applyPeakCeilingToChannels } from './inputStrip';
 import {
+  canPlayAudioContainer,
   probeAudioCapabilities,
   resolveEffectiveFormat,
 } from './qualityPresets';
@@ -223,7 +225,22 @@ async function encodeViaWebCodecs(
   const encoder = new AudioEncoder({
     output: (chunk, meta) => {
       if (mp4Muxer) {
-        mp4Muxer.addAudioChunk(chunk, meta);
+        // Guard against WebKit Bug #302253 (iOS 26 Safari emitting a full 39-byte ESDS
+        // box in meta.decoderConfig.description instead of the raw 2-byte AudioSpecificConfig).
+        const safeMeta: EncodedAudioChunkMetadata | undefined = meta?.decoderConfig
+          ? {
+              ...meta,
+              decoderConfig: {
+                ...meta.decoderConfig,
+                description: normalizeAacDecoderDescription(
+                  meta.decoderConfig.description,
+                  sampleRate,
+                  numChannels,
+                ),
+              },
+            }
+          : meta;
+        mp4Muxer.addAudioChunk(chunk, safeMeta);
       } else if (webmMuxer) {
         webmMuxer.addAudioChunk(chunk, meta);
       }
@@ -323,9 +340,14 @@ export async function encodeAudio(
   onProgress?.(0.05);
 
   if (preferred !== 'wav') {
-    // Try preferred compressed format, then alternate compressed format, then WAV fallback
-    const attempts: Array<'m4a' | 'webm'> =
+    // Try preferred compressed format, then alternate compressed format (skipping
+    // formats the current browser cannot play back unless explicitly requested),
+    // before falling back to universally playable lossless WAV.
+    const rawAttempts: Array<'m4a' | 'webm'> =
       preferred === 'm4a' ? ['m4a', 'webm'] : ['webm', 'm4a'];
+    const attempts = rawAttempts.filter(
+      (fmt) => quality.format === fmt || canPlayAudioContainer(fmt),
+    );
 
     for (const fmt of attempts) {
       const targetRate =

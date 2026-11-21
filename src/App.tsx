@@ -17,6 +17,7 @@ import {
   putProject,
   putProjectCover,
   putRecording,
+  putRecordingBlob,
   reorderProjectRecordings,
 } from './storage/db';
 import {
@@ -32,6 +33,7 @@ import {
   ensureShareableLibraryFolder,
 } from './drive/syncService';
 import { PlayerProvider, usePlayer } from './player/PlayerContext';
+import { preparePlayableAudioBlob } from './player/playbackBlob';
 import { downloadBlob } from './utils/blob';
 import {
   buildChapterDriveFileName,
@@ -427,7 +429,12 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
       blob = await downloadCloudRecording(recording.id);
       await reloadData();
     }
-    return blob ?? null;
+    if (!blob) return null;
+    const prepared = await preparePlayableAudioBlob(blob, recording);
+    if (prepared.repaired) {
+      void putRecordingBlob(recording.id, prepared.blob).catch(() => {});
+    }
+    return prepared.blob;
   };
 
   const handleDownloadRecording = async (recording: Recording) => {

@@ -11,6 +11,7 @@ import type {
 import { DEFAULT_AUDIO_QUALITY } from '../storage/settings';
 import { blobToArrayBuffer } from '../utils/blob';
 import { sanitizeFileName } from '../utils/format';
+import { isMp4Buffer, repairDoubleWrappedEsdsMp4 } from './aacEsds';
 import { encodeAudio, type EncodedAudioResult } from './nativeEncoder';
 import { decodeWav, isWavBuffer } from './wavEncoder';
 
@@ -93,7 +94,10 @@ export async function decodeAudioBlob(blob: Blob): Promise<DecodedPcmAudio> {
 
   const ctx = new AudioCtx();
   try {
-    const decoded = await ctx.decodeAudioData(buffer.slice(0));
+    const decodeTarget = isMp4Buffer(buffer)
+      ? repairDoubleWrappedEsdsMp4(buffer).buffer
+      : buffer;
+    const decoded = await ctx.decodeAudioData(decodeTarget.slice(0));
     const channels: Float32Array[] = [];
     for (let ch = 0; ch < decoded.numberOfChannels; ch += 1) {
       channels.push(decoded.getChannelData(ch).slice());

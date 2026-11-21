@@ -31,3 +31,7 @@ A parent (or child at bedtime) listens to recorded audiobooks through a calm, mi
    - Minimize the player, reload the app, and return to the Library.
    - **Expected:** **Continue Listening** card appears at the top of the Library for the active book with remaining time and one-tap Play button.
    - Tapping **Close player** (`×`) on the mini-player cleanly dismisses playback.
+
+5. **iOS / Cross-Browser Playback Resilience & Self-Healing**
+   - Tap Play on a chapter whose stored/downloaded blob has a missing or generic `application/octet-stream` MIME type, a legacy double-wrapped AAC `esds` box (from iOS 26 WebKit Bug #302253), or a 32-bit IEEE Float WAV header rejected by `<audio>`.
+   - **Expected:** `PlayerContext` normalizes the audio MIME type, transparently repairs any double-wrapped `esds` MP4 box (persisting the repaired blob locally so future plays are instant), falls back to in-memory 16-bit PCM WAV when `<audio>` rejects 32-bit Float WAV, and never surfaces a cryptic raw `The operation is not supported.` error when a playable recovery path exists (or displays an actionable format-compatibility explanation if the browser truly lacks container support, such as `.webm` on iOS Safari).

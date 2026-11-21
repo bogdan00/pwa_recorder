@@ -14,8 +14,16 @@ import {
   getRecordingBlob,
   listProjectRecordings,
   putPlaybackProgress,
+  putRecordingBlob,
 } from '../storage/db';
 import { downloadCloudRecording } from '../drive/syncService';
+import {
+  formatPlaybackErrorMessage,
+  isNotAllowedPlaybackError,
+  isNotSupportedPlaybackError,
+  preparePlayableAudioBlob,
+  transcodeFloatWavForPlayback,
+} from './playbackBlob';
 
 export type PlaybackSpeed = 0.75 | 1 | 1.15 | 1.25 | 1.5;
 export const PLAYBACK_SPEEDS: PlaybackSpeed[] = [0.75, 1, 1.15, 1.25, 1.5];
@@ -90,6 +98,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
   const coverUrlRef = useRef<string | null>(null);
   const sleepIntervalRef = useRef<number | null>(null);
   const lastSavedSecRef = useRef<number>(-10);
+  const loadTokenRef = useRef<number>(0);
   const onProgressUpdatedRef = useRef(onProgressUpdated);
   onProgressUpdatedRef.current = onProgressUpdated;
 
@@ -221,6 +230,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       autoPlay = true,
     ) => {
       if (index < 0 || index >= list.length) return;
+      const loadToken = ++loadTokenRef.current;
       const rec = list[index];
       const audio = ensureAudioElement();
 
@@ -235,13 +245,16 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       let artUrl = coverUrlRef.current;
       if (projectRef.current?.id !== proj.id) {
         artUrl = await loadCoverForProject(proj);
+        if (loadTokenRef.current !== loadToken) return;
       }
       updateMediaSession(proj, rec, artUrl);
 
       try {
         let blob = await getRecordingBlob(rec.id);
+        if (loadTokenRef.current !== loadToken) return;
         if (!blob && rec.syncStatus === 'cloud_only') {
           blob = await downloadCloudRecording(rec.id);
+          if (loadTokenRef.current !== loadToken) return;
         }
         if (!blob) {
           throw new Error(
@@ -249,11 +262,19 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
           );
         }
 
+        const prepared = await preparePlayableAudioBlob(blob, rec);
+        if (loadTokenRef.current !== loadToken) return;
+        if (prepared.repaired) {
+          // Persist repaired single-wrapped M4A back to IndexedDB so future plays are instant
+          void putRecordingBlob(rec.id, prepared.blob).catch(() => {});
+        }
+        const playableBlob = prepared.blob;
+
         if (objectUrlRef.current) {
           URL.revokeObjectURL(objectUrlRef.current);
           objectUrlRef.current = null;
         }
-        const url = URL.createObjectURL(blob);
+        const url = URL.createObjectURL(playableBlob);
         objectUrlRef.current = url;
 
         audio.volume = 1;
@@ -283,11 +304,49 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
         if (autoPlay) {
           try {
             await audio.play();
+            if (loadTokenRef.current !== loadToken) {
+              audio.pause();
+              return;
+            }
             setIsPlaying(true);
           } catch (playErr) {
-            setIsPlaying(false);
-            if (!(playErr instanceof Error && playErr.name === 'NotAllowedError')) {
-              throw playErr;
+            if (loadTokenRef.current !== loadToken) return;
+            // If iOS Safari rejects a 32-bit IEEE Float WAV, transparently transcode in memory to 16-bit PCM WAV
+            if (isNotSupportedPlaybackError(playErr) && rec.extension === 'wav') {
+              const fallbackWav = await transcodeFloatWavForPlayback(playableBlob);
+              if (loadTokenRef.current !== loadToken) return;
+              if (fallbackWav) {
+                if (objectUrlRef.current) {
+                  URL.revokeObjectURL(objectUrlRef.current);
+                }
+                const fallbackUrl = URL.createObjectURL(fallbackWav);
+                objectUrlRef.current = fallbackUrl;
+                audio.src = fallbackUrl;
+                audio.playbackRate = rateRef.current;
+                audio.load();
+                try {
+                  await audio.play();
+                  if (loadTokenRef.current !== loadToken) {
+                    audio.pause();
+                    return;
+                  }
+                  setIsPlaying(true);
+                } catch (retryErr) {
+                  if (loadTokenRef.current !== loadToken) return;
+                  setIsPlaying(false);
+                  if (!isNotAllowedPlaybackError(retryErr)) {
+                    throw retryErr;
+                  }
+                }
+              } else {
+                setIsPlaying(false);
+                throw playErr;
+              }
+            } else {
+              setIsPlaying(false);
+              if (!isNotAllowedPlaybackError(playErr)) {
+                throw playErr;
+              }
             }
           }
         } else {
@@ -295,12 +354,13 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
         }
         await persistProgress(proj.id, rec, startOffsetSec, rec.durationMs / 1000);
       } catch (err) {
+        if (loadTokenRef.current !== loadToken) return;
         setIsPlaying(false);
-        setError(
-          err instanceof Error ? err.message : 'Unable to play audio file.',
-        );
+        setError(formatPlaybackErrorMessage(err, rec));
       } finally {
-        setIsLoading(false);
+        if (loadTokenRef.current === loadToken) {
+          setIsLoading(false);
+        }
       }
     },
     [ensureAudioElement, loadCoverForProject, persistProgress, updateMediaSession],
@@ -377,9 +437,17 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
     if (audio.paused) {
       try {
         await audio.play();
+        setError(null);
         setIsPlaying(true);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Playback failed');
+        const activeRec = chaptersRef.current[currentIndexRef.current];
+        setError(
+          activeRec
+            ? formatPlaybackErrorMessage(err, activeRec)
+            : err instanceof Error
+              ? err.message
+              : 'Playback failed',
+        );
       }
     } else {
       audio.pause();
@@ -487,6 +555,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
         }
 
         if (remaining <= 0) {
+          loadTokenRef.current += 1;
           clearSleepInterval();
           setSleepTimerModeState('off');
           setSleepSecondsLeft(null);
@@ -502,6 +571,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
   );
 
   const pauseForRecording = useCallback(() => {
+    loadTokenRef.current += 1;
     const audio = audioRef.current;
     if (audio && !audio.paused) {
       audio.pause();
@@ -511,6 +581,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
   }, []);
 
   const closePlayer = useCallback(() => {
+    loadTokenRef.current += 1;
     clearSleepInterval();
     const audio = audioRef.current;
     if (audio) {
@@ -526,6 +597,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
     setChapters([]);
     setCurrentIndex(-1);
     setIsPlaying(false);
+    setIsLoading(false);
     setCurrentTime(0);
     setDuration(0);
     setIsExpanded(false);
@@ -595,6 +667,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       }
 
       if (sleepModeRef.current === 'end_of_chapter') {
+        loadTokenRef.current += 1;
         setSleepTimerModeState('off');
         setSleepSecondsLeft(null);
         setIsPlaying(false);
@@ -604,6 +677,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       if (proj && idx >= 0 && idx + 1 < list.length) {
         void loadAndPlayIndex(proj, list, idx + 1, 0, true);
       } else {
+        loadTokenRef.current += 1;
         setIsPlaying(false);
       }
     };

@@ -32,6 +32,7 @@ import {
   type DriveFileSummary,
 } from './driveClient';
 import { googleAuth } from './googleAuth';
+import { normalizeAudioBlobType } from '../player/playbackBlob';
 
 export interface SyncProgressUpdate {
   phase: 'connecting' | 'pushing' | 'pulling' | 'done';
@@ -1553,7 +1554,8 @@ export async function downloadCloudRecording(
   }
 
   return withAuthorizedClient(clientOverride, async (client) => {
-    const blob = await client.downloadFileBlob(rec.driveFileId!);
+    const rawBlob = await client.downloadFileBlob(rec.driveFileId!);
+    const blob = normalizeAudioBlobType(rawBlob, rec);
     await putRecordingBlob(recordingId, blob);
     await putRecording({
       ...rec,

@@ -163,6 +163,47 @@ async function probeMaxBitrate(
 
 let cachedCapabilities: CodecCapabilities | null = null;
 
+/**
+ * Checks whether the current browser's `HTMLAudioElement` can play a container format.
+ * On Safari/iOS, `audio/webm;codecs=opus` returns `''` while `audio/mp4` and `audio/wav`
+ * return `'maybe'`/`'probably'`. In headless DOM test environments (jsdom/happy-dom) where
+ * `canPlayType` is unimplemented and returns `''` for all types including `audio/wav`,
+ * returns `true` so capability probing remains testable.
+ */
+export function canPlayAudioContainer(format: 'm4a' | 'webm' | 'wav'): boolean {
+  if (typeof document === 'undefined' && typeof Audio === 'undefined') {
+    return true;
+  }
+  try {
+    const audio =
+      typeof document !== 'undefined'
+        ? document.createElement('audio')
+        : new Audio();
+    if (!audio || typeof audio.canPlayType !== 'function') {
+      return true;
+    }
+    const wavSupport = audio.canPlayType('audio/wav');
+    const mp4Support = audio.canPlayType('audio/mp4');
+    if (wavSupport === '' && mp4Support === '') {
+      // Unimplemented stub (e.g. jsdom)
+      return true;
+    }
+    if (format === 'wav') return wavSupport !== '';
+    if (format === 'm4a') {
+      return (
+        audio.canPlayType('audio/mp4; codecs="mp4a.40.2"') !== '' ||
+        mp4Support !== ''
+      );
+    }
+    return (
+      audio.canPlayType('audio/webm; codecs="opus"') !== '' ||
+      audio.canPlayType('audio/webm') !== ''
+    );
+  } catch {
+    return true;
+  }
+}
+
 export async function probeAudioCapabilities(
   forceRefresh = false,
 ): Promise<CodecCapabilities> {
@@ -199,11 +240,12 @@ export async function probeAudioCapabilities(
 
   const aacSupported = aacMono > 0 || aacStereo > 0;
   const opusSupported = opusMono > 0 || opusStereo > 0;
-  const autoBestFormat: 'm4a' | 'webm' | 'wav' = aacSupported
-    ? 'm4a'
-    : opusSupported
-      ? 'webm'
-      : 'wav';
+  const autoBestFormat: 'm4a' | 'webm' | 'wav' =
+    aacSupported && canPlayAudioContainer('m4a')
+      ? 'm4a'
+      : opusSupported && canPlayAudioContainer('webm')
+        ? 'webm'
+        : 'wav';
 
   cachedCapabilities = {
     webCodecsAvailable: true,
@@ -234,7 +276,11 @@ export function resolveEffectiveFormat(
     return 'm4a';
   }
   if (requested === 'm4a') {
-    return caps.aacSupported ? 'm4a' : caps.opusSupported ? 'webm' : 'wav';
+    return caps.aacSupported
+      ? 'm4a'
+      : caps.opusSupported && canPlayAudioContainer('webm')
+        ? 'webm'
+        : 'wav';
   }
   if (requested === 'webm') {
     return caps.opusSupported ? 'webm' : caps.aacSupported ? 'm4a' : 'wav';
