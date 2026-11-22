@@ -379,6 +379,7 @@ export function useDriveSync({
             driveRootFolderId: info.folderId,
             driveSharedFolderName: resolvedName,
             driveAccessRole: info.accessRole,
+            sharedLibraryBannerDismissed: false,
           };
         }
 
@@ -535,6 +536,7 @@ export function useDriveSync({
       driveRootFolderId: undefined,
       driveSharedFolderName: undefined,
       driveAccessRole: 'owner',
+      sharedLibraryBannerDismissed: false,
     };
     onUpdateSettings(nextSettings);
     showToast('Switched back to your personal Drive library');

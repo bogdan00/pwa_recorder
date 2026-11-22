@@ -987,9 +987,13 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     await page.locator('#join-google-picker-btn').click();
     await expect(joinModal).toBeHidden();
 
-    // Shared Family Library banner & Dad's book appear in Library!
+    // Shared Family Library banner, active collaborators header icon & Dad's book appear in Library!
     await expect(page.getByTestId('shared-library-banner')).toContainText(
       'Family Audiobooks',
+    );
+    await expect(page.locator('#open-share-library-btn')).toHaveAttribute(
+      'data-share-icon',
+      'users',
     );
     await expect(page.getByLabel('Audiobook library')).toContainText(
       'Bedtime Classics',
@@ -1047,6 +1051,10 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     );
     await page.getByLabel('Close settings').click();
     await expect(page.getByTestId('shared-library-banner')).toBeHidden();
+    await expect(page.locator('#open-share-library-btn')).toHaveAttribute(
+      'data-share-icon',
+      'share',
+    );
   });
 
   test('listener joins a read-only shared book via Settings paste, plays chapters on demand, sees read-only UI, and never sends Drive writes', async ({
@@ -1826,5 +1834,66 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     expect(
       sharedPersonalContents.some((f) => f.name.startsWith('01 - Chapter 1')),
     ).toBe(true);
+  });
+
+  test('dismisses Shared Library Co-Narrator banner persistently while keeping active collaborators header share icon', async ({
+    page,
+  }) => {
+    await page.goto('./');
+    const shareBtn = page.locator('#open-share-library-btn');
+    await expect(shareBtn).toBeVisible();
+    // Personal library uses the standard share icon without active shared styling
+    await expect(shareBtn).toHaveAttribute('data-share-icon', 'share');
+    await expect(shareBtn).not.toHaveClass(/library-share-btn--shared/);
+    await expect(page.getByTestId('shared-library-banner')).toHaveCount(0);
+
+    // Activate Shared Family Library (Co-Narrator mode) in settings and reload
+    await page.evaluate(() => {
+      const existing = JSON.parse(
+        window.localStorage.getItem('storytape.settings.v1') || '{}',
+      );
+      window.localStorage.setItem(
+        'storytape.settings.v1',
+        JSON.stringify({
+          ...existing,
+          driveLibraryMode: 'shared',
+          driveRootFolderId: 'shared-family-root-dismiss-test',
+          driveSharedFolderName: 'StoryTape Family',
+          driveAccessRole: 'writer',
+          sharedLibraryBannerDismissed: false,
+        }),
+      );
+    });
+    await page.reload();
+
+    const banner = page.getByTestId('shared-library-banner');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('Co-Narrator access');
+    // Header share button switches to accented collaborators icon
+    await expect(shareBtn).toHaveAttribute('data-share-icon', 'users');
+    await expect(shareBtn).toHaveClass(/library-share-btn--shared/);
+
+    // Dismiss the Co-Narrator banner via X -> disappears immediately & stays dismissed across reload
+    await page.getByTestId('dismiss-shared-library-banner-btn').click();
+    await expect(banner).toBeHidden();
+    // Header share button stays in active collaborators state so sharing remains obvious
+    await expect(shareBtn).toHaveAttribute('data-share-icon', 'users');
+    await expect(shareBtn).toHaveClass(/library-share-btn--shared/);
+
+    await page.reload();
+    await expect(shareBtn).toHaveAttribute('data-share-icon', 'users');
+    await expect(shareBtn).toHaveClass(/library-share-btn--shared/);
+    await expect(banner).toHaveCount(0);
+
+    // Switching back to Personal Library restores the default share icon & resets banner dismissal
+    await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-drive').click();
+    await page.locator('#switch-personal-library-btn').click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-confirm').click();
+    await page.getByLabel('Close settings').click();
+
+    await expect(shareBtn).toHaveAttribute('data-share-icon', 'share');
+    await expect(shareBtn).not.toHaveClass(/library-share-btn--shared/);
   });
 });

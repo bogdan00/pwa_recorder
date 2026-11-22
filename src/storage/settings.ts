@@ -52,6 +52,7 @@ export function getDefaultSettings(): AppSettings {
     driveLibraryMode: 'personal',
     driveSharedFolderName: undefined,
     driveAccessRole: 'owner',
+    sharedLibraryBannerDismissed: false,
     sharedBookFolders: [],
     defaultNarrator: '',
     theme: DEFAULT_THEME_ID,
@@ -78,6 +79,7 @@ export function loadSettings(): AppSettings {
       theme: normalizeThemePreference(parsed.theme),
       backgroundRecordingKeepalive: Boolean(parsed.backgroundRecordingKeepalive),
       keepLocalMaster: Boolean(parsed.keepLocalMaster),
+      sharedLibraryBannerDismissed: Boolean(parsed.sharedLibraryBannerDismissed),
       googleClientId:
         parsed.googleClientId?.trim() || defaults.googleClientId,
       googleApiKey:

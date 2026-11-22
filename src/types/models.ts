@@ -95,6 +95,7 @@ export interface AppSettings {
   driveLibraryMode?: DriveLibraryMode;
   driveSharedFolderName?: string;
   driveAccessRole?: ShareAccessRole;
+  sharedLibraryBannerDismissed?: boolean;
   sharedBookFolders?: SharedBookLink[];
   defaultNarrator: string;
   theme: ThemePreference;

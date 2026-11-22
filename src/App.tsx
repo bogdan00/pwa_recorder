@@ -821,6 +821,15 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           driveLibraryMode={settings.driveLibraryMode}
           driveSharedFolderName={settings.driveSharedFolderName}
           driveAccessRole={settings.driveAccessRole}
+          sharedLibraryBannerDismissed={Boolean(
+            settings.sharedLibraryBannerDismissed,
+          )}
+          onDismissSharedLibraryBanner={() =>
+            handleUpdateSettings({
+              ...settingsRef.current,
+              sharedLibraryBannerDismissed: true,
+            })
+          }
           isSyncing={drive.isSyncing}
           hasMiniPlayer={hasMiniPlayer}
           showInstallBanner={pwaInstallState.showBanner}

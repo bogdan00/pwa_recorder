@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Share2,
   Users,
   X,
 } from 'lucide-react';
@@ -38,6 +39,8 @@ interface LibraryViewProps {
   driveLibraryMode?: DriveLibraryMode;
   driveSharedFolderName?: string;
   driveAccessRole?: ShareAccessRole;
+  sharedLibraryBannerDismissed?: boolean;
+  onDismissSharedLibraryBanner?: () => void;
   isSyncing: boolean;
   hasMiniPlayer: boolean;
   showInstallBanner?: boolean;
@@ -68,6 +71,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   driveLibraryMode = 'personal',
   driveSharedFolderName,
   driveAccessRole = 'owner',
+  sharedLibraryBannerDismissed = false,
+  onDismissSharedLibraryBanner,
   isSyncing,
   hasMiniPlayer,
   showInstallBanner = false,
@@ -243,13 +248,26 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
             <button
               type="button"
-              className="icon-btn"
+              className={`icon-btn ${
+                driveLibraryMode === 'shared' ? 'library-share-btn--shared' : ''
+              }`}
               onClick={onOpenShareLibrary}
               aria-label="Share family library"
               id="open-share-library-btn"
-              title="Share family library"
+              data-share-icon={driveLibraryMode === 'shared' ? 'users' : 'share'}
+              title={
+                driveLibraryMode === 'shared'
+                  ? driveAccessRole === 'reader'
+                    ? 'Shared library (Listener mode)'
+                    : 'Shared library (Co-Narrators active)'
+                  : 'Share family library'
+              }
             >
-              <Users size={19} />
+              {driveLibraryMode === 'shared' ? (
+                <Users size={19} />
+              ) : (
+                <Share2 size={19} />
+              )}
             </button>
 
             <button
@@ -267,7 +285,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
       <main className="app-container library-content">
         {/* Shared Family Library active banner */}
-        {driveLibraryMode === 'shared' && (
+        {driveLibraryMode === 'shared' && !sharedLibraryBannerDismissed && (
           <section
             className="shared-lib-banner"
             aria-label="Shared family library"
@@ -284,13 +302,26 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                   : 'Co-Narrator access · Shared via Google Drive'}
               </span>
             </div>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => onOpenSettings('drive')}
-            >
-              Manage
-            </button>
+            <div className="shared-lib-banner__actions">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => onOpenSettings('drive')}
+              >
+                Manage
+              </button>
+              {onDismissSharedLibraryBanner && (
+                <button
+                  type="button"
+                  className="icon-btn shared-lib-banner__dismiss"
+                  onClick={onDismissSharedLibraryBanner}
+                  aria-label="Dismiss shared library notice"
+                  data-testid="dismiss-shared-library-banner-btn"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
           </section>
         )}
 
