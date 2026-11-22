@@ -275,4 +275,50 @@ test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV 
     await expect(page.getByTestId('input-gain-readout')).toHaveText('1.00× (0.0 dB)');
     await expect(page.getByTestId('gain-guidance-text')).toContainText(/Natural level/i);
   });
+
+  test('preserves full unity gain on mono discrete extraction from asymmetric (L, 0) stereo hardware mic buffers', async ({
+    page,
+  }) => {
+    await page.goto('./');
+    const result = await page.evaluate(async () => {
+      const renderPeak = async (interpretation: ChannelInterpretation): Promise<number> => {
+        const ctx = new OfflineAudioContext(1, 2400, 48000);
+        const buf = ctx.createBuffer(2, 2400, 48000);
+        const left = buf.getChannelData(0);
+        const right = buf.getChannelData(1);
+        for (let i = 0; i < 2400; i += 1) {
+          left[i] = 0.8766 * Math.sin((2 * Math.PI * 440 * i) / 48000);
+          right[i] = 0; // iOS Safari / mono-in-stereo (L, 0) hardware buffer
+        }
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+
+        const gain = ctx.createGain();
+        gain.channelCount = 1;
+        gain.channelCountMode = 'explicit';
+        gain.channelInterpretation = interpretation;
+
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        src.start(0);
+        const rendered = await ctx.startRendering();
+        const ch0 = rendered.getChannelData(0);
+        let peak = 0;
+        for (let i = 0; i < ch0.length; i += 1) {
+          const a = Math.abs(ch0[i]);
+          if (a > peak) peak = a;
+        }
+        return peak;
+      };
+
+      return {
+        speakersPeak: await renderPeak('speakers'),
+        discretePeak: await renderPeak('discrete'),
+      };
+    });
+
+    // Proves Web Audio 'speakers' halves (L, 0) to ~0.4383 (-6 dB), whereas StoryTape's 'discrete' preserves ~0.8766 (0 dB)!
+    expect(result.speakersPeak).toBeCloseTo(0.4383, 2);
+    expect(result.discretePeak).toBeCloseTo(0.8766, 2);
+  });
 });

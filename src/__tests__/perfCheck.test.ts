@@ -19,18 +19,20 @@ const HEALTHY_FAST = {
   taskMsPerSec: 185.0,
   recalcStylePerSec: 10.0,
   layoutPerSec: 10.2,
-  workletLoaded: 1,
+  trackProcessorCreated: 1,
+  workletLoaded: 0,
   scriptProcessorCreated: 0,
   loopingAudioPlayCalls: 0,
-  windowChunks: 200,
-  meanChunkIntervalMs: 25.0,
-  maxChunkIntervalMs: 48.0,
+  windowChunks: 250,
+  meanChunkIntervalMs: 20.0,
+  maxChunkIntervalMs: 38.0,
   canvasPixelWidth: 712,
   canvasClientWidth: 356,
   recordedDurationSec: 6.1,
   zeroRuns: 0,
+  stepClicks: 0,
   maxAbs: 0.23,
-  blackoutResult: { canvasRenderDelta: 0, chunkDelta: 33 },
+  blackoutResult: { canvasRenderDelta: 0, chunkDelta: 38 },
 };
 
 const HEALTHY_SLOW = {
@@ -53,8 +55,7 @@ describe('Headless Chrome performance gate budgets & regression detection', () =
     expect(evaluateProfileResults(HEALTHY_SLOW, PERF_PROFILES[1].budgets)).toEqual([]);
   });
 
-  it('catches the exact pre-fix jank & choppy-capture regressions', () => {
-    // 1. Pre-fix 4x CPU jank (27.7-41.2 fps, 66.7ms p95, 18 stalls, 213ms worklet gap)
+  it('catches the exact pre-fix jank, choppy-capture, and phase-click regressions', () => {
     const preFixSlow = {
       ...HEALTHY_SLOW,
       fps: 34.0,
@@ -68,6 +69,7 @@ describe('Headless Chrome performance gate budgets & regression detection', () =
       canvasPixelWidth: 1068, // uncapped 3x DPR
       maxChunkIntervalMs: 212.9,
       zeroRuns: 2,
+      stepClicks: 3,
     };
     const failures = evaluateProfileResults(preFixSlow, PERF_PROFILES[1].budgets, {
       maxZeroRun: 480,
@@ -81,13 +83,15 @@ describe('Headless Chrome performance gate budgets & regression detection', () =
     expect(failures.some((f) => /playhead froze/.test(f))).toBe(true);
     expect(failures.some((f) => /playhead jumped/.test(f))).toBe(true);
     expect(failures.some((f) => /Canvas DPR/.test(f))).toBe(true);
-    expect(failures.some((f) => /Max worklet chunk gap/.test(f))).toBe(true);
+    expect(failures.some((f) => /Max capture chunk gap/.test(f))).toBe(true);
     expect(failures.some((f) => /silent PCM dropout/.test(f))).toBe(true);
+    expect(failures.some((f) => /step-discontinuity click/.test(f))).toBe(true);
   });
 
   it('catches ScriptProcessorNode fallback, Blackout rAF leaks, and external network leaks', () => {
     const broken = {
       ...HEALTHY_FAST,
+      trackProcessorCreated: 0,
       workletLoaded: 0,
       scriptProcessorCreated: 1,
       blackoutResult: { canvasRenderDelta: 48, chunkDelta: 30 },
@@ -95,7 +99,7 @@ describe('Headless Chrome performance gate budgets & regression detection', () =
     const failures = evaluateProfileResults(broken, PERF_PROFILES[0].budgets, {
       unexpectedExternalUrls: ['GET https://evil.example/tracker.js'],
     });
-    expect(failures.some((f) => /AudioWorklet/.test(f))).toBe(true);
+    expect(failures.some((f) => /MediaStreamTrackProcessor|AudioWorklet/.test(f))).toBe(true);
     expect(failures.some((f) => /Blackout Mode failed to pause/.test(f))).toBe(true);
     expect(failures.some((f) => /Unexpected external requests/.test(f))).toBe(true);
   });
@@ -114,7 +118,8 @@ describe('Headless Chrome performance gate budgets & regression detection', () =
     const text = formatScorecardText(rows);
     expect(text).toContain('StoryTape Pre-Submit Performance & Audio-Integrity Scorecard');
     expect(text).toContain('Freeze-Free & Jump-Free Playhead PLL');
-    expect(text).toContain('Low-Latency Interactive AudioWorklet');
+    expect(text).toContain('Direct TrackProcessor / Interactive Capture');
+    expect(text).toContain('Glitch-Free Persisted PCM (0 Drops/Clicks)');
     expect(text).toContain('Live Regression-Detection Canary');
     expect(text).toContain('caught 2/2 injected bugs');
 

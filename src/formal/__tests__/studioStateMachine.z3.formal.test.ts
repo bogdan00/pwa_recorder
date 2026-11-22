@@ -40,6 +40,10 @@ interface Z3StudioState {
   readonly duration: Z3Arith;
   readonly playhead: Z3Arith;
   readonly micActive: Z3Bool;
+  readonly useTrackProcessor: Z3Bool;
+  readonly trackProcessorActive: Z3Bool;
+  readonly workletActive: Z3Bool;
+  readonly outputCtxRunning: Z3Bool;
   readonly previewActive: Z3Bool;
   readonly canUndoTrim: Z3Bool;
   readonly undoDuration: Z3Arith;
@@ -52,6 +56,10 @@ function makeZ3StudioState(ctx: Z3Context, prefix: string): Z3StudioState {
     duration: ctx.Int.const(`${prefix}_duration`),
     playhead: ctx.Int.const(`${prefix}_playhead`),
     micActive: ctx.Bool.const(`${prefix}_micActive`),
+    useTrackProcessor: ctx.Bool.const(`${prefix}_useTrackProcessor`),
+    trackProcessorActive: ctx.Bool.const(`${prefix}_trackProcessorActive`),
+    workletActive: ctx.Bool.const(`${prefix}_workletActive`),
+    outputCtxRunning: ctx.Bool.const(`${prefix}_outputCtxRunning`),
     previewActive: ctx.Bool.const(`${prefix}_previewActive`),
     canUndoTrim: ctx.Bool.const(`${prefix}_canUndoTrim`),
     undoDuration: ctx.Int.const(`${prefix}_undoDuration`),
@@ -73,6 +81,10 @@ function stateToZ3Env(
     },
     bools: {
       micActive: s.micActive,
+      useTrackProcessor: s.useTrackProcessor,
+      trackProcessorActive: s.trackProcessorActive,
+      workletActive: s.workletActive,
+      outputCtxRunning: s.outputCtxRunning,
       previewActive: s.previewActive,
       canUndoTrim: s.canUndoTrim,
       hasDraft: s.hasDraft,
@@ -81,11 +93,15 @@ function stateToZ3Env(
 }
 
 function z3Init(ctx: Z3Context, s: Z3StudioState): Z3Bool {
+  // Symbolic `useTrackProcessor` ∈ {true, false}: proves base case + induction for BOTH Chromium and Safari/Firefox!
   return ctx.And(
     s.phase.eq(STUDIO_PHASE_CODE[STUDIO_INITIAL_STATE.phase]),
     s.duration.eq(STUDIO_INITIAL_STATE.duration),
     s.playhead.eq(STUDIO_INITIAL_STATE.playhead),
     s.micActive.eq(STUDIO_INITIAL_STATE.micActive),
+    s.trackProcessorActive.eq(STUDIO_INITIAL_STATE.trackProcessorActive),
+    s.workletActive.eq(STUDIO_INITIAL_STATE.workletActive),
+    s.outputCtxRunning.eq(STUDIO_INITIAL_STATE.outputCtxRunning),
     s.previewActive.eq(STUDIO_INITIAL_STATE.previewActive),
     s.canUndoTrim.eq(STUDIO_INITIAL_STATE.canUndoTrim),
     s.undoDuration.eq(STUDIO_INITIAL_STATE.undoDuration),
@@ -129,6 +145,26 @@ function compileStudioTransition(
     ),
     next.micActive.eq(
       ir.next.micActive ? compileBoolToZ3(ctx, ir.next.micActive, env) : prev.micActive,
+    ),
+    next.useTrackProcessor.eq(
+      ir.next.useTrackProcessor
+        ? compileBoolToZ3(ctx, ir.next.useTrackProcessor, env)
+        : prev.useTrackProcessor,
+    ),
+    next.trackProcessorActive.eq(
+      ir.next.trackProcessorActive
+        ? compileBoolToZ3(ctx, ir.next.trackProcessorActive, env)
+        : prev.trackProcessorActive,
+    ),
+    next.workletActive.eq(
+      ir.next.workletActive
+        ? compileBoolToZ3(ctx, ir.next.workletActive, env)
+        : prev.workletActive,
+    ),
+    next.outputCtxRunning.eq(
+      ir.next.outputCtxRunning
+        ? compileBoolToZ3(ctx, ir.next.outputCtxRunning, env)
+        : prev.outputCtxRunning,
     ),
     next.previewActive.eq(
       ir.next.previewActive
@@ -197,6 +233,27 @@ describe('Tier 2 Z3 SMT Proofs: Recording Studio Unbounded Inductive Safety (Com
 
     solver.add(compileStudioInvariant(z3, prev));
     solver.add(compileStudioTransition(z3, buggyUndoIr, prev, next));
+    solver.add(z3.Not(compileStudioInvariant(z3, next)));
+
+    expect(await solver.check()).toBe('sat');
+  });
+
+  it('meta-proof (non-vacuity): Z3 refutes a buggy start_or_resume that leaves preview AudioContext running during TrackProcessor capture', async () => {
+    const buggyResumeIr: StudioTransitionIr = {
+      ...STUDIO_TRANSITIONS_IR.start_or_resume,
+      name: 'buggy_resume_duplex',
+      next: {
+        ...STUDIO_TRANSITIONS_IR.start_or_resume.next,
+        outputCtxRunning: undefined, // Bug: fails to suspend prior preview AudioContext!
+      },
+    };
+
+    const solver = new z3.Solver();
+    const prev = makeZ3StudioState(z3, 'duplex_prev');
+    const next = makeZ3StudioState(z3, 'duplex_next');
+
+    solver.add(compileStudioInvariant(z3, prev));
+    solver.add(compileStudioTransition(z3, buggyResumeIr, prev, next));
     solver.add(z3.Not(compileStudioInvariant(z3, next)));
 
     expect(await solver.check()).toBe('sat');

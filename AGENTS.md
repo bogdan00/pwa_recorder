@@ -19,12 +19,18 @@ StoryTape separates **what users experience** ([`cuj/`](./cuj/README.md)) from *
    - **User-facing change → CUJ**: Create `cuj/CUJ-XX-<slug>.md` or update the relevant existing CUJ, and register it in [`cuj/README.md`](./cuj/README.md) with priority (`P0`/`P1`) and 1-to-1 E2E spec mapping.
    - **System invariant / architecture change → ADR**: Create `adr/ADR-XX-<slug>.md` (with `Status`, `Context`, `Decision`, `System Invariants`, `Consequences & Trade-offs`, and `Related CUJs`) or supersede/amend the existing ADR, and register it in [`adr/README.md`](./adr/README.md).
    - **Cross-link** related CUJs and ADRs whenever a user journey depends on a specific architectural invariant (broken links and unregistered docs are caught automatically by `src/__tests__/repoInvariants.test.ts`).
-2. **Write or update automated E2E coverage for every CUJ.**
+2. **Always perform an ongoing Prevention & Verification Audit on every feature or bug fix.**
+   - Never stop at patching a single symptom. On **every** task, explicitly ask and act on:
+     - **CUJs (`cuj/`)**: Does user-visible behavior, telemetry, or an edge case need updated acceptance criteria?
+     - **ADRs (`adr/`)**: Did we introduce, tighten, or supersede a system invariant or architectural contract?
+     - **Formal Verification (`src/formal/`)**: Does this change touch state-machine transitions, async cancellation, CRDT/merge rules, bounded numeric/DSP invariants, or safety/non-interference guards that should be proven via Tier 1 BFS + `verifyConformance` and/or Tier 2 Z3 SMT?
+     - **Unit, DSP, E2E & Perf Gates (`src/**/__tests__/`, `e2e/`, `scripts/perfCheck.mjs`)**: What automated regression test or perf/audio-integrity guard will permanently prevent this *entire class of bugs* and catch unexpected side effects before they ever reach `main`?
+3. **Write or update automated E2E coverage for every CUJ.**
    - Every CUJ must have a matching Playwright spec under `e2e/cuj-XX-<slug>.spec.ts` exercising the production bundle (`/pwa_recorder/`) at mobile phone viewport (`390×844` @ 2x DPR, touch enabled).
-3. **Fix defects in application code, never weaken tests.**
-   - If an E2E test uncovers a race condition, stale state, UI glitch, or sync defect, fix the underlying app code and keep the assertion strict.
-4. **Update unit tests alongside domain changes.**
-   - Pure logic (audio timeline, encoding, Drive sync merge, share link parsing, IndexedDB storage, PWA install prompt) belongs under `src/**/__tests__/*.test.ts(x)` and runs via Vitest.
+4. **Fix defects in application code, never weaken tests.**
+   - If an E2E test, formal proof, or perf gate uncovers a race condition, stale state, UI glitch, or sync defect, fix the underlying app code and keep the assertion strict.
+5. **Update unit tests alongside domain changes.**
+   - Pure logic (audio timeline, DSP/AGC/quality heuristics, encoding, Drive sync merge, share link parsing, IndexedDB storage, PWA install prompt) belongs under `src/**/__tests__/*.test.ts(x)` and runs via Vitest.
 
 ---
 
@@ -58,9 +64,10 @@ Enforce clear separation of concerns across layers—avoid putting audio DSP, In
 - `src/storage/` — Local persistence:
   - `db.ts`: IndexedDB wrapper. **Always store binary blobs as `{ buffer: ArrayBuffer, type: string }` and reconstruct `Blob` on read** to avoid iOS Safari WebKit / `fake-indexeddb` structured-clone bugs.
   - `settings.ts`: `localStorage` persistence, theme resolution, and build-time env defaults (`VITE_GOOGLE_CLIENT_ID`, `VITE_GOOGLE_API_KEY`).
-- `src/audio/` & `public/audio/` — Audio capture, timeline, encoding, quality presets, and device selection:
-  - Keep real-time PCM capture off the main thread in `public/audio/pcm-capture-worklet.js` (~25ms flush cadence, 50 peaks/sec).
-  - Route `AudioWorkletNode` (`numberOfOutputs: 1`) through a unity `GainNode(1)` to `ctx.destination` while `pcm-capture-worklet.js` outputs only an inaudible ultrasonic Nyquist keepalive (`±1e-5` / `-100 dBFS`, never copying mic audio to output) while active. This pulls frames reliably on iOS Safari WebKit AND prevents Chromium's 30-second `SilentSinkSuspender` from switching to `FakeAudioWorker` and dropping 10ms capture chunks. Use `AudioContext({ latencyHint: 'interactive' })` (never `'playback'`, which breaks Android AAudio low-latency mode and causes mic FIFO dropouts and bursty waveform jumps), align `getUserMedia` sample rate to `ctx.sampleRate`, and guard `ctx.audioWorklet.addModule()` once per `AudioContext`.
+- `src/audio/` & `public/audio/` — Audio capture, timeline, DSP, quality monitoring, encoding, quality presets, and device selection:
+  - On Chromium / Chrome Android, capture uncompressed PCM directly from `MediaStreamTrackProcessor` (`src/audio/trackProcessorCapture.ts`, `maxBufferSize: 100` = 1s jitter buffer, keeping `AudioContext` closed/suspended during recording to eliminate `MediaStreamAudioSourceNode` clock-crossing FIFO underruns/overflows and Android duplex HAL contention), processed through the pure-TS `PcmInputStripProcessor`.
+  - On Safari/iOS, Firefox, or sample-rate-mismatched draft resumes, keep real-time PCM capture off the main thread in `public/audio/pcm-capture-worklet.js` (~25ms flush cadence, 50 peaks/sec), configure mono strip/capture nodes with `channelCount: 1, channelCountMode: 'explicit', channelInterpretation: 'discrete'` (preventing iOS Safari `(L, 0)` `-6 dB` speakers downmix), route `AudioWorkletNode` (`numberOfOutputs: 1`) through a unity `GainNode(1)` to `ctx.destination` with the inaudible ultrasonic Nyquist keepalive (`±1e-5` / `-100 dBFS`, never copying mic audio to output) while active, use `AudioContext({ latencyHint: 'interactive' })` (never `'playback'`), align `getUserMedia` sample rate to `ctx.sampleRate`, and guard `ctx.audioWorklet.addModule()` once per `AudioContext`.
+  - Run live 10-heuristic recording quality analysis (`src/audio/recordingQualityAnalyzer.ts`) off the main thread inside a Dedicated Web Worker (`src/audio/qualityMonitor.worker.ts`), fed `~500 ms` transferable batches and emitting `<= 1 Hz` UI updates.
   - Keep `RecordingEngine` lifecycle subscriptions separate from draft-loading effects; never clear active UI listeners inside async `dispose()`.
 - `src/drive/` — Client-side Google Drive integration (zero backend):
   - `googleAuth.ts`: Google Identity Services OAuth using `https://www.googleapis.com/auth/drive` (required for recursive multi-user shared folder visibility) with automatic scope upgrade migration.

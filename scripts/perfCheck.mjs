@@ -255,6 +255,7 @@ async function attachProbeInitScript(page) {
   await page.addInitScript(() => {
     window.__STORYTAPE_AUTH_BROKER_URL__ = '';
     window.__perfProbe = {
+      trackProcessorCreated: 0,
       workletLoaded: 0,
       workletErrors: [],
       scriptProcessorCreated: 0,
@@ -273,6 +274,49 @@ async function attachProbeInitScript(page) {
       }
       return origPlay.apply(this, args);
     };
+
+    const OrigMSTP = window.MediaStreamTrackProcessor;
+    if (typeof OrigMSTP === 'function') {
+      window.MediaStreamTrackProcessor = function (...args) {
+        window.__perfProbe.trackProcessorCreated += 1;
+        const proc = new OrigMSTP(...args);
+        const origReadable = proc.readable;
+        if (origReadable && typeof origReadable.getReader === 'function') {
+          const origGetReader = origReadable.getReader.bind(origReadable);
+          origReadable.getReader = (...rArgs) => {
+            const reader = origGetReader(...rArgs);
+            const origRead = reader.read.bind(reader);
+            let accumFrames = 0;
+            reader.read = async () => {
+              const res = await origRead();
+              if (!res.done && res.value) {
+                const nFrames = res.value.numberOfFrames || 480;
+                const sr = res.value.sampleRate || 48000;
+                accumFrames += nFrames;
+                // Mirror trackProcessorCapture's 20ms batch flush cadence (960 frames @ 48 kHz)
+                const batchTarget = Math.max(480, Math.round(sr * 0.02));
+                if (accumFrames >= batchTarget) {
+                  accumFrames -= batchTarget;
+                  const probe = window.__perfProbe;
+                  const now = performance.now();
+                  probe.chunkCount += 1;
+                  if (probe.measuringChunks) {
+                    if (probe.lastChunkTs > 0) {
+                      probe.chunkIntervals.push(now - probe.lastChunkTs);
+                    }
+                    probe.lastChunkTs = now;
+                  }
+                }
+              }
+              return res;
+            };
+            return reader;
+          };
+        }
+        return proc;
+      };
+      window.MediaStreamTrackProcessor.prototype = OrigMSTP.prototype;
+    }
 
     const OrigAC = window.AudioContext;
     if (OrigAC) {
@@ -534,12 +578,28 @@ async function runProfile({ baseUrl, wavPath, profile }) {
       }
       if (curZeroRun >= 32) zeroRuns += 1;
 
+      // Detect phase/step-discontinuity clicks (e.g., 480-sample FIFO overflow drops) in 440 Hz sine
+      const expectedStep = ((2 * Math.PI * 440) / sampleRate) * Math.max(maxAbs, 0.01);
+      const stepThreshold = Math.max(0.08, expectedStep * 4.5);
+      const debounceSamples = Math.max(1, Math.round(sampleRate * 0.02));
+      let stepClicks = 0;
+      let lastClickIdx = -debounceSamples;
+      for (let i = trimStart + 1; i < trimEnd; i += 1) {
+        if (Math.abs(merged[i] - merged[i - 1]) > stepThreshold) {
+          if (i - lastClickIdx >= debounceSamples) {
+            stepClicks += 1;
+            lastClickIdx = i;
+          }
+        }
+      }
+
       return {
         probe: window.__perfProbe,
         sampleRate,
         recordedDurationSec,
         zeroRuns,
         maxZeroRun,
+        stepClicks,
         maxAbs,
       };
     });
@@ -563,6 +623,7 @@ async function runProfile({ baseUrl, wavPath, profile }) {
       taskMsPerSec: round1(((m2.TaskDuration - m1.TaskDuration) * 1000) / elapsedSec),
       recalcStylePerSec: round1((m2.RecalcStyleCount - m1.RecalcStyleCount) / elapsedSec),
       layoutPerSec: round1((m2.LayoutCount - m1.LayoutCount) / elapsedSec),
+      trackProcessorCreated: probeAndAudio.probe.trackProcessorCreated,
       workletLoaded: probeAndAudio.probe.workletLoaded,
       scriptProcessorCreated: probeAndAudio.probe.scriptProcessorCreated,
       playbackLatencyHintCalls: probeAndAudio.probe.playbackLatencyHintCalls,
@@ -577,6 +638,7 @@ async function runProfile({ baseUrl, wavPath, profile }) {
       canvasClientWidth: windowResult.canvasClientWidth,
       recordedDurationSec: round1(probeAndAudio.recordedDurationSec),
       zeroRuns: probeAndAudio.zeroRuns,
+      stepClicks: probeAndAudio.stepClicks,
       maxAbs: Math.round(probeAndAudio.maxAbs * 10000) / 10000,
       blackoutResult,
     };
@@ -678,6 +740,7 @@ async function runRegressionCanary({ baseUrl, wavPath }) {
       scriptMsPerSec: 30,
       recalcStylePerSec,
       layoutPerSec: 10,
+      trackProcessorCreated: probe.trackProcessorCreated,
       workletLoaded: probe.workletLoaded,
       scriptProcessorCreated: probe.scriptProcessorCreated,
       loopingAudioPlayCalls: probe.loopingAudioPlayCalls,
@@ -688,6 +751,7 @@ async function runRegressionCanary({ baseUrl, wavPath }) {
       canvasClientWidth: 356,
       recordedDurationSec: 5,
       zeroRuns: 0,
+      stepClicks: 0,
       maxAbs: 0.2,
     };
 

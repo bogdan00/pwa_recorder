@@ -1,4 +1,4 @@
-import type { AudioQualitySettings } from '../types/models';
+import type { AudioQualitySettings, ChannelCountOption } from '../types/models';
 
 /**
  * -3.0 dBFS knee start: normal speech below this level passes at exact 1:1 unity gain
@@ -11,6 +11,17 @@ export const SOFT_CLIP_THRESHOLD = 0.7071;
  * AAC/Opus inter-sample peaks never exceed 0 dBFS.
  */
 export const SOFT_CLIP_CEILING = 0.8913;
+
+/**
+ * Transparent vocal safety limiter settings shared by both the Web Audio
+ * DynamicsCompressorNode strip (Safari/iOS/Firefox) and pure-TS PcmInputStripProcessor
+ * (Chromium/Android MediaStreamTrackProcessor).
+ */
+export const VOCAL_LIMITER_THRESHOLD_DB = -3;
+export const VOCAL_LIMITER_KNEE_DB = 6;
+export const VOCAL_LIMITER_RATIO = 4;
+export const VOCAL_LIMITER_ATTACK_SEC = 0.005;
+export const VOCAL_LIMITER_RELEASE_SEC = 0.12;
 
 /**
  * Inaudible ultrasonic Nyquist keepalive amplitude (-100 dBFS, well below 16-bit DAC LSB).
@@ -30,6 +41,7 @@ export function softLimitSample(
   threshold = SOFT_CLIP_THRESHOLD,
   ceiling = SOFT_CLIP_CEILING,
 ): number {
+  if (!Number.isFinite(x)) return 0;
   const abs = Math.abs(x);
   if (abs <= threshold) return x;
   const headroom = Math.max(1e-6, ceiling - threshold);
@@ -123,13 +135,18 @@ export const MAX_INPUT_GAIN_DB = 24;
  * Software Auto-Gain Control (AGC) parameters for browsers like iOS/macOS Safari (WebKit)
  * that ignore getUserMedia `autoGainControl` and deliver raw MEMS capsule levels
  * (~-45 to -30 dBFS on normal speech) when `echoCancellation` is disabled.
+ *
+ * Invariant: `SOFTWARE_AGC_PEAK_CEILING` (0.56 / -5.0 dBFS) sits strictly below
+ * `SOFT_CLIP_THRESHOLD` (0.7071 / -3.0 dBFS) so Software AGC backs off cleanly
+ * before sustained limiting or soft-clipping engages.
  */
-export const SOFTWARE_AGC_INITIAL_GAIN = 4.0; // +12.0 dB starting boost so syllable #1 is clearly audible
+export const SOFTWARE_AGC_INITIAL_GAIN = 3.16; // +10.0 dB starting lift without slamming syllable #1
 export const SOFTWARE_AGC_MIN_GAIN = 0.5; // -6.0 dB floor to tame unexpectedly hot inputs
-export const SOFTWARE_AGC_MAX_GAIN = 16.0; // +24.0 dB ceiling for quiet raw iPhone / dynamic mics
-export const SOFTWARE_AGC_TARGET_RMS = 0.125; // ~-18 dBFS audiobook narration RMS target
-export const SOFTWARE_AGC_PEAK_CEILING = 0.72; // ~-2.8 dBFS fast-attack peak guard
+export const SOFTWARE_AGC_MAX_GAIN = 10.0; // +20.0 dB max lift (avoids extreme room-hiss pumping)
+export const SOFTWARE_AGC_TARGET_RMS = 0.09; // ~-20.9 dBFS narration RMS (preserves 15-18 dB vocal crest headroom)
+export const SOFTWARE_AGC_PEAK_CEILING = 0.56; // -5.0 dBFS fast-attack peak guard (< -3 dBFS limiter threshold)
 export const SOFTWARE_AGC_MIN_SPEECH_RMS = 0.0015; // ~-56.5 dBFS pre-AGC floor below which gain holds
+export const SOFTWARE_AGC_COMP_REDUCTION_TRIGGER_DB = -1.5; // Any compressor reduction <= -1.5 dB forces AGC backoff
 
 /**
  * Converts a linear gain multiplier into decibels clamped to [MIN_INPUT_GAIN_DB, MAX_INPUT_GAIN_DB],
@@ -165,15 +182,17 @@ export interface SoftwareAutoGainOptions {
 }
 
 /**
- * Speech-gated studio Auto-Gain Controller (AGC) used when the user enables Auto Gain Control
- * on a browser/OS (such as Safari/iOS WebKit with echoCancellation=false) that does not
- * provide native `autoGainControl` on the MediaStreamTrack.
+ * Speech-gated, compressor-aware studio Auto-Gain Controller (AGC) used when the user enables
+ * Auto Gain Control on a browser/OS (such as Safari/iOS WebKit with echoCancellation=false)
+ * that does not provide native `autoGainControl` on the MediaStreamTrack.
  *
- * - Starts at +12 dB (scaled down if user already boosted manual inputGain) so opening syllables
- *   are immediately audible rather than fading up from silence.
- * - Adapts smoothly upward (~450 ms) toward -18 dBFS RMS during active speech above an adaptive
+ * - Starts at +10 dB (scaled down if user already boosted manual inputGain) so opening syllables
+ *   are immediately audible without driving straight into the limiter.
+ * - Adapts smoothly upward (~450 ms) toward -21 dBFS RMS during active speech above an adaptive
  *   room-noise floor, holding gain flat during silence so room hiss never pumps between sentences.
- * - Responds rapidly (~75 ms) to pull gain back when loud speech or peaks exceed -2.8 dBFS.
+ * - Responds rapidly (~75 ms) to pull gain back when peaks exceed -5.0 dBFS OR whenever the
+ *   downstream vocal safety limiter reports gain reduction <= -1.5 dB (guaranteeing AGC never
+ *   fights the compressor).
  */
 export class SoftwareAutoGainController {
   private currentGain: number;
@@ -209,8 +228,16 @@ export class SoftwareAutoGainController {
     return Math.max(this.minGain, Math.min(this.maxGain, gain));
   }
 
-  processSamples(samples: Float32Array, durationSec: number): number {
-    if (samples.length === 0 || !Number.isFinite(durationSec) || durationSec <= 0) {
+  processSamples(
+    samples: Float32Array,
+    durationSec: number,
+    compressorReductionDb = 0,
+  ): number {
+    if (
+      samples.length === 0 ||
+      !Number.isFinite(durationSec) ||
+      durationSec <= 0
+    ) {
       return this.currentGain;
     }
 
@@ -218,6 +245,7 @@ export class SoftwareAutoGainController {
     let peak = 0;
     for (let i = 0; i < samples.length; i += 1) {
       const s = samples[i];
+      if (!Number.isFinite(s)) continue;
       const abs = Math.abs(s);
       if (abs > peak) peak = abs;
       sumSq += s * s;
@@ -236,12 +264,22 @@ export class SoftwareAutoGainController {
     }
     this.noiseFloorRms = Math.max(1e-5, Math.min(this.noiseFloorRms, 0.02));
 
-    // Peak guard always reacts quickly to prevent hitting the limiter continuously
+    // Peak guard + compressor reduction guard react rapidly so AGC never rides the limiter
     let desiredGain = this.currentGain;
-    const peakHit = peak >= this.peakCeiling;
+    let peakHit = peak >= this.peakCeiling;
     if (peakHit) {
       const peakSafeGain = this.currentGain * ((this.peakCeiling * 0.85) / peak);
       desiredGain = this.clampGain(peakSafeGain);
+    }
+
+    const compEngaged =
+      Number.isFinite(compressorReductionDb) &&
+      compressorReductionDb <= SOFTWARE_AGC_COMP_REDUCTION_TRIGGER_DB;
+    if (compEngaged) {
+      const reductionLinear = Math.pow(10, (compressorReductionDb - 1.5) / 20);
+      const compSafeGain = this.clampGain(this.currentGain * reductionLinear);
+      desiredGain = peakHit ? Math.min(desiredGain, compSafeGain) : compSafeGain;
+      peakHit = true;
     }
 
     // Speech-gated RMS leveling: only boost when speech sits clearly above the noise floor
@@ -256,6 +294,11 @@ export class SoftwareAutoGainController {
       return this.currentGain;
     }
 
+    // Never allow a compressor-triggered or peak-triggered update to increase gain
+    if (peakHit && desiredGain > this.currentGain) {
+      desiredGain = this.currentGain;
+    }
+
     // Fast attack when attenuating loud speech; gentle smooth release when lifting quiet speech
     const tau = desiredGain < this.currentGain ? 0.075 : 0.45;
     const alpha = 1 - Math.exp(-durationSec / tau);
@@ -266,8 +309,24 @@ export class SoftwareAutoGainController {
   }
 }
 
+/**
+ * Configures a Web Audio node to extract channel 0 at 1.0x unity gain when recording mono.
+ * Prevents Web Audio's default `'speakers'` downmix (`0.5 * (L + R)`) from halving (-6 dB)
+ * iOS Safari WebKit's `(L, 0)` mono-in-stereo mic buffers or 1-mic 2-channel USB interfaces.
+ */
+export function configureMonoDiscreteChannel(node: AudioNode): void {
+  try {
+    node.channelCount = 1;
+    node.channelCountMode = 'explicit';
+    node.channelInterpretation = 'discrete';
+  } catch {
+    // Some unit-test mocks or exotic nodes may make channel properties read-only
+  }
+}
+
 export interface StudioInputStripOptions {
   enableSoftwareAgc?: boolean;
+  channels?: ChannelCountOption;
 }
 
 export interface StudioInputStrip {
@@ -275,16 +334,18 @@ export interface StudioInputStrip {
   nodes: AudioNode[];
   autoGainNode: GainNode | null;
   autoGainController: SoftwareAutoGainController | null;
+  compressorNode: DynamicsCompressorNode | null;
   updateAutoGain: (samples: Float32Array, durationSec: number) => number;
 }
 
 /**
  * Builds the StoryTape studio input strip:
- *   source -> [80Hz HPF] -> Input Gain -> [Software Auto-Gain] -> [DynamicsCompressor + Soft-Clip Ceiling (-1 dBFS)]
+ *   source -> [80Hz HPF] -> Input Gain -> [Software Auto-Gain] -> [Transparent Vocal Limiter + Soft-Clip Ceiling (-1 dBFS)]
  *
- * Placing Software Auto-Gain ahead of the DynamicsCompressor + WaveShaper ceiling guarantees
- * that sudden loud voices are immediately protected from clipping at 0 ms overshoot while
- * quiet iPhone/raw mics are lifted cleanly to narration level.
+ * When recording mono (`channels === 1`), configures every strip node with explicit discrete
+ * 1-channel extraction so iOS Safari's `(L, 0)` capture buffers stay at 1.0x unity gain.
+ * Placing Software Auto-Gain ahead of the limiter guarantees sudden loud voices are immediately
+ * protected at 0 ms overshoot while feeding `comp.reduction` back into AGC so it never overdrives.
  */
 export function buildStudioInputStrip(
   ctx: AudioContext,
@@ -292,6 +353,9 @@ export function buildStudioInputStrip(
   quality: AudioQualitySettings,
   options?: StudioInputStripOptions,
 ): StudioInputStrip {
+  const effectiveChannels: ChannelCountOption =
+    options?.channels ?? quality.channels;
+  const isMono = effectiveChannels === 1;
   const nodes: AudioNode[] = [source];
   let tail: AudioNode = source;
 
@@ -300,6 +364,7 @@ export function buildStudioInputStrip(
     hpf.type = 'highpass';
     hpf.frequency.value = 80;
     hpf.Q.value = 0.707;
+    if (isMono) configureMonoDiscreteChannel(hpf);
     tail.connect(hpf);
     tail = hpf;
     nodes.push(hpf);
@@ -307,6 +372,7 @@ export function buildStudioInputStrip(
 
   const gainNode = ctx.createGain();
   gainNode.gain.value = quality.inputGain;
+  if (isMono) configureMonoDiscreteChannel(gainNode);
   tail.connect(gainNode);
   tail = gainNode;
   nodes.push(gainNode);
@@ -324,21 +390,25 @@ export function buildStudioInputStrip(
     autoGainController = new SoftwareAutoGainController({ initialGain });
     autoGainNode = ctx.createGain();
     autoGainNode.gain.value = autoGainController.getGain();
+    if (isMono) configureMonoDiscreteChannel(autoGainNode);
     tail.connect(autoGainNode);
     tail = autoGainNode;
     nodes.push(autoGainNode);
   }
 
+  let compressorNode: DynamicsCompressorNode | null = null;
   if (quality.softLimiter) {
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -6;
-    comp.knee.value = 6;
-    comp.ratio.value = 12;
-    comp.attack.value = 0.001;
-    comp.release.value = 0.1;
+    comp.threshold.value = VOCAL_LIMITER_THRESHOLD_DB;
+    comp.knee.value = VOCAL_LIMITER_KNEE_DB;
+    comp.ratio.value = VOCAL_LIMITER_RATIO;
+    comp.attack.value = VOCAL_LIMITER_ATTACK_SEC;
+    comp.release.value = VOCAL_LIMITER_RELEASE_SEC;
+    if (isMono) configureMonoDiscreteChannel(comp);
     tail.connect(comp);
     tail = comp;
     nodes.push(comp);
+    compressorNode = comp;
 
     if (typeof ctx.createWaveShaper === 'function') {
       const shaper = ctx.createWaveShaper();
@@ -346,6 +416,7 @@ export function buildStudioInputStrip(
       // Exact 1:1 identity below -3 dBFS with DynamicsCompressor ahead and post-resample
       // ceiling on export: avoid real-time 2x FIR oversampling CPU load on mobile audio threads.
       shaper.oversample = 'none';
+      if (isMono) configureMonoDiscreteChannel(shaper);
       tail.connect(shaper);
       tail = shaper;
       nodes.push(shaper);
@@ -355,7 +426,15 @@ export function buildStudioInputStrip(
   let lastAppliedGain = autoGainController?.getGain() ?? 1;
   const updateAutoGain = (samples: Float32Array, durationSec: number): number => {
     if (!autoGainController || !autoGainNode) return 1;
-    const nextGain = autoGainController.processSamples(samples, durationSec);
+    const reductionDb =
+      compressorNode && Number.isFinite(compressorNode.reduction)
+        ? compressorNode.reduction
+        : 0;
+    const nextGain = autoGainController.processSamples(
+      samples,
+      durationSec,
+      reductionDb,
+    );
     if (Math.abs(nextGain - lastAppliedGain) < 0.002) {
       return nextGain;
     }
@@ -395,6 +474,211 @@ export function buildStudioInputStrip(
     nodes,
     autoGainNode,
     autoGainController,
+    compressorNode,
     updateAutoGain,
   };
 }
+
+/**
+ * Pure-TypeScript, zero-allocation-per-frame Studio Input Strip matching `buildStudioInputStrip`:
+ *   [80Hz Butterworth HPF] -> Input Gain -> [Smoothed Software AGC] -> [Transparent Vocal Limiter + Soft-Clip Ceiling]
+ *
+ * Used by direct `MediaStreamTrackProcessor` capture on Chromium/Android so we never open an
+ * `AudioContext` or cross `MediaStreamAudioSourceNode`'s FIFO during recording.
+ */
+export class PcmInputStripProcessor {
+  private readonly channels: ChannelCountOption;
+  private readonly sampleRate: number;
+  private readonly hpfEnabled: boolean;
+  private readonly inputGain: number;
+  private readonly limiterEnabled: boolean;
+
+  // 2nd-order Butterworth 80 Hz HPF biquad coefficients + Direct Form II Transposed state
+  private readonly b0: number;
+  private readonly b1: number;
+  private readonly b2: number;
+  private readonly a1: number;
+  private readonly a2: number;
+  private readonly z1: Float64Array;
+  private readonly z2: Float64Array;
+
+  // Optional Software AGC + smooth per-sample ramp
+  public readonly autoGainController: SoftwareAutoGainController | null;
+  private smoothedAgcGain: number;
+  private readonly agcSmoothAlpha: number;
+
+  // Transparent feed-forward vocal peak limiter (-3 dBFS, 4:1, 5ms attack, 120ms release)
+  private env = 0;
+  private readonly envAttackCoeff: number;
+  private readonly envReleaseCoeff: number;
+  private readonly limiterThresholdLinear: number;
+  private lastReductionDb = 0;
+  private minReductionDb = 0;
+
+  constructor(
+    sampleRate: number,
+    channels: ChannelCountOption,
+    quality: AudioQualitySettings,
+    enableSoftwareAgc = false,
+  ) {
+    this.sampleRate = Math.max(8000, sampleRate || 48000);
+    this.channels = channels;
+    this.hpfEnabled = Boolean(quality.highPassFilter);
+    this.inputGain = Number.isFinite(quality.inputGain) ? quality.inputGain : 1;
+    this.limiterEnabled = Boolean(quality.softLimiter);
+
+    // Audio EQ Cookbook 2nd-order Butterworth high-pass filter @ 80 Hz, Q = 1/sqrt(2)
+    const w0 = (2 * Math.PI * 80) / this.sampleRate;
+    const cosW0 = Math.cos(w0);
+    const sinW0 = Math.sin(w0);
+    const alpha = sinW0 / (2 * Math.SQRT1_2);
+    const a0 = 1 + alpha;
+    this.b0 = (1 + cosW0) / (2 * a0);
+    this.b1 = -(1 + cosW0) / a0;
+    this.b2 = (1 + cosW0) / (2 * a0);
+    this.a1 = (-2 * cosW0) / a0;
+    this.a2 = (1 - alpha) / a0;
+    this.z1 = new Float64Array(channels);
+    this.z2 = new Float64Array(channels);
+
+    if (enableSoftwareAgc) {
+      const initialGain = Math.max(
+        1.0,
+        Math.min(
+          SOFTWARE_AGC_INITIAL_GAIN,
+          SOFTWARE_AGC_INITIAL_GAIN / Math.max(1, this.inputGain),
+        ),
+      );
+      this.autoGainController = new SoftwareAutoGainController({ initialGain });
+      this.smoothedAgcGain = this.autoGainController.getGain();
+    } else {
+      this.autoGainController = null;
+      this.smoothedAgcGain = 1;
+    }
+    this.agcSmoothAlpha = 1 - Math.exp(-1 / (0.03 * this.sampleRate));
+
+    this.envAttackCoeff = Math.exp(
+      -1 / (VOCAL_LIMITER_ATTACK_SEC * this.sampleRate),
+    );
+    this.envReleaseCoeff = Math.exp(
+      -1 / (VOCAL_LIMITER_RELEASE_SEC * this.sampleRate),
+    );
+    this.limiterThresholdLinear = Math.pow(10, VOCAL_LIMITER_THRESHOLD_DB / 20);
+  }
+
+  getLastReductionDb(): number {
+    return this.lastReductionDb;
+  }
+
+  getMinReductionDb(): number {
+    return this.minReductionDb;
+  }
+
+  /**
+   * Processes planar `channelBuffers` in-place for `frameCount` frames.
+   * Returns `{ peak, reductionDb }` for the processed block.
+   */
+  processBlock(
+    channelBuffers: readonly Float32Array[],
+    frameCount: number,
+  ): { peak: number; reductionDb: number } {
+    if (frameCount <= 0 || channelBuffers.length === 0) {
+      return { peak: 0, reductionDb: 0 };
+    }
+
+    const chCount = Math.min(this.channels, channelBuffers.length);
+    const ch0 = channelBuffers[0];
+    const ch1 = chCount > 1 ? channelBuffers[1] : null;
+    const targetAgcGain = this.autoGainController
+      ? this.autoGainController.getGain()
+      : 1;
+    const invRatio = 1 / VOCAL_LIMITER_RATIO;
+    const thresh = this.limiterThresholdLinear;
+
+    let blockPeak = 0;
+    let blockMinReductionDb = 0;
+
+    for (let i = 0; i < frameCount; i += 1) {
+      // Smooth Software AGC gain per sample to eliminate zipper noise
+      if (this.autoGainController) {
+        this.smoothedAgcGain +=
+          (targetAgcGain - this.smoothedAgcGain) * this.agcSmoothAlpha;
+      }
+      const totalGain = this.inputGain * this.smoothedAgcGain;
+
+      // Channel 0
+      let s0 = ch0[i];
+      if (!Number.isFinite(s0)) s0 = 0;
+      if (this.hpfEnabled) {
+        const y0 = this.b0 * s0 + this.z1[0];
+        this.z1[0] = this.b1 * s0 - this.a1 * y0 + this.z2[0];
+        this.z2[0] = this.b2 * s0 - this.a2 * y0;
+        s0 = y0;
+      }
+      s0 *= totalGain;
+
+      // Optional Channel 1 (linked stereo envelope)
+      let s1 = 0;
+      if (ch1) {
+        s1 = ch1[i];
+        if (!Number.isFinite(s1)) s1 = 0;
+        if (this.hpfEnabled) {
+          const y1 = this.b0 * s1 + this.z1[1];
+          this.z1[1] = this.b1 * s1 - this.a1 * y1 + this.z2[1];
+          this.z2[1] = this.b2 * s1 - this.a2 * y1;
+          s1 = y1;
+        }
+        s1 *= totalGain;
+      }
+
+      if (this.limiterEnabled) {
+        const linkedAbs = ch1
+          ? Math.max(Math.abs(s0), Math.abs(s1))
+          : Math.abs(s0);
+        const coeff =
+          linkedAbs > this.env ? this.envAttackCoeff : this.envReleaseCoeff;
+        this.env = coeff * this.env + (1 - coeff) * linkedAbs;
+
+        let compGain = 1;
+        if (this.env > thresh) {
+          const overDb = 20 * Math.log10(this.env / thresh);
+          const reductionDb = -overDb * (1 - invRatio);
+          compGain = Math.pow(10, reductionDb / 20);
+          if (reductionDb < blockMinReductionDb) {
+            blockMinReductionDb = reductionDb;
+          }
+        }
+        s0 = softLimitSample(s0 * compGain);
+        if (ch1) {
+          s1 = softLimitSample(s1 * compGain);
+        }
+      }
+
+      ch0[i] = s0;
+      const a0 = Math.abs(s0);
+      if (a0 > blockPeak) blockPeak = a0;
+      if (ch1) {
+        ch1[i] = s1;
+        const a1 = Math.abs(s1);
+        if (a1 > blockPeak) blockPeak = a1;
+      }
+    }
+
+    this.lastReductionDb = blockMinReductionDb;
+    if (blockMinReductionDb < this.minReductionDb) {
+      this.minReductionDb = blockMinReductionDb;
+    }
+
+    if (this.autoGainController) {
+      const agcView = ch0.subarray(0, frameCount);
+      this.autoGainController.processSamples(
+        agcView,
+        frameCount / this.sampleRate,
+        blockMinReductionDb,
+      );
+    }
+
+    return { peak: blockPeak, reductionDb: blockMinReductionDb };
+  }
+}
+

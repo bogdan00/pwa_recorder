@@ -37,6 +37,7 @@ export interface PerfProfileSummary {
   taskMsPerSec?: number;
   recalcStylePerSec: number;
   layoutPerSec: number;
+  trackProcessorCreated?: number;
   workletLoaded: number;
   scriptProcessorCreated: number;
   playbackLatencyHintCalls?: number;
@@ -51,6 +52,7 @@ export interface PerfProfileSummary {
   canvasClientWidth: number;
   recordedDurationSec: number;
   zeroRuns: number;
+  stepClicks?: number;
   maxAbs: number;
   blackoutResult?: BlackoutPauseSummary | null;
 }

@@ -68,11 +68,13 @@ export function evaluateProfileResults(summary, budgets, meta = {}) {
     unexpectedExternalUrls.length === 0,
     `Unexpected external requests: ${unexpectedExternalUrls.join(', ')}`,
   );
+  const hasModernCapture =
+    (summary.trackProcessorCreated ?? 0) >= 1 || summary.workletLoaded === 1;
   check(
-    summary.workletLoaded === 1 &&
+    hasModernCapture &&
       summary.scriptProcessorCreated === 0 &&
       workletErrors.length === 0,
-    `Expected off-main-thread AudioWorklet (loaded=${summary.workletLoaded}, scriptProcessor=${summary.scriptProcessorCreated}, errors=${JSON.stringify(workletErrors)})`,
+    `Expected MediaStreamTrackProcessor or off-main-thread AudioWorklet (trackProcessor=${summary.trackProcessorCreated ?? 0}, worklet=${summary.workletLoaded}, scriptProcessor=${summary.scriptProcessorCreated}, errors=${JSON.stringify(workletErrors)})`,
   );
   check(
     (summary.playbackLatencyHintCalls ?? 0) === 0,
@@ -127,15 +129,15 @@ export function evaluateProfileResults(summary, budgets, meta = {}) {
   );
   check(
     summary.windowChunks >= budgets.minWindowChunks,
-    `Worklet chunks captured (${summary.windowChunks}) fell below >= ${budgets.minWindowChunks}`,
+    `Capture chunks received (${summary.windowChunks}) fell below >= ${budgets.minWindowChunks}`,
   );
   check(
     summary.meanChunkIntervalMs >= 18 && summary.meanChunkIntervalMs <= 35,
-    `Mean worklet chunk interval ${summary.meanChunkIntervalMs}ms outside healthy [18, 35]ms range`,
+    `Mean capture chunk interval ${summary.meanChunkIntervalMs}ms outside healthy [18, 35]ms range`,
   );
   check(
     summary.maxChunkIntervalMs <= budgets.maxChunkIntervalMs,
-    `Max worklet chunk gap ${summary.maxChunkIntervalMs}ms exceeded budget <= ${budgets.maxChunkIntervalMs}ms`,
+    `Max capture chunk gap ${summary.maxChunkIntervalMs}ms exceeded budget <= ${budgets.maxChunkIntervalMs}ms`,
   );
   check(
     summary.recordedDurationSec >= budgets.minRecordedSec,
@@ -144,6 +146,10 @@ export function evaluateProfileResults(summary, budgets, meta = {}) {
   check(
     summary.zeroRuns === 0,
     `Detected ${summary.zeroRuns} silent PCM dropout run(s) >= 32 samples (maxZeroRun=${maxZeroRun})`,
+  );
+  check(
+    (summary.stepClicks ?? 0) === 0,
+    `Detected ${summary.stepClicks ?? 0} phase/step-discontinuity click(s) in captured sine PCM`,
   );
   check(
     summary.maxAbs >= 0.05,
@@ -244,19 +250,19 @@ export function buildScorecardRows(fast, slow, canary) {
       ok: fast.loopingAudioPlayCalls === 0 && slow.loopingAudioPlayCalls === 0,
     },
     {
-      guard: 'Low-Latency Interactive AudioWorklet',
-      measured: `worklet=${fast.workletLoaded}, playbackHint=${(fast.playbackLatencyHintCalls ?? 0) + (slow.playbackLatencyHintCalls ?? 0)}`,
-      budget: 'worklet=1, playbackHint=0',
+      guard: 'Direct TrackProcessor / Interactive Capture',
+      measured: `tp=${fast.trackProcessorCreated ?? 0}, worklet=${fast.workletLoaded}, playbackHint=${(fast.playbackLatencyHintCalls ?? 0) + (slow.playbackLatencyHintCalls ?? 0)}`,
+      budget: 'tp>=1 or wk=1, pbHint=0',
       ok:
-        fast.workletLoaded === 1 &&
+        ((fast.trackProcessorCreated ?? 0) >= 1 || fast.workletLoaded === 1) &&
         fast.scriptProcessorCreated === 0 &&
-        slow.workletLoaded === 1 &&
+        ((slow.trackProcessorCreated ?? 0) >= 1 || slow.workletLoaded === 1) &&
         slow.scriptProcessorCreated === 0 &&
         (fast.playbackLatencyHintCalls ?? 0) === 0 &&
         (slow.playbackLatencyHintCalls ?? 0) === 0,
     },
     {
-      guard: 'AudioWorklet Chunk Cadence & Max Gap',
+      guard: 'Capture Chunk Cadence & Max Gap',
       measured: `mean ${fast.meanChunkIntervalMs}ms, max ${fast.maxChunkIntervalMs}/${slow.maxChunkIntervalMs}ms`,
       budget: `<= ${fastBudgets.maxChunkIntervalMs}/${slowBudgets.maxChunkIntervalMs}ms`,
       ok:
@@ -264,10 +270,14 @@ export function buildScorecardRows(fast, slow, canary) {
         slow.maxChunkIntervalMs <= slowBudgets.maxChunkIntervalMs,
     },
     {
-      guard: 'Glitch-Free Persisted PCM (Zero Dropouts)',
-      measured: `${fast.zeroRuns + slow.zeroRuns} silent gaps (${fast.recordedDurationSec}s)`,
-      budget: '0 zero-runs',
-      ok: fast.zeroRuns === 0 && slow.zeroRuns === 0,
+      guard: 'Glitch-Free Persisted PCM (0 Drops/Clicks)',
+      measured: `${fast.zeroRuns + slow.zeroRuns} drops, ${(fast.stepClicks ?? 0) + (slow.stepClicks ?? 0)} clicks (${fast.recordedDurationSec}s)`,
+      budget: '0 drops, 0 clicks',
+      ok:
+        fast.zeroRuns === 0 &&
+        slow.zeroRuns === 0 &&
+        (fast.stepClicks ?? 0) === 0 &&
+        (slow.stepClicks ?? 0) === 0,
     },
   ];
 

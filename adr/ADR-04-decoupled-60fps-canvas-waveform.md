@@ -18,9 +18,11 @@ Implement [`src/components/WaveformCanvas.tsx`](../src/components/WaveformCanvas
   3. `playheadMs` changes externally by `> 5ms` (`-5s`, `+5s`, `End`, `Undo trim`).
   Guard inside the `glide` callback itself against live engine/prop phase and duration changes so stale closures can never seek after a transition.
 
+- **Off-main-thread `1 Hz` live quality monitoring**: Run live 10-heuristic recording quality analysis inside a Dedicated Web Worker (`qualityMonitor.worker.ts`) fed `~500 ms` transferable batches (`<= 2` posts/sec), updating the studio quality pill at `<= 1 Hz` with `contain: layout style paint`, fixed height, and zero CSS keyframe animations so 60/120fps waveform rendering and `RecalcStyle`/`Layout` budgets stay untouched.
+
 ## System Invariants
 1. **Zero `getComputedStyle()` or `getBoundingClientRect()` inside `rAF`**.
-2. **Zero steady-state React re-renders, DOM layouts, or per-frame `RecalcStyle` during active recording**.
+2. **Zero steady-state React re-renders, DOM layouts, or per-frame `RecalcStyle` during active recording** (with live quality health updates strictly capped at `<= 1 Hz` from a Dedicated Web Worker and zero CSS animations).
 3. **Opaque, DPR-capped (`<= 2`) batched `rect()` + `fill()` Canvas2D rendering** with cached font state, no per-frame `roundRect` / round-cap arc tessellation or `createRadialGradient` allocation, and paused `rAF` while obscured by OLED Blackout Mode.
 4. **Monotonic, freeze-free & jump-free playhead motion**: Live recording playhead interpolation stays in a single clock domain and advances smoothly within `0.75×–1.25×` real time across bursty chunk arrival without hitting low hard-clamp walls or visibly jumping frames.
 5. **Scrub momentum never overrides user actions**: Any phase change, timeline duration change, or external seek immediately terminates inertia gliding (verified deterministically in [`src/components/__tests__/WaveformCanvas.test.tsx`](../src/components/__tests__/WaveformCanvas.test.tsx)).

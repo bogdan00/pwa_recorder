@@ -151,11 +151,11 @@ describe('RecordingEngine.trimToPlayhead', () => {
       expect(createdWaveShaper).not.toBeNull();
       expect(createdWaveShaper!.oversample).toBe('none');
       // Because mock mediaDevices omits autoGainControl support (like iOS Safari),
-      // RecordingEngine engages software AGC (+12 dB initial = 4.0x) ahead of the limiter:
-      // createdGains = [manualInputGain (1), softwareAgcGain (4), workletOutputGain (1)]
+      // RecordingEngine engages software AGC (+10 dB initial = 3.16x) ahead of the limiter:
+      // createdGains = [manualInputGain (1), softwareAgcGain (3.16), workletOutputGain (1)]
       expect(createdGains).toHaveLength(3);
       expect(createdGains[0].gain.value).toBe(1);
-      expect(createdGains[1].gain.value).toBe(4);
+      expect(createdGains[1].gain.value).toBeCloseTo(3.16, 2);
       // Last GainNode is the worklet keepalive output gain — must be 1 (not 0!) to defeat SilentSinkSuspender
       const workletOutputGain = createdGains[createdGains.length - 1];
       expect(workletOutputGain.gain.value).toBe(1);
@@ -169,13 +169,193 @@ describe('RecordingEngine.trimToPlayhead', () => {
           liveLevel: 0.6,
         },
       });
-      // Loud 0.6 chunk should pull software AGC down cleanly from initial 4.0x
-      expect(createdGains[1].gain.value).toBeLessThan(4);
+      // Loud 0.6 chunk should pull software AGC down cleanly from initial 3.16x
+      expect(createdGains[1].gain.value).toBeLessThan(3.16);
       await engine.pause();
       const internals = engine as unknown as { timeline: PcmTimeline };
       const [samples] = internals.timeline.extractChannelData();
       expect(samples[0]).toBeCloseTo(0.6, 5);
       expect(samples[samples.length - 1]).toBeCloseTo(0, 5);
+
+      await engine.dispose();
+    } finally {
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: originalMediaDevices,
+      });
+    }
+  });
+
+  it('uses MediaStreamTrackProcessor without creating/running an output AudioContext and accumulates take-wide lastRecordingPerf across pause/resume', async () => {
+    const { getLastRecordingPerfSnapshot } = await import('../recordingPerfTelemetry');
+    let audioCtxCreated = 0;
+
+    class MockAudioContext {
+      sampleRate = 48000;
+      state: AudioContextState = 'running';
+      currentTime = 0;
+      destination = { kind: 'destination' };
+      resume = vi.fn().mockImplementation(async () => {
+        this.state = 'running';
+      });
+      suspend = vi.fn().mockImplementation(async () => {
+        this.state = 'suspended';
+      });
+      close = vi.fn().mockImplementation(async () => {
+        this.state = 'closed';
+      });
+      constructor() {
+        audioCtxCreated += 1;
+      }
+      createBuffer = vi.fn(() => ({
+        numberOfChannels: 1,
+        length: 960,
+        sampleRate: 48000,
+        copyToChannel: vi.fn(),
+      }));
+      createBufferSource = vi.fn(() => ({
+        buffer: null as unknown,
+        onended: null as (() => void) | null,
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn(),
+      }));
+    }
+
+    const makeFrame = (tsUs: number) => ({
+      format: 'f32-planar',
+      sampleRate: 48000,
+      numberOfFrames: 480,
+      numberOfChannels: 1,
+      timestamp: tsUs,
+      duration: 10_000,
+      copyTo: (dest: BufferSource) => {
+        const out =
+          dest instanceof Float32Array
+            ? dest
+            : new Float32Array(
+                (dest as ArrayBufferView).buffer,
+                (dest as ArrayBufferView).byteOffset,
+                (dest as ArrayBufferView).byteLength / 4,
+              );
+        for (let i = 0; i < out.length; i += 1) {
+          out[i] = 0.25 * Math.sin((2 * Math.PI * 440 * i) / 48000);
+        }
+      },
+      close: vi.fn(),
+    });
+
+    let controllerRef: ReadableStreamDefaultController<ReturnType<typeof makeFrame>> | null = null;
+    class MockMSTP {
+      readable: ReadableStream<ReturnType<typeof makeFrame>>;
+      discardedFrames = 0;
+      constructor() {
+        this.readable = new ReadableStream({
+          start(c) {
+            controllerRef = c;
+          },
+        });
+      }
+    }
+
+    const fakeTrack = {
+      kind: 'audio',
+      label: 'Android Built-in Mic',
+      stop: vi.fn(),
+      getSettings: () => ({
+        deviceId: 'default',
+        sampleRate: 48000,
+        channelCount: 1,
+        autoGainControl: true,
+        echoCancellation: false,
+      }),
+    };
+    const getUserMedia = vi.fn().mockResolvedValue({
+      getTracks: () => [fakeTrack],
+      getAudioTracks: () => [fakeTrack],
+    });
+
+    const originalMediaDevices = navigator.mediaDevices;
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    vi.stubGlobal('MediaStreamTrackProcessor', MockMSTP);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia,
+        getSupportedConstraints: () => ({
+          autoGainControl: true,
+          echoCancellation: true,
+          sampleRate: true,
+          channelCount: true,
+        }),
+      },
+    });
+
+    try {
+      const engine = new RecordingEngine('book-tp-perf');
+      await engine.startOrResumeFromEnd(
+        { deviceId: 'default', deviceLabel: 'System Default Microphone' },
+        DEFAULT_AUDIO_QUALITY,
+        false,
+      );
+
+      // Zero duplex output AudioContext created during pure TrackProcessor recording!
+      expect(audioCtxCreated).toBe(0);
+      expect(engine.getCaptureBackendDiagnostics()).toMatchObject({
+        trackProcessorActive: true,
+        workletActive: false,
+        scriptProcessorActive: false,
+        outputCtxRunning: false,
+      });
+
+      // Push 2 frames (20ms = 1 chunk)
+      controllerRef!.enqueue(makeFrame(0));
+      controllerRef!.enqueue(makeFrame(10_000));
+      await vi.waitFor(() => {
+        expect(engine.getSnapshot().durationMs).toBeGreaterThanOrEqual(20);
+      });
+
+      await engine.pause();
+      const perf1 = getLastRecordingPerfSnapshot();
+      expect(perf1?.captureMode).toBe('trackProcessor');
+      expect(perf1?.takeSegments).toBe(1);
+      expect(perf1?.chunkCount).toBe(1);
+
+      // Start preview playback (creates & runs output AudioContext), then resume recording -> must suspend AudioContext!
+      await engine.playPreviewFromPlayhead();
+      expect(audioCtxCreated).toBe(1);
+      expect(engine.getCaptureBackendDiagnostics().outputCtxRunning).toBe(true);
+
+      await engine.startOrResumeFromEnd(
+        { deviceId: 'default', deviceLabel: 'System Default Microphone' },
+        DEFAULT_AUDIO_QUALITY,
+        false,
+      );
+      expect(engine.getCaptureBackendDiagnostics()).toMatchObject({
+        trackProcessorActive: true,
+        workletActive: false,
+        scriptProcessorActive: false,
+        outputCtxRunning: false,
+      });
+
+      // Push 2 more frames in segment 2
+      controllerRef!.enqueue(makeFrame(0));
+      controllerRef!.enqueue(makeFrame(10_000));
+      await vi.waitFor(() => {
+        expect(engine.getSnapshot().durationMs).toBeGreaterThanOrEqual(40);
+      });
+
+      await engine.pause();
+      const perf2 = getLastRecordingPerfSnapshot();
+      expect(perf2?.captureMode).toBe('trackProcessor');
+      expect(perf2?.takeSegments).toBe(2);
+      expect(perf2?.chunkCount).toBe(2);
+      expect(perf2?.deviceLabel).toBe('Android Built-in Mic');
+      expect(perf2?.nativeAgcActive).toBe(true);
+      expect(perf2?.trackSettings).toEqual(
+        expect.objectContaining({ sampleRate: 48000, channelCount: 1, autoGainControl: true }),
+      );
 
       await engine.dispose();
     } finally {

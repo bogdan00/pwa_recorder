@@ -12,10 +12,10 @@ A parent tailors recording quality (from compact uploads up to 510 kbps compress
 
 ## User Steps & Acceptance Criteria
 
-1. **Multi-Microphone Selection & Live Mic Test**
+1. **Multi-Microphone Selection, iOS Software AGC Parity & Live Mic Test**
    - Open **Studio Settings** (**Recording** tab by default; also opened directly from the Recording Studio audio spec chip) → **Recording Device**.
    - Verify available microphones appear (with **Detect Microphones** unlock button if labels are hidden), select a non-default microphone, and tap **Test Mic** → **Stop Test**.
-   - **Expected:** Selected microphone persists across reload, displays in the Recording Studio audio spec pill, live mic test displays a responsive logarithmic dBFS meter (`-60 dB` to `0 dB`) with channel/sample-rate telemetry (and indicates `Auto +XdB` when StoryTape's studio auto-gain fallback activates on browsers without native `autoGainControl`, such as iOS Safari), and stops cleanly without leaving mic streams open (including if the user switches settings tabs).
+   - **Expected:** Selected microphone persists across reload, displays in the Recording Studio audio spec pill, live mic test displays a responsive logarithmic dBFS meter (`-60 dB` to `0 dB`) with channel/sample-rate telemetry (and indicates `Auto +XdB` when StoryTape's studio auto-gain fallback activates on browsers without native `autoGainControl`, such as iOS Safari), mono capture extracts channel 0 at `1.0×` unity gain (`discrete` channel interpretation — never halving `(L, 0)` streams to `-6 dB` / `0.4383`), Software AGC backs off cleanly whenever compressor gain reduction engages so vocals stay natural and unclipped, Debug JSON `lastRecordingPerf` surfaces redacted mic `trackSettings` and DSP headroom telemetry, and mic test stops cleanly without leaving mic streams open (including if the user switches settings tabs).
 
 2. **Quality Presets, Collapsible Advanced Audio & Automatic Custom Detection**
    - Tap presets (`Voice Compact`, `Studio Raw (320k)`, `Master Archival WAV`) directly on the **Recording** tab and verify the live summary banner (`MB/min`) and collapsed **Advanced Audio & Input Gain** summary update.

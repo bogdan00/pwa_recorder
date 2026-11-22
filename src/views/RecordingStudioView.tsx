@@ -26,10 +26,12 @@ import {
   RecordingEngine,
   type StudioSnapshot,
 } from '../audio/recordingEngine';
+import type { RecordingQualityReport } from '../audio/recordingQualityAnalyzer';
 import { formatDurationMs } from '../utils/format';
 import { routesEqual } from '../navigation/appHistory';
 import { useOptionalAppNavigation } from '../navigation/AppNavigationContext';
 import { useConfirm } from '../components/ConfirmDialogContext';
+import { RecordingQualitySheet } from '../components/RecordingQualitySheet';
 import { SaveRecordingSheet } from '../components/SaveRecordingSheet';
 import { WaveformCanvas } from '../components/WaveformCanvas';
 import './RecordingStudioView.css';
@@ -102,7 +104,14 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   const [blackoutWakeArmed, setBlackoutWakeArmed] = useState(false);
   const blackoutWakeTimerRef = useRef<number | null>(null);
 
-  // Modals
+  // Modals & non-blocking live quality monitor sheet
+  const [qualityReport, setQualityReport] =
+    useState<RecordingQualityReport | null>(null);
+  const [qualitySheetOpen, setQualitySheetOpen] = useState(false);
+  const qualityReportRef = useRef<RecordingQualityReport | null>(null);
+  const qualitySheetOpenRef = useRef(false);
+  qualitySheetOpenRef.current = qualitySheetOpen;
+
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveKeepMaster, setSaveKeepMaster] = useState(settings.keepLocalMaster);
   const [isSaving, setIsSaving] = useState(false);
@@ -173,7 +182,23 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
         }
       }
     });
+    const unsubQuality = engine.subscribeQuality((next) => {
+      const prev = qualityReportRef.current;
+      qualityReportRef.current = next;
+      // Zero steady-state React re-renders while sheet is closed and pill text/status is unchanged
+      if (
+        qualitySheetOpenRef.current ||
+        next === null ||
+        prev === null ||
+        next.status !== prev.status ||
+        next.shortLabel !== prev.shortLabel ||
+        next.glitchEvents.length !== prev.glitchEvents.length
+      ) {
+        setQualityReport(next);
+      }
+    });
     return () => {
+      unsubQuality();
       unsubTime();
       unsub();
       void engine.dispose();
@@ -192,6 +217,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     hasUnsaved,
     isSaving,
     blackoutActive,
+    qualitySheetOpen,
     confirmExitOpen,
     saveOpen,
   });
@@ -199,6 +225,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     hasUnsaved,
     isSaving,
     blackoutActive,
+    qualitySheetOpen,
     confirmExitOpen,
     saveOpen,
   };
@@ -236,6 +263,10 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
       onBlocked: () => {
         const st = guardStateRef.current;
         if (st.isSaving) return;
+        if (st.qualitySheetOpen) {
+          setQualitySheetOpen(false);
+          return;
+        }
         if (st.confirmExitOpen) {
           setConfirmExitOpen(false);
           return;
@@ -563,22 +594,58 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
           </div>
         )}
 
-        {/* Paused review controls + contextual Punch-In ("Re-record from here") or live Blackout button */}
+        {/* Paused review controls + contextual Punch-In ("Re-record from here") or live Blackout + Quality Pill */}
         <section className="studio-review-zone" aria-label="Playback review controls">
           {snap.phase === 'recording' && (
-            <button
-              type="button"
-              className="studio-blackout-btn"
-              data-testid="blackout-mode-btn"
-              onClick={() => setBlackoutActive(true)}
-            >
-              <Moon size={14} />
-              Blackout screen
-            </button>
+            <div className="studio-live-actions">
+              <button
+                type="button"
+                className={`studio-quality-pill studio-quality-pill--${qualityReport?.status ?? 'listening'}`}
+                data-testid="studio-quality-pill"
+                data-quality-status={qualityReport?.status ?? 'listening'}
+                onClick={() => {
+                  setQualityReport(qualityReportRef.current);
+                  setQualitySheetOpen(true);
+                }}
+                aria-label={`Audio health: ${qualityReport?.shortLabel ?? 'Checking audio'}. Tap for details.`}
+              >
+                <span className="studio-quality-pill__dot" aria-hidden="true" />
+                <span className="studio-quality-pill__text">
+                  {qualityReport?.shortLabel ?? 'Checking audio…'}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="studio-blackout-btn"
+                data-testid="blackout-mode-btn"
+                onClick={() => setBlackoutActive(true)}
+              >
+                <Moon size={14} />
+                Blackout screen
+              </button>
+            </div>
           )}
           {(snap.phase === 'paused' || snap.phase === 'playing') &&
             snap.durationMs > 0 && (
               <>
+                {qualityReport && (
+                  <button
+                    type="button"
+                    className={`studio-quality-pill studio-quality-pill--compact studio-quality-pill--${qualityReport.status}`}
+                    data-testid="studio-quality-pill"
+                    data-quality-status={qualityReport.status}
+                    onClick={() => {
+                      setQualityReport(qualityReportRef.current);
+                      setQualitySheetOpen(true);
+                    }}
+                    aria-label={`Take audio health: ${qualityReport.shortLabel}. Tap for details.`}
+                  >
+                    <span className="studio-quality-pill__dot" aria-hidden="true" />
+                    <span className="studio-quality-pill__text">
+                      {qualityReport.shortLabel}
+                    </span>
+                  </button>
+                )}
                 <div className="studio-review-bar">
                   <button
                     type="button"
@@ -834,6 +901,14 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
           </div>
         </div>
       )}
+      {/* Non-blocking live recording quality monitor sheet */}
+      <RecordingQualitySheet
+        open={qualitySheetOpen}
+        report={qualityReport}
+        isRecording={snap.phase === 'recording'}
+        onClose={() => setQualitySheetOpen(false)}
+      />
+
       {/* Pure-black OLED pocket/bedtime blackout shield (double-tap to wake) */}
       {blackoutActive && snap.phase === 'recording' && (
         <button
@@ -860,6 +935,14 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
               })(),
             )}
           </span>
+          {qualityReport?.status === 'critical' && (
+            <span
+              className="studio-blackout-overlay__alert"
+              data-testid="blackout-quality-alert"
+            >
+              {qualityReport.shortLabel} — tap twice to inspect
+            </span>
+          )}
           <span
             className={`studio-blackout-overlay__hint ${blackoutWakeArmed ? 'studio-blackout-overlay__hint--armed' : ''}`}
           >

@@ -47,18 +47,38 @@ test.describe('CUJ-02: Core Audio Recording — Start, Live Waveform, Pause, Saf
       )
       .toBeGreaterThanOrEqual(15);
 
-    // 3. Pause -> then Resume (tests 2nd AudioWorklet attach on same AudioContext!)
+    // 2b. Verify live Recording Quality Health pill & non-blocking diagnostic sheet while recording
+    const qualityPill = page.getByTestId('studio-quality-pill');
+    await expect(qualityPill).toBeVisible();
+    await qualityPill.click();
+    const qualitySheet = page.getByTestId('recording-quality-sheet');
+    await expect(qualitySheet).toBeVisible();
+    await expect(page.getByTestId('quality-checks-list').locator('.quality-sheet__check')).toHaveCount(10);
+    // Recording MUST continue uninterrupted while inspecting the quality sheet
+    await expect(page.locator('.studio-status-pill')).toHaveText('REC');
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= firstSegmentSec + 0.4,
+      'recording timer should keep advancing while RecordingQualitySheet is open',
+    );
+    await page.getByRole('button', { name: 'Close audio health monitor' }).click();
+    await expect(qualitySheet).toBeHidden();
+
+    // 3. Pause -> then Resume (tests 2nd capture attach cleanly!)
     await page.locator('#big-record-pause-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
+    // Paused summary pill remains inspectable
+    await expect(qualityPill).toBeVisible();
 
     await page.locator('#big-record-pause-btn').click();
     await expect(page.locator('.studio-status-pill')).toHaveText('REC');
 
-    await waitForStudioTimer(
+    const pausedEndSec = await waitForStudioTimer(
       page,
-      (sec) => sec >= firstSegmentSec + 0.6,
-      'resumed recording segment should advance at least 0.6s beyond first segment',
+      (sec) => sec >= firstSegmentSec + 0.9,
+      'resumed recording segment should advance cleanly beyond pre-pause duration',
     );
+    expect(pausedEndSec).toBeGreaterThan(firstSegmentSec);
 
     // 4. Full Stop -> Recording Name prompt -> verify "Back to Recording" safety escape
     await page.locator('#small-stop-btn').click();

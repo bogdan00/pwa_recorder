@@ -38,8 +38,16 @@ export interface StudioFormalState {
   readonly duration: number;
   /** Current playhead position in discrete time units. */
   readonly playhead: number;
-  /** Whether the microphone capture worklet/stream is currently live. */
+  /** Whether the microphone capture stream is currently live. */
   readonly micActive: boolean;
+  /** Browser capability: true on Chromium/Android (MediaStreamTrackProcessor), false on Safari/Firefox (AudioWorklet). */
+  readonly useTrackProcessor: boolean;
+  /** Whether direct MediaStreamTrackProcessor capture is currently live. */
+  readonly trackProcessorActive: boolean;
+  /** Whether Web Audio AudioWorkletNode capture is currently live. */
+  readonly workletActive: boolean;
+  /** Whether the Web Audio output AudioContext is currently in 'running' state. */
+  readonly outputCtxRunning: boolean;
   /** Whether Web Audio preview playback is currently active. */
   readonly previewActive: boolean;
   /** Whether 1-step trim/punch-in undo snapshot is available. */
@@ -85,16 +93,24 @@ export const STUDIO_ACTIONS: readonly StudioAction[] = [
   'discard',
 ];
 
-export const STUDIO_INITIAL_STATE: StudioFormalState = {
-  phase: 'idle',
-  duration: 0,
-  playhead: 0,
-  micActive: false,
-  previewActive: false,
-  canUndoTrim: false,
-  undoDuration: 0,
-  hasDraft: false,
-};
+export function makeStudioInitialState(useTrackProcessor = false): StudioFormalState {
+  return {
+    phase: 'idle',
+    duration: 0,
+    playhead: 0,
+    micActive: false,
+    useTrackProcessor,
+    trackProcessorActive: false,
+    workletActive: false,
+    outputCtxRunning: false,
+    previewActive: false,
+    canUndoTrim: false,
+    undoDuration: 0,
+    hasDraft: false,
+  };
+}
+
+export const STUDIO_INITIAL_STATE: StudioFormalState = makeStudioInitialState(false);
 
 // ============================================================================
 // Shared Declarative IR for State Variables, Invariants & Transitions
@@ -105,6 +121,10 @@ export interface StudioIrStateVars {
   readonly duration: IntExpr;
   readonly playhead: IntExpr;
   readonly micActive: BoolExpr;
+  readonly useTrackProcessor: BoolExpr;
+  readonly trackProcessorActive: BoolExpr;
+  readonly workletActive: BoolExpr;
+  readonly outputCtxRunning: BoolExpr;
   readonly previewActive: BoolExpr;
   readonly canUndoTrim: BoolExpr;
   readonly undoDuration: IntExpr;
@@ -118,6 +138,10 @@ export function studioIrVars(prefix = ''): StudioIrStateVars {
     duration: E.intVar(p('duration')),
     playhead: E.intVar(p('playhead')),
     micActive: E.boolVar(p('micActive')),
+    useTrackProcessor: E.boolVar(p('useTrackProcessor')),
+    trackProcessorActive: E.boolVar(p('trackProcessorActive')),
+    workletActive: E.boolVar(p('workletActive')),
+    outputCtxRunning: E.boolVar(p('outputCtxRunning')),
     previewActive: E.boolVar(p('previewActive')),
     canUndoTrim: E.boolVar(p('canUndoTrim')),
     undoDuration: E.intVar(p('undoDuration')),
@@ -139,6 +163,10 @@ export function studioStateToEnv(
     },
     bools: {
       micActive: s.micActive,
+      useTrackProcessor: s.useTrackProcessor,
+      trackProcessorActive: s.trackProcessorActive,
+      workletActive: s.workletActive,
+      outputCtxRunning: s.outputCtxRunning,
       previewActive: s.previewActive,
       canUndoTrim: s.canUndoTrim,
       hasDraft: s.hasDraft,
@@ -158,7 +186,7 @@ const PAUSED = E.int(STUDIO_PHASE_CODE.paused);
 const PLAYING = E.int(STUDIO_PHASE_CODE.playing);
 
 /**
- * The 11 Safety Invariants (□ Inv) defined ONCE as Expression IR ASTs.
+ * The 17 Safety Invariants (□ Inv) defined ONCE as Expression IR ASTs.
  * Evaluated by Tier 1 BFS & Conformance, AND compiled verbatim into Z3 by Tier 2!
  */
 export const STUDIO_INVARIANT_IR: readonly StudioInvariantIr[] = [
@@ -177,6 +205,32 @@ export const STUDIO_INVARIANT_IR: readonly StudioInvariantIr[] = [
   {
     name: 'mic_active_iff_recording',
     expr: E.boolEq(S.micActive, E.eq(S.phase, REC)),
+  },
+  {
+    name: 'capture_backends_mutually_exclusive',
+    expr: E.not(E.and(S.trackProcessorActive, S.workletActive)),
+  },
+  {
+    name: 'mic_active_iff_one_capture_backend',
+    expr: E.boolEq(S.micActive, E.or(S.trackProcessorActive, S.workletActive)),
+  },
+  {
+    name: 'capture_backend_matches_capability',
+    expr: E.implies(
+      S.micActive,
+      E.and(
+        E.boolEq(S.trackProcessorActive, S.useTrackProcessor),
+        E.boolEq(S.workletActive, E.not(S.useTrackProcessor)),
+      ),
+    ),
+  },
+  {
+    name: 'zero_duplex_output_during_track_processor',
+    expr: E.implies(S.trackProcessorActive, E.not(S.outputCtxRunning)),
+  },
+  {
+    name: 'preview_requires_output_ctx_running',
+    expr: E.implies(S.previewActive, S.outputCtxRunning),
   },
   {
     name: 'preview_active_iff_playing',
@@ -232,6 +286,10 @@ export interface StudioTransitionIr {
     readonly duration?: IntExpr;
     readonly playhead?: IntExpr;
     readonly micActive?: BoolExpr;
+    readonly useTrackProcessor?: BoolExpr;
+    readonly trackProcessorActive?: BoolExpr;
+    readonly workletActive?: BoolExpr;
+    readonly outputCtxRunning?: BoolExpr;
     readonly previewActive?: BoolExpr;
     readonly canUndoTrim?: BoolExpr;
     readonly undoDuration?: IntExpr;
@@ -260,6 +318,10 @@ export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>>
       phase: REC,
       playhead: S.duration,
       micActive: E.bool(true),
+      trackProcessorActive: S.useTrackProcessor,
+      workletActive: E.not(S.useTrackProcessor),
+      // Direct TrackProcessor suspends any previously opened preview AudioContext!
+      outputCtxRunning: E.not(S.useTrackProcessor),
       previewActive: E.bool(false),
       canUndoTrim: E.bool(false),
       undoDuration: E.int(0),
@@ -281,6 +343,8 @@ export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>>
     next: {
       phase: PAUSED,
       micActive: E.bool(false),
+      trackProcessorActive: E.bool(false),
+      workletActive: E.bool(false),
       playhead: S.duration,
     },
   },
@@ -305,6 +369,9 @@ export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>>
       phase: PLAYING,
       playhead: previewStartPlayhead(S.playhead, S.duration),
       micActive: E.bool(false),
+      trackProcessorActive: E.bool(false),
+      workletActive: E.bool(false),
+      outputCtxRunning: E.bool(true),
       previewActive: E.bool(true),
     },
   },
@@ -341,6 +408,9 @@ export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>>
       duration: E.iteInt(S.hasDraft, S.playhead, E.int(0)),
       playhead: E.iteInt(S.hasDraft, S.playhead, E.int(0)),
       micActive: E.bool(true),
+      trackProcessorActive: S.useTrackProcessor,
+      workletActive: E.not(S.useTrackProcessor),
+      outputCtxRunning: E.not(S.useTrackProcessor),
       previewActive: E.bool(false),
       canUndoTrim: S.hasDraft,
       undoDuration: E.iteInt(S.hasDraft, S.duration, E.int(0)),
@@ -359,6 +429,8 @@ export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>>
       duration: E.iteInt(E.eq(S.phase, REC), S.duration, S.playhead),
       playhead: E.iteInt(E.eq(S.phase, REC), S.duration, S.playhead),
       micActive: E.bool(false),
+      trackProcessorActive: E.bool(false),
+      workletActive: E.bool(false),
       previewActive: E.bool(false),
       canUndoTrim: E.bool(true),
       undoDuration: S.duration,
@@ -372,6 +444,8 @@ export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>>
       duration: S.undoDuration,
       playhead: S.undoDuration,
       micActive: E.bool(false),
+      trackProcessorActive: E.bool(false),
+      workletActive: E.bool(false),
       previewActive: E.bool(false),
       canUndoTrim: E.bool(false),
       undoDuration: E.int(0),
@@ -385,6 +459,8 @@ export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>>
       duration: E.int(0),
       playhead: E.int(0),
       micActive: E.bool(false),
+      trackProcessorActive: E.bool(false),
+      workletActive: E.bool(false),
       previewActive: E.bool(false),
       canUndoTrim: E.bool(false),
       undoDuration: E.int(0),
@@ -399,6 +475,8 @@ export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>>
       duration: E.int(0),
       playhead: E.int(0),
       micActive: E.bool(false),
+      trackProcessorActive: E.bool(false),
+      workletActive: E.bool(false),
       previewActive: E.bool(false),
       canUndoTrim: E.bool(false),
       undoDuration: E.int(0),
@@ -420,6 +498,18 @@ function evalTransitionIr(
     duration: ir.next.duration ? evalInt(ir.next.duration, env) : s.duration,
     playhead: ir.next.playhead ? evalInt(ir.next.playhead, env) : s.playhead,
     micActive: ir.next.micActive ? evalBool(ir.next.micActive, env) : s.micActive,
+    useTrackProcessor: ir.next.useTrackProcessor
+      ? evalBool(ir.next.useTrackProcessor, env)
+      : s.useTrackProcessor,
+    trackProcessorActive: ir.next.trackProcessorActive
+      ? evalBool(ir.next.trackProcessorActive, env)
+      : s.trackProcessorActive,
+    workletActive: ir.next.workletActive
+      ? evalBool(ir.next.workletActive, env)
+      : s.workletActive,
+    outputCtxRunning: ir.next.outputCtxRunning
+      ? evalBool(ir.next.outputCtxRunning, env)
+      : s.outputCtxRunning,
     previewActive: ir.next.previewActive ? evalBool(ir.next.previewActive, env) : s.previewActive,
     canUndoTrim: ir.next.canUndoTrim ? evalBool(ir.next.canUndoTrim, env) : s.canUndoTrim,
     undoDuration: ir.next.undoDuration ? evalInt(ir.next.undoDuration, env) : s.undoDuration,
@@ -510,6 +600,10 @@ export function serializeStudioState(s: StudioFormalState): string {
     s.duration,
     s.playhead,
     s.micActive ? 1 : 0,
+    s.useTrackProcessor ? 1 : 0,
+    s.trackProcessorActive ? 1 : 0,
+    s.workletActive ? 1 : 0,
+    s.outputCtxRunning ? 1 : 0,
     s.previewActive ? 1 : 0,
     s.canUndoTrim ? 1 : 0,
     s.undoDuration,
@@ -519,15 +613,20 @@ export function serializeStudioState(s: StudioFormalState): string {
 
 export function createStudioLts(
   maxDuration = 3,
+  useTrackProcessor?: boolean,
 ): LabeledTransitionSystem<StudioFormalState, StudioAction> {
+  const initialStates =
+    typeof useTrackProcessor === 'boolean'
+      ? [makeStudioInitialState(useTrackProcessor)]
+      : [makeStudioInitialState(false), makeStudioInitialState(true)];
   return {
     name: 'RecordingStudio',
-    initialStates: [STUDIO_INITIAL_STATE],
+    initialStates,
     actions: STUDIO_ACTIONS,
     step: (state, action) => stepStudioState(state, action, maxDuration),
     serialize: serializeStudioState,
     invariants: STUDIO_INVARIANTS,
     reachabilityGoals: STUDIO_REACHABILITY_GOALS,
-    maxStates: 10_000,
+    maxStates: 20_000,
   };
 }

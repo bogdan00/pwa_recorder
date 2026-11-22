@@ -10,6 +10,13 @@ import {
   type PcmCaptureHandle,
   teardownPcmCapture,
 } from './pcmCapture';
+import type { CapturedTrackSettingsSummary } from './recordingPerfTelemetry';
+import {
+  attachTrackProcessorCapture,
+  supportsAudioTrackProcessor,
+  teardownTrackProcessorCapture,
+  type TrackProcessorCaptureHandle,
+} from './trackProcessorCapture';
 import { encodeWav } from './wavEncoder';
 
 export interface AudioInputDeviceInfo {
@@ -33,6 +40,7 @@ export interface AcquiredMicResult {
   actualSampleRate?: number;
   actualChannels?: number;
   nativeAgcActive: boolean;
+  trackSettings?: CapturedTrackSettingsSummary;
 }
 
 export async function listAudioInputDevices(): Promise<DeviceListResult> {
@@ -207,14 +215,16 @@ export async function acquireMicStream(
   }
 
   const track = stream.getAudioTracks()[0];
-  const trackSettings = track?.getSettings?.() ?? {};
+  const rawTrackSettings = (track?.getSettings?.() ?? {}) as MediaTrackSettings & {
+    voiceIsolation?: boolean;
+  };
   const supportedConstraints =
     typeof navigator.mediaDevices.getSupportedConstraints === 'function'
       ? navigator.mediaDevices.getSupportedConstraints()
       : undefined;
   const nativeAgcActive = detectNativeAgcActive(
     quality,
-    trackSettings,
+    rawTrackSettings,
     supportedConstraints,
   );
   const actualDeviceLabel =
@@ -223,15 +233,36 @@ export async function acquireMicStream(
       ? 'System Default Microphone'
       : deviceSettings.deviceLabel || 'Microphone');
 
+  const trackSettings: CapturedTrackSettingsSummary = {};
+  if (typeof rawTrackSettings.sampleRate === 'number') {
+    trackSettings.sampleRate = rawTrackSettings.sampleRate;
+  }
+  if (typeof rawTrackSettings.channelCount === 'number') {
+    trackSettings.channelCount = rawTrackSettings.channelCount;
+  }
+  if (typeof rawTrackSettings.echoCancellation === 'boolean') {
+    trackSettings.echoCancellation = rawTrackSettings.echoCancellation;
+  }
+  if (typeof rawTrackSettings.noiseSuppression === 'boolean') {
+    trackSettings.noiseSuppression = rawTrackSettings.noiseSuppression;
+  }
+  if (typeof rawTrackSettings.autoGainControl === 'boolean') {
+    trackSettings.autoGainControl = rawTrackSettings.autoGainControl;
+  }
+  if (typeof rawTrackSettings.voiceIsolation === 'boolean') {
+    trackSettings.voiceIsolation = rawTrackSettings.voiceIsolation;
+  }
+
   return {
     stream,
     usedFallback,
     fallbackReason,
-    actualDeviceId: trackSettings.deviceId || 'default',
+    actualDeviceId: rawTrackSettings.deviceId || 'default',
     actualDeviceLabel,
-    actualSampleRate: trackSettings.sampleRate,
-    actualChannels: trackSettings.channelCount,
+    actualSampleRate: rawTrackSettings.sampleRate,
+    actualChannels: rawTrackSettings.channelCount,
     nativeAgcActive,
+    trackSettings,
   };
 }
 
@@ -261,6 +292,7 @@ export class MicLevelTester {
   private audioCtx: AudioContext | null = null;
   private inputStripNodes: AudioNode[] = [];
   private captureHandle: PcmCaptureHandle | null = null;
+  private trackProcessorHandle: TrackProcessorCaptureHandle | null = null;
   private rafId: number | null = null;
   private stopped = false;
 
@@ -281,26 +313,30 @@ export class MicLevelTester {
     this.captureChunks = [];
     this.capturedFrames = 0;
 
-    const AudioCtxCtor =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext })
-        .webkitAudioContext;
+    const targetChannels: ChannelCountOption = quality.channels === 2 ? 2 : 1;
+    const preferTrackProcessor = supportsAudioTrackProcessor();
 
-    // Create native-rate AudioContext with low-latency interactive path inside click gesture
-    // (never 'playback', which disables Android AAudio low-latency mode and causes mic FIFO bursts)
-    try {
-      this.audioCtx = new AudioCtxCtor({ latencyHint: 'interactive' });
-    } catch {
-      this.audioCtx = new AudioCtxCtor();
-    }
-    if (this.audioCtx.state === 'suspended') {
-      void this.audioCtx.resume().catch(() => {});
+    // Only open AudioContext inside the tap gesture when falling back to Web Audio
+    // (on Chrome/Android MediaStreamTrackProcessor keeps the OS audio output closed)
+    if (!preferTrackProcessor) {
+      const AudioCtxCtor =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      try {
+        this.audioCtx = new AudioCtxCtor({ latencyHint: 'interactive' });
+      } catch {
+        this.audioCtx = new AudioCtxCtor();
+      }
+      if (this.audioCtx.state === 'suspended') {
+        void this.audioCtx.resume().catch(() => {});
+      }
     }
 
     const acquired = await acquireMicStream(
       deviceSettings,
       quality,
-      this.audioCtx.sampleRate,
+      this.audioCtx?.sampleRate ?? quality.sampleRate,
     );
     if (this.stopped) {
       acquired.stream.getTracks().forEach((t) => t.stop());
@@ -309,21 +345,94 @@ export class MicLevelTester {
     }
 
     this.stream = acquired.stream;
-    if (this.audioCtx.state === 'suspended') {
-      await this.audioCtx.resume().catch(() => {});
-    }
-
-    const ctx = this.audioCtx;
-    const targetChannels: ChannelCountOption = quality.channels === 2 ? 2 : 1;
-    this.captureSampleRate = ctx.sampleRate;
     this.captureChannels = targetChannels;
     this.captureDeviceLabel = acquired.actualDeviceLabel;
 
     const enableSoftwareAgc =
       quality.autoGainControl && !acquired.nativeAgcActive;
+    const audioTrack = this.stream.getAudioTracks()[0];
+
+    if (preferTrackProcessor && audioTrack) {
+      let lastEmitMs = -Infinity;
+      let rollingPeak = 0;
+      const actualChannels = acquired.actualChannels || targetChannels;
+      this.captureSampleRate = acquired.actualSampleRate || quality.sampleRate || 48000;
+
+      const tpHandle = attachTrackProcessorCapture(audioTrack, {
+        channels: targetChannels,
+        quality,
+        enableSoftwareAgc,
+        initialSampleRate: this.captureSampleRate,
+        isActive: () => !this.stopped,
+        isAborted: () => this.stopped,
+        onSampleRateDetected: (rate) => {
+          if (this.capturedFrames === 0 && rate >= 8000) {
+            this.captureSampleRate = rate;
+          }
+        },
+        onChunk: ({ pcm, liveLevel }) => {
+          if (this.stopped) return;
+          this.pushInterleavedChunk(pcm);
+          if (liveLevel > rollingPeak) rollingPeak = liveLevel;
+
+          const nowMs =
+            typeof performance !== 'undefined' ? performance.now() : Date.now();
+          if (nowMs - lastEmitMs >= 60) {
+            lastEmitMs = nowMs;
+            const peak = rollingPeak;
+            rollingPeak = 0;
+            const db = peak > 1e-4 ? Math.max(-60, 20 * Math.log10(peak)) : -60;
+            const capturedDurationMs = Math.round(
+              (this.capturedFrames / Math.max(1, this.captureSampleRate)) * 1000,
+            );
+            const stats = this.trackProcessorHandle?.getStats();
+            onTelemetry({
+              level: Math.min(1, peak),
+              db,
+              clipping: peak >= 0.88,
+              actualDeviceLabel: acquired.actualDeviceLabel,
+              actualSampleRate: this.captureSampleRate,
+              actualChannels,
+              capturedDurationMs,
+              softwareAgcActive: enableSoftwareAgc,
+              autoGainDb: stats?.autoGainDb ?? undefined,
+            });
+          }
+        },
+      });
+
+      if (tpHandle) {
+        this.trackProcessorHandle = tpHandle;
+        return {
+          usedFallback: acquired.usedFallback,
+          fallbackReason: acquired.fallbackReason,
+        };
+      }
+    }
+
+    // Web Audio fallback (Safari / iOS / Firefox or if MediaStreamTrackProcessor rejects audio)
+    if (!this.audioCtx) {
+      const AudioCtxCtor =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      try {
+        this.audioCtx = new AudioCtxCtor({ latencyHint: 'interactive' });
+      } catch {
+        this.audioCtx = new AudioCtxCtor();
+      }
+    }
+    if (this.audioCtx.state === 'suspended') {
+      await this.audioCtx.resume().catch(() => {});
+    }
+
+    const ctx = this.audioCtx;
+    this.captureSampleRate = ctx.sampleRate;
+
     const source = ctx.createMediaStreamSource(this.stream);
     const strip = buildStudioInputStrip(ctx, source, quality, {
       enableSoftwareAgc,
+      channels: targetChannels,
     });
     this.inputStripNodes = strip.nodes;
     const tail = strip.tail;
@@ -480,6 +589,10 @@ export class MicLevelTester {
     }
     this.inputStripNodes = [];
 
+    if (this.trackProcessorHandle) {
+      teardownTrackProcessorCapture(this.trackProcessorHandle);
+      this.trackProcessorHandle = null;
+    }
     if (this.captureHandle) {
       teardownPcmCapture(this.captureHandle);
       this.captureHandle = null;

@@ -77,6 +77,7 @@ export async function attachPcmCapture(
         outputChannelCount: [1],
         channelCount: channels,
         channelCountMode: 'explicit',
+        channelInterpretation: channels === 1 ? 'discrete' : 'speakers',
         processorOptions: { channels },
       });
 
@@ -122,6 +123,14 @@ export async function attachPcmCapture(
 
   try {
     const processor = ctx.createScriptProcessor(4096, channels, channels);
+    try {
+      processor.channelCount = channels;
+      processor.channelCountMode = 'explicit';
+      processor.channelInterpretation =
+        channels === 1 ? 'discrete' : 'speakers';
+    } catch {
+      // Ignore if host browser treats ScriptProcessor channel properties as read-only
+    }
     const outputGain = ctx.createGain();
     outputGain.gain.value = 1;
     let keepaliveSign: 1 | -1 = 1;

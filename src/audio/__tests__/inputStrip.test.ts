@@ -95,9 +95,9 @@ describe('inputStrip DSP & true-peak ceiling', () => {
     expect(gainDbToMultiplier(99)).toBeCloseTo(15.8489, 3);
   });
 
-  it('SoftwareAutoGainController boosts quiet raw iPhone speech, holds steady during silence, and tames loud shouts', () => {
+  it('SoftwareAutoGainController boosts quiet raw iPhone speech, yields to limiter compression, holds steady during silence, and tames loud shouts', () => {
     const agc = new SoftwareAutoGainController();
-    expect(agc.getGain()).toBe(SOFTWARE_AGC_INITIAL_GAIN); // +12 dB starting boost
+    expect(agc.getGain()).toBe(SOFTWARE_AGC_INITIAL_GAIN); // +10 dB starting boost (3.16x)
 
     // 1. Quiet room silence (-66 dBFS raw) for 1 second -> gain holds steady (zero noise-floor pumping)
     const silenceChunk = new Float32Array(1200);
@@ -110,17 +110,16 @@ describe('inputStrip DSP & true-peak ceiling', () => {
     }
     expect(agc.getGain()).toBeCloseTo(SOFTWARE_AGC_INITIAL_GAIN, 4);
 
-    // 2. Quiet iPhone speech (~-41 dBFS raw RMS = 0.009) -> smoothly boosts toward -18 dBFS (~13.9x)
+    // 2. Quiet iPhone speech (~-41 dBFS raw RMS = 0.009) -> smoothly boosts toward -21 dBFS (~10x max)
     const quietSpeechChunk = new Float32Array(1200);
-    for (let step = 0; step < 80; step += 1) {
+    for (let step = 0; step < 120; step += 1) {
       const g = agc.getGain();
       for (let i = 0; i < quietSpeechChunk.length; i += 1) {
-        // Sine with RMS = 0.009 (peak = 0.0127)
         quietSpeechChunk[i] = 0.009 * Math.SQRT2 * g * Math.sin((i / 48) * Math.PI * 2);
       }
       agc.processSamples(quietSpeechChunk, 0.025);
     }
-    expect(agc.getGain()).toBeGreaterThan(12);
+    expect(agc.getGain()).toBeGreaterThan(8.5);
     expect(agc.getGain()).toBeLessThanOrEqual(SOFTWARE_AGC_MAX_GAIN);
     const boostedGain = agc.getGain();
 
@@ -133,9 +132,15 @@ describe('inputStrip DSP & true-peak ceiling', () => {
     }
     expect(agc.getGain()).toBeCloseTo(boostedGain, 4);
 
-    // 4. Sudden loud speech near mic (raw peak = 0.45, limited at -1 dBFS = 0.89) -> fast attack pulls gain down
+    // 4. Active limiter gain reduction (-4 dB) forces AGC to back off even when post-limiter RMS looks moderate
+    const moderatePostLimiter = new Float32Array(1200).fill(0.08);
+    const beforeReduction = agc.getGain();
+    const afterReduction = agc.processSamples(moderatePostLimiter, 0.025, -4.0);
+    expect(afterReduction).toBeLessThan(beforeReduction);
+
+    // 5. Sudden loud speech near mic (raw peak = 0.45, limited at -1 dBFS = 0.89) -> fast attack pulls gain down
     const loudChunk = new Float32Array(1200);
-    for (let step = 0; step < 25; step += 1) {
+    for (let step = 0; step < 30; step += 1) {
       const g = agc.getGain();
       for (let i = 0; i < loudChunk.length; i += 1) {
         const raw = 0.45 * Math.sin((i / 48) * Math.PI * 2);
@@ -146,51 +151,109 @@ describe('inputStrip DSP & true-peak ceiling', () => {
     expect(agc.getGain()).toBeLessThan(2.0);
   });
 
-  it('buildStudioInputStrip inserts software AGC ahead of the safety limiter only when requested', () => {
+  it('buildStudioInputStrip applies discrete mono channel config, transparent vocal limiter, and auto-plumbs compressor.reduction into AGC', () => {
     const order: string[] = [];
+    const createdNodes: Array<{
+      kind: string;
+      channelCount?: number;
+      channelCountMode?: string;
+      channelInterpretation?: string;
+    }> = [];
     const setTargetAtTime = vi.fn();
     const cancelScheduledValues = vi.fn();
     const setValueAtTime = vi.fn();
+    let compReduction = 0;
+    let createdComp: {
+      threshold: { value: number };
+      knee: { value: number };
+      ratio: { value: number };
+      attack: { value: number };
+      release: { value: number };
+    } | null = null;
+
     const mockCtx = {
       currentTime: 1.25,
       createBiquadFilter: () => {
         order.push('hpf');
-        return { type: '', frequency: { value: 0 }, Q: { value: 0 }, connect: vi.fn(), disconnect: vi.fn() };
+        const node = {
+          kind: 'hpf',
+          type: '',
+          frequency: { value: 0 },
+          Q: { value: 0 },
+          connect: vi.fn(),
+          disconnect: vi.fn(),
+        };
+        createdNodes.push(node);
+        return node;
       },
       createGain: () => {
         order.push('gain');
-        return {
+        const node = {
+          kind: 'gain',
           gain: { value: 1, setTargetAtTime, cancelScheduledValues, setValueAtTime },
           connect: vi.fn(),
           disconnect: vi.fn(),
         };
+        createdNodes.push(node);
+        return node;
       },
       createDynamicsCompressor: () => {
         order.push('comp');
-        return {
+        const node = {
+          kind: 'comp',
           threshold: { value: 0 },
           knee: { value: 0 },
           ratio: { value: 0 },
           attack: { value: 0 },
           release: { value: 0 },
+          get reduction() {
+            return compReduction;
+          },
           connect: vi.fn(),
           disconnect: vi.fn(),
         };
+        createdComp = node;
+        createdNodes.push(node);
+        return node;
       },
       createWaveShaper: () => {
         order.push('shaper');
-        return { curve: null, oversample: 'none', connect: vi.fn(), disconnect: vi.fn() };
+        const node = {
+          kind: 'shaper',
+          curve: null,
+          oversample: 'none',
+          connect: vi.fn(),
+          disconnect: vi.fn(),
+        };
+        createdNodes.push(node);
+        return node;
       },
     } as unknown as AudioContext;
     const mockSource = { connect: vi.fn(), disconnect: vi.fn() } as unknown as AudioNode;
 
-    const withoutAgc = buildStudioInputStrip(mockCtx, mockSource, DEFAULT_AUDIO_QUALITY);
+    const withoutAgc = buildStudioInputStrip(mockCtx, mockSource, DEFAULT_AUDIO_QUALITY, {
+      channels: 1,
+    });
     expect(withoutAgc.autoGainNode).toBeNull();
+    expect(withoutAgc.compressorNode).not.toBeNull();
     expect(order).toEqual(['hpf', 'gain', 'comp', 'shaper']);
+    // Transparent vocal limiter params (-3 dBFS / 6 dB knee / 4:1 / 5 ms / 120 ms)
+    expect(createdComp!.threshold.value).toBe(-3);
+    expect(createdComp!.knee.value).toBe(6);
+    expect(createdComp!.ratio.value).toBe(4);
+    expect(createdComp!.attack.value).toBe(0.005);
+    expect(createdComp!.release.value).toBe(0.12);
+    // Every strip node enforces discrete mono channel extraction so (L, 0) never halves to -6 dB
+    for (const n of createdNodes) {
+      expect(n.channelCount).toBe(1);
+      expect(n.channelCountMode).toBe('explicit');
+      expect(n.channelInterpretation).toBe('discrete');
+    }
 
     order.length = 0;
     const withAgc = buildStudioInputStrip(mockCtx, mockSource, DEFAULT_AUDIO_QUALITY, {
       enableSoftwareAgc: true,
+      channels: 1,
     });
     expect(withAgc.autoGainNode).not.toBeNull();
     expect(withAgc.autoGainNode!.gain.value).toBe(SOFTWARE_AGC_INITIAL_GAIN);
@@ -209,11 +272,57 @@ describe('inputStrip DSP & true-peak ceiling', () => {
     expect(setValueAtTime).toHaveBeenCalledWith(SOFTWARE_AGC_INITIAL_GAIN, 1.25);
     expect(setTargetAtTime).toHaveBeenCalledWith(nextGain, 1.25, 0.03);
 
-    // Subsequent update must anchor to the previously applied gain (nextGain), NOT intrinsic param.value (4.0)
+    // Subsequent update anchors to previously applied gain (nextGain)
     const nextGain2 = withAgc.updateAutoGain(samples, 0.025);
     expect(nextGain2).toBeGreaterThan(nextGain);
     expect(setValueAtTime).toHaveBeenLastCalledWith(nextGain, 1.25);
     expect(setTargetAtTime).toHaveBeenLastCalledWith(nextGain2, 1.25, 0.03);
+
+    // When DynamicsCompressorNode reports active limiting (-4.5 dB), updateAutoGain backs off
+    compReduction = -4.5;
+    const backedOff = withAgc.updateAutoGain(samples, 0.025);
+    expect(backedOff).toBeLessThan(nextGain2);
+  });
+
+  it('PcmInputStripProcessor applies 80 Hz HPF, inputGain, transparent limiter, and soft-clip ceiling cleanly', async () => {
+    const { PcmInputStripProcessor } = await import('../inputStrip');
+    const strip = new PcmInputStripProcessor(48000, 1, {
+      ...DEFAULT_AUDIO_QUALITY,
+      highPassFilter: true,
+      softLimiter: true,
+      inputGain: 1.0,
+    }, false);
+
+    // 1. DC / sub-20Hz rumble is attenuated by the 80 Hz high-pass filter
+    const dcBuf = new Float32Array(4800).fill(0.5);
+    strip.processBlock([dcBuf], dcBuf.length);
+    expect(Math.abs(dcBuf[dcBuf.length - 1])).toBeLessThan(0.01);
+
+    // 2. Normal 440 Hz sine passes transparently near unity gain
+    const sine = new Float32Array(4800);
+    for (let i = 0; i < sine.length; i += 1) {
+      sine[i] = 0.25 * Math.sin((2 * Math.PI * 440 * i) / 48000);
+    }
+    strip.processBlock([sine], sine.length);
+    let maxMid = 0;
+    for (let i = 2400; i < sine.length; i += 1) {
+      maxMid = Math.max(maxMid, Math.abs(sine[i]));
+    }
+    expect(maxMid).toBeGreaterThan(0.22);
+    expect(maxMid).toBeLessThan(0.28);
+
+    // 3. Extreme overload (+12 dB peak = 4.0) is smoothly bounded below SOFT_CLIP_CEILING (-1 dBFS)
+    const hot = new Float32Array(1200);
+    for (let i = 0; i < hot.length; i += 1) {
+      hot[i] = 4.0 * Math.sin((2 * Math.PI * 440 * i) / 48000);
+    }
+    const res = strip.processBlock([hot], hot.length);
+    let maxHot = 0;
+    for (let i = 0; i < hot.length; i += 1) {
+      maxHot = Math.max(maxHot, Math.abs(hot[i]));
+    }
+    expect(maxHot).toBeLessThanOrEqual(Math.fround(SOFT_CLIP_CEILING));
+    expect(res.reductionDb).toBeLessThan(0);
   });
 });
 

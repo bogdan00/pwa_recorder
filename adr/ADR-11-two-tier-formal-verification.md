@@ -20,9 +20,10 @@ Adopt a **Two-Tier, Shared-Specification Formal Verification Architecture** unde
 ### 1. Single Source of Truth — Shared Expression IR (`exprIr.ts`) & Declarative Specs (`src/formal/specs/`)
 Define transition systems, algebraic laws, and safety invariants **once** using a typed declarative Expression IR ([`exprIr.ts`](../src/formal/core/exprIr.ts)) evaluated concretely in Tier 1 and compiled verbatim into Z3 SMT in Tier 2 ([`z3ExprCompiler.ts`](../src/formal/core/z3ExprCompiler.ts)) — making Tier-1 ↔ Tier-2 drift structurally impossible:
 - [`syncMergeSpec.ts`](../src/formal/specs/syncMergeSpec.ts): Two-Phase Set (`2P-Set`) tombstone + total-order LWW-Register CRDT merge algebra and Google Drive access-role decision lattice (`owner` / `writer` / `reader`) in Shared IR.
-- [`studioStateMachineSpec.ts`](../src/formal/specs/studioStateMachineSpec.ts): Recording Studio labeled transition system (LTS) over `(phase, duration, playhead, micActive, previewActive, canUndoTrim, undoDuration, hasDraft)` in Shared IR.
+- [`studioStateMachineSpec.ts`](../src/formal/specs/studioStateMachineSpec.ts): Recording Studio labeled transition system (LTS) over `(phase, duration, playhead, micActive, trackProcessorActive, workletActive, outputCtxRunning, previewActive, canUndoTrim, undoDuration, hasDraft)` in Shared IR.
 - [`settingsLifecycleSpec.ts`](../src/formal/specs/settingsLifecycleSpec.ts): Studio Settings modal, segmented tabs (`recording` / `drive` / `app`), collapsible Advanced Audio disclosure, stacked Theme Switcher overlay, and live microphone test lifecycle LTS in Shared IR.
 - [`pcmTimelineSpec.ts`](../src/formal/specs/pcmTimelineSpec.ts): PCM audio timeline mathematical contract (closed-interval frame clamping, exact extraction lengths, 1-step truncate/undo invertibility, raised-cosine fade bounds, storage-block conservation, crash-recovery peak reconciliation).
+- [`audioDspAndQualitySpec.ts`](../src/formal/specs/audioDspAndQualitySpec.ts): Software AGC & soft-clipper mathematical contract (gain bounds, strict headroom separation `peakCeiling < SOFT_CLIP_THRESHOLD`, compressor-yield monotonicity, silence non-pumping, soft-clipper `1:1` identity & `-1 dBFS` ceiling) plus Recording Quality Monitor severity join-semilattice (`good < warn < critical`), non-masking of `critical` during warm-up, and bounded glitch-log memory.
 - [`storageAndShareSpec.ts`](../src/formal/specs/storageAndShareSpec.ts): IndexedDB `ArrayBuffer` persistence invariants, cascade deletion, `#/join?...` share-link encode/parse round-trip contract, and audiobook player queue LTS.
 
 ### 2. Tier 1 — Always-On Executable Verification (`npm test`, ~1–2s, zero WASM overhead)
@@ -37,26 +38,30 @@ Runs via dedicated Node Vitest configuration ([`vitest.formal.config.ts`](../vit
 - **Inductive Invariant Proofs**: Proves safety for arbitrarily long execution traces ($n \to \infty$) in two SMT queries:
   1. **Base Case**: $\forall s.\ \mathrm{Init}(s) \implies \mathrm{Inv}(s)$
   2. **Inductive Step**: $\forall s, a, s'.\ \mathrm{Inv}(s) \land \mathrm{Step}(s, a, s') \implies \mathrm{Inv}(s')$
-- **Pragmatic scope boundary**: Z3 is applied to subsystems with unbounded algebraic/stateful invariants (Drive sync CRDT & non-interference, Studio state machine, Settings modal/tab/mic-test lifecycle, PCM timeline arithmetic). Browser-API and string-parsing contracts (IndexedDB serialization, URL regex parsing) remain in Tier 1 executable proofs where Z3 adds boilerplate without additional assurance.
+- **Pragmatic scope boundary**: Z3 is applied to subsystems with unbounded algebraic/stateful invariants (Drive sync CRDT & non-interference, Studio state machine & capture-backend exclusion, Settings modal/tab/mic-test lifecycle, PCM timeline arithmetic, Software AGC/soft-limiter stability, and Quality Monitor severity lattice). Browser-API, FFT DSP, and string-parsing contracts remain in Tier 1 executable proofs, deterministic DSP unit tests, E2E specs, and `scripts/perfCheck.mjs`.
 
 ## System Invariants
 1. **CRDT Convergence & Tombstone Permanence**: Multi-user Drive sync merge forms a Join-Semilattice (Idempotent, Commutative, Associative) under deterministic total-order LWW tie-breaking (including `coverUpdatedAt`); once tombstoned in `deletedRecordingIds`, a recording ID can never be resurrected by any future merge sequence.
 2. **Read-Only Listener Non-Interference**: Whenever `accessRole === 'reader'` (resolved from Drive capabilities or fallback), zero Drive write/rename/upload mutations are ever performed.
-3. **Studio State-Machine Safety & Async Cancellation**: Across *all* reachable states (finite BFS, automated positive+negative `RecordingEngine` conformance, and unbounded Z3 induction):
+3. **Studio State-Machine Safety, Capture-Backend Exclusion & Zero Duplex Contention**: Across *all* reachable states (finite BFS, automated positive+negative `RecordingEngine` conformance, and unbounded Z3 induction):
    - $0 \le \text{playheadMs} \le \text{durationMs}$
-   - $\text{micActive} \iff (\text{phase} = \text{recording})$ and $\text{previewActive} \iff (\text{phase} = \text{playing})$
-   - $\neg(\text{micActive} \land \text{previewActive})$ (strict mutual exclusion)
+   - $\neg(\text{trackProcessorActive} \land \text{workletActive})$ and $\text{micActive} \iff (\text{trackProcessorActive} \lor \text{workletActive}) \iff (\text{phase} = \text{recording})$
+   - $\text{trackProcessorActive} \implies \neg\text{outputCtxRunning}$ (even after `record → pause → playPreview → resume/punchIn`, Chromium direct-track capture never leaves an `AudioContext` output stream running alongside mic capture)
+   - $\text{previewActive} \iff (\text{phase} = \text{playing})$ and $\neg(\text{micActive} \land \text{previewActive})$ (strict mutual exclusion)
    - $(\text{phase} = \text{playing}) \implies (\text{durationMs} > 0)$
    - $(\text{phase} = \text{idle}) \implies (\text{durationMs} = 0 \land \text{playheadMs} = 0)$
    - $(\text{phase} = \text{recording}) \implies (\text{playheadMs} = \text{durationMs})$ (enforced by guarding `seekToMs` during recording)
-   - Mid-await `discard()` / `pause()` / `dispose()` during `beginMicCapture` invalidates `captureEpoch` and stops any late-arriving `MediaStream` tracks cleanly.
+   - Mid-await `discard()` / `pause()` / `dispose()` during `beginMicCapture` invalidates `captureEpoch`, cancels any pending `MediaStreamTrackProcessor` reader, and stops any late-arriving `MediaStream` tracks cleanly.
 4. **PCM Audio Conservation & Invertibility**: `msToFrame`, `truncateAtFrame`, and `extractChannelData` stay strictly within $[0, \text{totalFrames}]$ for all IEEE-754 inputs (including `NaN`/`±Infinity`); `truncateAtFrame` followed by `undoTruncate` is bit-for-bit invertible; `buildStorageBlocks` → `loadFromChunks` preserves exact frame counts and sample values and reconciles stale persisted peaks; raised-cosine fade gain lies in $[0, 1]$ with zero amplitude at cut boundaries.
-5. **Storage, Queue & Share-Link Contracts**: IndexedDB `ArrayBuffer` round-trips preserve exact bytes and MIME types; project deletion cascades cleanly with zero orphan records; `buildJoinShareUrl` → `parseJoinInviteInput` is a faithful round-trip across all valid invites; real `PlayerProvider` enforces bounded queue indices, guarded `expandPlayer`/`setSleepTimer`, and `seek` finiteness.
-6. **Settings Modal, Tab & Mic-Test Lifecycle Safety**: Across *all* reachable states (finite BFS, automated positive+negative `SettingsSheet` + `useMicTest` conformance, and unbounded Z3 induction over `openCount ∈ ℤ≥0`):
+5. **Software AGC Stability, Soft-Limiter Ceiling & Quality-Monitor Severity Lattice**:
+   - $\text{peakCeiling} < \text{SOFT\_CLIP\_THRESHOLD}$ (`0.56 < 0.7071`), AGC gain remains strictly in $[\text{minGain}, \text{maxGain}]$, never increases while `compressorReductionDb <= -1.5 dB`, and holds constant during silence; `softLimitSample(x)` is exact identity for $|x| \le \text{SOFT\_CLIP\_THRESHOLD}$ and bounded by $|\text{softLimitSample}(x)| \le \text{SOFT\_CLIP\_CEILING}$ for all finite inputs.
+   - Quality monitor severity aggregation forms a bounded Join-Semilattice (`good < warn < critical`), warm-up `listening` never masks an active `critical` fault, glitch logs remain strictly bounded (`<= 30` entries), and opening/closing the diagnostics sheet is non-interfering with active recording.
+6. **Storage, Queue & Share-Link Contracts**: IndexedDB `ArrayBuffer` round-trips preserve exact bytes and MIME types; project deletion cascades cleanly with zero orphan records; `buildJoinShareUrl` → `parseJoinInviteInput` is a faithful round-trip across all valid invites; real `PlayerProvider` enforces bounded queue indices, guarded `expandPlayer`/`setSleepTimer`, and `seek` finiteness.
+7. **Settings Modal, Tab & Mic-Test Lifecycle Safety**: Across *all* reachable states (finite BFS, automated positive+negative `SettingsSheet` + `useMicTest` conformance, and unbounded Z3 induction over `openCount ∈ ℤ≥0`):
    - $\text{micTestActive} \implies (\text{open} \land \text{tab} = \text{recording})$ and $\neg\text{open} \implies \neg\text{micTestActive}$ (zero mic stream leaks across tab switches or modal closes, including mid-await `MicLevelTester.start()` cancellation)
    - $\text{themeSwitcherOpen} \implies \neg\text{micTestActive}$ and $(\text{open} \land \text{themeSwitcherOpen}) \implies (\text{tab} = \text{app})$
    - $\text{advancedOpen} \implies (\text{open} \land \text{tab} = \text{recording})$
-7. **Local-to-CI Formal Verification Parity ([ADR-09](./ADR-09-strict-local-to-ci-verification-parity.md))**: `npm run precheck` (enforced by `.githooks/pre-push`) and `.github/workflows/deploy.yml` both execute `npm test` (Tier 1) **and** `npm run test:formal` (Tier 2).
+8. **Local-to-CI Formal Verification Parity ([ADR-09](./ADR-09-strict-local-to-ci-verification-parity.md))**: `npm run precheck` (enforced by `.githooks/pre-push`) and `.github/workflows/deploy.yml` both execute `npm test` (Tier 1) **and** `npm run test:formal` (Tier 2).
 
 ## Consequences & Trade-offs
 - **Real defects caught & fixed during adoption & audit**:

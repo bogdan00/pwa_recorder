@@ -1,0 +1,241 @@
+.quality-sheet__panel {
+  max-height: min(86dvh, 680px);
+}
+
+.quality-sheet__title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.quality-sheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.quality-sheet__banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+
+.quality-sheet__banner--good {
+  background: var(--accent-sage-soft);
+  border-color: var(--accent-sage-border);
+}
+
+.quality-sheet__banner--warn {
+  background: var(--accent-amber-soft);
+  border-color: var(--accent-amber-border);
+}
+
+.quality-sheet__banner--critical {
+  background: var(--accent-record-soft);
+  border-color: var(--accent-record-border);
+}
+
+.quality-sheet__banner-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-primary);
+}
+
+.quality-sheet__banner-title {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.quality-sheet__banner-tip {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-primary);
+}
+
+.quality-sheet__banner-sub {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ink-secondary);
+}
+
+.quality-sheet__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quality-sheet__metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.quality-sheet__metric-label {
+  font-size: 11px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quality-sheet__metric-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quality-sheet__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quality-sheet__section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.quality-sheet__checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quality-sheet__check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.quality-sheet__check--warn {
+  border-color: var(--accent-amber-border);
+}
+
+.quality-sheet__check--critical {
+  border-color: var(--accent-record-border);
+}
+
+.quality-sheet__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.quality-sheet__dot--good {
+  background: var(--accent-sage);
+}
+
+.quality-sheet__dot--warn {
+  background: var(--accent-amber);
+}
+
+.quality-sheet__dot--critical {
+  background: var(--accent-record);
+}
+
+.quality-sheet__check-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quality-sheet__check-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quality-sheet__check-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-primary);
+  min-width: 0;
+}
+
+.quality-sheet__check-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  flex-shrink: 0;
+}
+
+.quality-sheet__check-detail {
+  font-size: 12px;
+  color: var(--ink-secondary);
+  line-height: 1.35;
+}
+
+.quality-sheet__events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quality-sheet__event {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.quality-sheet__event-time {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ink-primary);
+  flex-shrink: 0;
+}
+
+.quality-sheet__event-msg {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

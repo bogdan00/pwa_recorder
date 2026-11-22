@@ -92,6 +92,11 @@ describe('audioDevices', () => {
     expect(acquired.fallbackReason).toContain('Shure MV7 USB');
     expect(acquired.actualDeviceLabel).toBe('Built-in Microphone');
     expect(acquired.nativeAgcActive).toBe(false);
+    expect(acquired.trackSettings).toEqual(
+      expect.objectContaining({ sampleRate: 48000, channelCount: 1 }),
+    );
+    expect(acquired.trackSettings).not.toHaveProperty('deviceId');
+    expect(acquired.trackSettings).not.toHaveProperty('groupId');
     // Verify raw DSP settings were passed to constraints
     const firstCallArgs = getUserMedia.mock.calls[0][0];
     expect(firstCallArgs.audio.deviceId).toEqual({ exact: 'usb-removed' });
