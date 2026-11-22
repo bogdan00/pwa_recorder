@@ -235,6 +235,7 @@ describe('Repository E2E, CUJ & ADR systemic invariants', () => {
     for (const sharedIrZ3File of [
       'studioStateMachine.z3.formal.test.ts',
       'syncMerge.z3.formal.test.ts',
+      'settingsLifecycle.z3.formal.test.ts',
     ]) {
       const z3Src = fs.readFileSync(path.join(formalTestsDir, sharedIrZ3File), 'utf8');
       expect(

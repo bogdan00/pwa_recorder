@@ -46,18 +46,36 @@ export function useMicTest({
   }, []);
 
   const start = useCallback(async (): Promise<boolean> => {
+    // Stop any previous active or pending tester so streams can never leak on re-entry
+    if (testerRef.current) {
+      testerRef.current.stop();
+      testerRef.current = null;
+    }
     setError(null);
     const tester = new MicLevelTester();
     testerRef.current = tester;
     setIsTesting(true);
     try {
-      const res = await tester.start(device, quality, setTelemetry);
+      const res = await tester.start(device, quality, (t) => {
+        if (testerRef.current === tester) {
+          setTelemetry(t);
+        }
+      });
+      // If stop(), tab switch, close, or a newer start() ran mid-await, abort cleanly
+      if (testerRef.current !== tester) {
+        tester.stop();
+        return false;
+      }
       if (res.usedFallback && res.fallbackReason) {
         onFallbackToast?.(res.fallbackReason);
       }
       onStarted?.();
       return true;
     } catch (err) {
+      if (testerRef.current !== tester) {
+        tester.stop();
+        return false;
+      }
       stop();
       setError(
         err instanceof Error ? err.message : 'Unable to access microphone.',

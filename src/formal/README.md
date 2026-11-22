@@ -33,18 +33,21 @@ src/formal/
 ├── specs/                       # SINGLE SOURCE OF TRUTH — declarative formal models (Shared IR)
 │   ├── syncMergeSpec.ts         # 2P-Set + Total-Order LWW CRDT merge & Drive Access-Role policy (Shared IR)
 │   ├── studioStateMachineSpec.ts# Recording Studio Labeled Transition System (Shared IR: 12 invariants, 6 goals)
+│   ├── settingsLifecycleSpec.ts # Studio Settings Modal, Tabs, Disclosure & Mic-Test Lifecycle (Shared IR: 9 invariants, 5 goals)
 │   ├── pcmTimelineSpec.ts       # PCM frame clamping, extraction bounds, splice/fade & undo contract
 │   └── storageAndShareSpec.ts   # Player Queue LTS, Share-Link round-trip & IndexedDB binary contracts
 │
 └── __tests__/
-    ├── syncMerge.conformance.test.ts      # Tier 1: Join-Semilattice + 273-row role truth table + real syncService.ts
+    ├── syncMerge.conformance.test.ts       # Tier 1: Join-Semilattice + 273-row role truth table + real syncService.ts
     ├── studioStateMachine.modelCheck.test.ts # Tier 1: BFS + 100%-state positive/negative RecordingEngine conformance + async cancellation
-    ├── pcmTimeline.proof.test.ts          # Tier 1: 480-case conservation/undo/round-trip + crash-recovery peaks + IEEE-754 bounds
-    ├── storageAndShare.proof.test.ts      # Tier 1: Player Queue BFS + real PlayerProvider conformance + 48-case invite bijection + IndexedDB
+    ├── settingsLifecycle.modelCheck.test.ts  # Tier 1: BFS + 100%-state positive/negative SettingsSheet/useMicTest conformance + async cancellation
+    ├── pcmTimeline.proof.test.ts           # Tier 1: 480-case conservation/undo/round-trip + crash-recovery peaks + IEEE-754 bounds
+    ├── storageAndShare.proof.test.ts       # Tier 1: Player Queue BFS + real PlayerProvider conformance + 48-case invite bijection + IndexedDB
     │
-    ├── syncMerge.z3.formal.test.ts        # Tier 2 (Z3): compiled from syncMergeSpec IR — ∀ t,r ∈ ℤ CRDT convergence & non-interference
-    ├── studioStateMachine.z3.formal.test.ts # Tier 2 (Z3): compiled from studioStateMachineSpec IR — Induction (Base + 13 Steps) + non-vacuity
-    └── pcmTimeline.z3.formal.test.ts      # Tier 2 (Z3): ∀ N,k ∈ ℤ, ℝ clamping, conservation, zero-clip raised cosine
+    ├── syncMerge.z3.formal.test.ts         # Tier 2 (Z3): compiled from syncMergeSpec IR — ∀ t,r ∈ ℤ CRDT convergence & non-interference
+    ├── studioStateMachine.z3.formal.test.ts  # Tier 2 (Z3): compiled from studioStateMachineSpec IR — Induction (Base + 13 Steps) + non-vacuity
+    ├── settingsLifecycle.z3.formal.test.ts   # Tier 2 (Z3): compiled from settingsLifecycleSpec IR — Induction (Base + 12 Steps) + non-vacuity
+    └── pcmTimeline.z3.formal.test.ts       # Tier 2 (Z3): ∀ N,k ∈ ℤ, ℝ clamping, conservation, zero-clip raised cosine
 ```
 
 ---
