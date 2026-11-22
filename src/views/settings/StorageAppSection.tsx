@@ -2,8 +2,10 @@ import React from 'react';
 import { Check, Download, HardDrive, Smartphone } from 'lucide-react';
 import type { PwaInstallState } from '../../pwa/installPrompt';
 import { useConfirm } from '../../components/ConfirmDialogContext';
+import { FieldHeaderWithHelp } from '../../components/InfoTip';
 import { APP_VERSION } from '../../utils/appVersion';
 import { formatBytes } from '../../utils/format';
+import { SETTINGS_HELP } from './settingsHelpContent';
 
 export interface StorageAppSectionProps {
   pwaInstallState?: PwaInstallState;
@@ -38,20 +40,23 @@ export const StorageAppSection: React.FC<StorageAppSectionProps> = ({
       </div>
 
       <div className="storage-card" data-testid="settings-storage-card">
-        <div className="gain-header">
-          <span className="field-label">Local Offline Storage</span>
-          {storageUsage && (
-            <span
-              className="font-mono"
-              style={{ fontSize: 12, color: 'var(--ink-muted)' }}
-            >
-              {formatBytes(storageUsage.usage)}
-              {storageUsage.quota > 0
-                ? ` / ${formatBytes(storageUsage.quota)}`
-                : ''}
-            </span>
-          )}
-        </div>
+        <FieldHeaderWithHelp
+          label="Local Offline Storage"
+          help={SETTINGS_HELP['local-offline-storage']}
+          right={
+            storageUsage ? (
+              <span
+                className="font-mono"
+                style={{ fontSize: 12, color: 'var(--ink-muted)' }}
+              >
+                {formatBytes(storageUsage.usage)}
+                {storageUsage.quota > 0
+                  ? ` / ${formatBytes(storageUsage.quota)}`
+                  : ''}
+              </span>
+            ) : undefined
+          }
+        />
 
         {storageUsage && storageUsage.quota > 0 && (
           <div className="storage-bar">

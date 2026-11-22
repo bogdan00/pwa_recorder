@@ -66,6 +66,18 @@ test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV 
     await expect(page.getByRole('switch', { name: '80 Hz Rumble Filter' })).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByRole('switch', { name: 'Anti-Clip Safety Limiter' })).toHaveAttribute('aria-checked', 'true');
 
+    // Verify tap-to-expand ? helper tooltips explain Mono vs Stereo and Bitrate
+    await page.getByTestId('help-btn-channels').click();
+    await expect(page.getByTestId('help-panel-channels')).toContainText(/Mono vs\. Stereo/i);
+    await expect(page.getByTestId('help-panel-channels')).toContainText(/half the file size/i);
+    await page.getByTestId('help-btn-channels').click();
+    await expect(page.getByTestId('help-panel-channels')).toHaveCount(0);
+
+    await page.getByTestId('help-btn-bitrate').click();
+    await expect(page.getByTestId('help-panel-bitrate')).toContainText(/96k–128k/i);
+    await page.getByLabel('Close Bitrate help').click();
+    await expect(page.getByTestId('help-panel-bitrate')).toHaveCount(0);
+
     // 3. Customize to 510 kbps CBR + 96 kHz + Stereo -> preset flips to Custom & live estimator updates
     await page.getByRole('button', { name: '510k' }).click();
     await page.getByRole('button', { name: 'CBR (Constant)' }).click();

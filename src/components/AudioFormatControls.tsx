@@ -14,6 +14,7 @@ import {
   SAMPLE_RATE_OPTIONS,
   WAV_BIT_DEPTH_OPTIONS,
 } from '../audio/qualityPresets';
+import { FieldHeaderWithHelp, type InfoTipContent } from './InfoTip';
 
 export interface CodecPillPickerProps {
   value: AudioFormatOption;
@@ -76,6 +77,14 @@ export const CodecPillPicker: React.FC<CodecPillPickerProps> = ({
   );
 };
 
+export interface AudioFormatHelpMap {
+  readonly format?: InfoTipContent;
+  readonly sampleRate?: InfoTipContent;
+  readonly bitrate?: InfoTipContent;
+  readonly bitrateMode?: InfoTipContent;
+  readonly wavBitDepth?: InfoTipContent;
+}
+
 export interface AudioFormatControlsProps {
   value: ExportQualitySpec;
   caps: CodecCapabilities | null;
@@ -87,6 +96,7 @@ export interface AudioFormatControlsProps {
   verboseBitrateModeLabels?: boolean;
   sampleRateHint?: React.ReactNode;
   bitrateHint?: React.ReactNode;
+  help?: AudioFormatHelpMap;
   onChange: (patch: Partial<ExportQualitySpec>) => void;
 }
 
@@ -101,6 +111,7 @@ export const AudioFormatControls: React.FC<AudioFormatControlsProps> = ({
   verboseBitrateModeLabels = false,
   sampleRateHint,
   bitrateHint,
+  help,
   onChange,
 }) => {
   const isWav = resolveEffectiveFormat(value.format, caps) === 'wav';
@@ -118,7 +129,7 @@ export const AudioFormatControls: React.FC<AudioFormatControlsProps> = ({
   return (
     <>
       <div className="field">
-        <span className="field-label">{formatLabel}</span>
+        <FieldHeaderWithHelp label={formatLabel} help={help?.format} />
         <CodecPillPicker
           value={value.format}
           caps={caps}
@@ -131,7 +142,7 @@ export const AudioFormatControls: React.FC<AudioFormatControlsProps> = ({
       </div>
 
       <div className="field">
-        <span className="field-label">Sample Rate</span>
+        <FieldHeaderWithHelp label="Sample Rate" help={help?.sampleRate} />
         <div className="pill-grid">
           {SAMPLE_RATE_OPTIONS.map((sr) => (
             <button
@@ -153,19 +164,20 @@ export const AudioFormatControls: React.FC<AudioFormatControlsProps> = ({
       {!isWav ? (
         <>
           <div className="field">
-            {showBitrateReadout ? (
-              <div className="gain-header">
-                <span className="field-label">Bitrate</span>
-                <span
-                  className="font-mono"
-                  style={{ fontSize: 12.5, color: 'var(--accent-amber)' }}
-                >
-                  {value.bitrateKbps} kbps
-                </span>
-              </div>
-            ) : (
-              <span className="field-label">Bitrate</span>
-            )}
+            <FieldHeaderWithHelp
+              label="Bitrate"
+              help={help?.bitrate}
+              right={
+                showBitrateReadout ? (
+                  <span
+                    className="font-mono"
+                    style={{ fontSize: 12.5, color: 'var(--accent-amber)' }}
+                  >
+                    {value.bitrateKbps} kbps
+                  </span>
+                ) : undefined
+              }
+            />
             <div className="pill-grid">
               {BITRATE_OPTIONS.map((kbps) => (
                 <button
@@ -184,7 +196,10 @@ export const AudioFormatControls: React.FC<AudioFormatControlsProps> = ({
           </div>
 
           <div className="field">
-            <span className="field-label">Bitrate Mode</span>
+            <FieldHeaderWithHelp
+              label="Bitrate Mode"
+              help={help?.bitrateMode}
+            />
             <div className="pill-grid">
               {modeOptions.map((m) => (
                 <button
@@ -201,7 +216,10 @@ export const AudioFormatControls: React.FC<AudioFormatControlsProps> = ({
         </>
       ) : (
         <div className="field">
-          <span className="field-label">WAV Bit Depth</span>
+          <FieldHeaderWithHelp
+            label="WAV Bit Depth"
+            help={help?.wavBitDepth}
+          />
           <div className="pill-grid">
             {WAV_BIT_DEPTH_OPTIONS.map((bd) => (
               <button

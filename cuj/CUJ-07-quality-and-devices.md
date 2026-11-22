@@ -27,3 +27,7 @@ A parent tailors recording quality (from compact uploads up to 510 kbps compress
    - Inside **Advanced Audio & Input Gain**, select `WAV (Lossless)`, `48 kHz`, `24-bit PCM`, `Stereo (2 ch)`.
    - Open Recording Studio, record ~1s, stop, and save.
    - **Expected:** Saved chapter card displays `WAV · 48 kHz · 24-bit · Stereo` and the stored IndexedDB binary begins with valid RIFF/WAVE header bytes (`RIFF....WAVE`) with 2 channels and 24-bit depth.
+
+4. **Tap-to-Expand `?` Helper Tooltips for Recording Options**
+   - Tap the `?` help button next to recording options (e.g., **Recording Device**, **Recording Quality**, **Save Local Lossless Master**, **Format / Codec**, **Sample Rate**, **Bitrate**, **Bitrate Mode**, **Channels**, **Input Gain Boost**, and **Mic Processing (DSP)** toggles).
+   - **Expected:** Each `?` button toggles an accessible inline guidance card (`aria-expanded="true"`) explaining what the option does and when to pick each choice in plain English (for example, explaining why **Mono** is recommended for phone voice recording vs. **Stereo** for external 2-mic recorders), fits cleanly within `360px`–`390px` viewports with zero horizontal overflow, and collapses cleanly when tapped again.

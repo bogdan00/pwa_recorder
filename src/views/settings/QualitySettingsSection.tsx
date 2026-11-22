@@ -19,9 +19,19 @@ import {
   QUALITY_PRESETS,
   resolveEffectiveFormat,
 } from '../../audio/qualityPresets';
-import { AudioFormatControls } from '../../components/AudioFormatControls';
+import {
+  AudioFormatControls,
+  type AudioFormatHelpMap,
+} from '../../components/AudioFormatControls';
+import {
+  FieldHeaderWithHelp,
+  InfoTipButton,
+  InfoTipPanel,
+  useInfoTip,
+} from '../../components/InfoTip';
 import { ToggleRow } from '../../components/ToggleRow';
 import { formatBytes, formatGainDb } from '../../utils/format';
+import { SETTINGS_HELP, type SettingsHelpKey } from './settingsHelpContent';
 
 export interface QualitySettingsSectionProps {
   settings: AppSettings;
@@ -39,6 +49,14 @@ const GAIN_SCALE_TICKS: Array<{ db: number; dbLabel: string; multLabel: string }
 ];
 
 const GAIN_PREVIEW_BAR_WEIGHTS = [0.36, 0.64, 0.9, 1.0, 0.84, 0.56, 0.34];
+
+const AUDIO_FORMAT_HELP: AudioFormatHelpMap = {
+  format: SETTINGS_HELP['audio-format'],
+  sampleRate: SETTINGS_HELP['sample-rate'],
+  bitrate: SETTINGS_HELP.bitrate,
+  bitrateMode: SETTINGS_HELP['bitrate-mode'],
+  wavBitDepth: SETTINGS_HELP['wav-bit-depth'],
+};
 
 function describeGainLevel(gainDb: number, multiplier: number, softLimiter: boolean): {
   tone: 'quiet' | 'normal' | 'boost' | 'hot';
@@ -86,35 +104,41 @@ const DSP_TOGGLES: Array<{
     | 'autoGainControl'
     | 'echoCancellation'
   >;
+  helpKey: SettingsHelpKey;
   title: string;
   description: string;
 }> = [
   {
     key: 'highPassFilter',
+    helpKey: 'dsp-highpass',
     title: '80 Hz Rumble Filter',
     description:
       'Removes low room hum and handling bumps without thinning voice warmth',
   },
   {
     key: 'softLimiter',
+    helpKey: 'dsp-limiter',
     title: 'Anti-Clip Safety Limiter',
     description:
       'Softly catches sudden loud character voices before digital clipping',
   },
   {
     key: 'noiseSuppression',
+    helpKey: 'dsp-noise-suppression',
     title: 'Browser Noise Suppression',
     description:
       'Turn OFF in quiet rooms to capture full uncolored phone mic fidelity',
   },
   {
     key: 'autoGainControl',
+    helpKey: 'dsp-agc',
     title: 'Browser Auto Gain Control',
     description:
       'Automatically boosts quiet speech (uses built-in studio auto-gain on Safari/iOS); turn OFF for fixed manual gain',
   },
   {
     key: 'echoCancellation',
+    helpKey: 'dsp-echo-cancellation',
     title: 'Browser Echo Cancellation',
     description:
       'Recommended OFF for audiobooks (phone-call processing reduces richness)',
@@ -127,6 +151,7 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
   onUpdateSettings,
 }) => {
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const qualityTip = useInfoTip();
   const quality = settings.audioQuality;
   const effectiveFormat = resolveEffectiveFormat(quality.format, caps);
   const isWav = effectiveFormat === 'wav';
@@ -172,10 +197,18 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
   return (
     <section className="settings-section" aria-label="Recording Quality">
       <div className="settings-section__head">
-        <h3 className="settings-section__title">
-          <Sliders size={17} />
-          Recording Quality
-        </h3>
+        <div className="info-tip-label-row">
+          <h3 className="settings-section__title">
+            <Sliders size={17} />
+            Recording Quality
+          </h3>
+          <InfoTipButton
+            content={SETTINGS_HELP['quality-presets']}
+            open={qualityTip.open}
+            panelId={qualityTip.panelId}
+            onToggle={qualityTip.toggle}
+          />
+        </div>
         <span
           className={`badge ${quality.preset === 'custom' ? 'badge-amber' : ''}`}
           data-testid="quality-preset-badge"
@@ -186,6 +219,14 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
               quality.preset}
         </span>
       </div>
+
+      {qualityTip.open && (
+        <InfoTipPanel
+          content={SETTINGS_HELP['quality-presets']}
+          panelId={qualityTip.panelId}
+          onClose={qualityTip.close}
+        />
+      )}
 
       {/* Live summary + size estimator */}
       <div className="quality-summary-card" data-testid="quality-summary-card">
@@ -226,6 +267,7 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
         title="Save Local Lossless Master"
         description="Keep an uncompressed 32-bit Float WAV copy on this device for Quality Lab blind A/B tests & multi-bitrate export. Google Drive still syncs your regular chapter file."
         checked={settings.keepLocalMaster}
+        help={SETTINGS_HELP['keep-local-master']}
         onToggle={() =>
           onUpdateSettings({
             ...settings,
@@ -285,6 +327,7 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
                 showCodecFallbackLabels
                 showBitrateReadout
                 verboseBitrateModeLabels
+                help={AUDIO_FORMAT_HELP}
                 sampleRateHint={
                   quality.sampleRate === 96000 && !isWav ? (
                     <span className="field-hint">
@@ -309,7 +352,10 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
 
               {/* Channels */}
               <div className="field">
-                <span className="field-label">Channels</span>
+                <FieldHeaderWithHelp
+                  label="Channels"
+                  help={SETTINGS_HELP.channels}
+                />
                 <div className="pill-grid">
                   {(
                     [
@@ -335,35 +381,39 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
 
               {/* Input Gain slider with animated loudness preview & beginner logarithmic guide */}
               <div className="field">
-                <div className="gain-header">
-                  <label htmlFor="input-gain-slider" className="field-label">
-                    Input Gain Boost
-                  </label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span
-                      className="font-mono"
-                      data-testid="input-gain-readout"
-                      style={{ fontSize: 12.5, color: 'var(--accent-amber)' }}
+                <FieldHeaderWithHelp
+                  label="Input Gain Boost"
+                  htmlFor="input-gain-slider"
+                  help={SETTINGS_HELP['input-gain']}
+                  right={
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
                     >
-                      {quality.inputGain.toFixed(2)}× (
-                      {formatGainDb(quality.inputGain)})
-                    </span>
-                    {Math.abs(quality.inputGain - 1) > 0.01 && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        style={{
-                          minHeight: 26,
-                          padding: '2px 8px',
-                          fontSize: 11.5,
-                        }}
-                        onClick={() => updateQuality({ inputGain: 1.0 })}
+                      <span
+                        className="font-mono"
+                        data-testid="input-gain-readout"
+                        style={{ fontSize: 12.5, color: 'var(--accent-amber)' }}
                       >
-                        Reset
-                      </button>
-                    )}
-                  </div>
-                </div>
+                        {quality.inputGain.toFixed(2)}× (
+                        {formatGainDb(quality.inputGain)})
+                      </span>
+                      {Math.abs(quality.inputGain - 1) > 0.01 && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{
+                            minHeight: 26,
+                            padding: '2px 8px',
+                            fontSize: 11.5,
+                          }}
+                          onClick={() => updateQuality({ inputGain: 1.0 })}
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  }
+                />
 
                 <div className="gain-guide-card" data-testid="gain-guide-card">
                   {/* Animated visual cue: left = quieter, right = louder */}
@@ -491,6 +541,7 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
                     title={item.title}
                     description={item.description}
                     checked={quality[item.key]}
+                    help={SETTINGS_HELP[item.helpKey]}
                     onToggle={() =>
                       updateQuality({ [item.key]: !quality[item.key] })
                     }

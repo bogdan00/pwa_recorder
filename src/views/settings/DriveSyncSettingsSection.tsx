@@ -13,6 +13,8 @@ import type { AppSettings } from '../../types/models';
 import type { GoogleAuthState } from '../../drive/googleAuth';
 import { getDriveFolderWebUrl } from '../../drive/shareUtils';
 import { useConfirm } from '../../components/ConfirmDialogContext';
+import { FieldHeaderWithHelp } from '../../components/InfoTip';
+import { SETTINGS_HELP } from './settingsHelpContent';
 
 export interface DriveSyncSettingsSectionProps {
   settings: AppSettings;
@@ -117,9 +119,11 @@ export const DriveSyncSettingsSection: React.FC<
         )}
 
         <div className="field">
-          <label htmlFor="drive-root-folder-input" className="field-label">
-            Drive Root Folder Name
-          </label>
+          <FieldHeaderWithHelp
+            label="Drive Root Folder Name"
+            htmlFor="drive-root-folder-input"
+            help={SETTINGS_HELP['drive-root-folder']}
+          />
           <input
             id="drive-root-folder-input"
             type="text"

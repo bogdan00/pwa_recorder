@@ -1,16 +1,42 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as qualityPresets from '../../audio/qualityPresets';
 import { ConfirmProvider } from '../../components/ConfirmDialogContext';
 import { getDefaultSettings } from '../../storage/settings';
 import { SettingsSheet, type SettingsTab } from '../SettingsSheet';
 
+beforeEach(() => {
+  vi.spyOn(qualityPresets, 'probeAudioCapabilities').mockResolvedValue({
+    webCodecsAvailable: true,
+    aacSupported: true,
+    opusSupported: true,
+    aacMaxMonoKbps: 320,
+    aacMaxStereoKbps: 510,
+    opusMaxMonoKbps: 510,
+    opusMaxStereoKbps: 510,
+    wavSupported: true,
+    autoBestFormat: 'm4a',
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 function renderSettingsSheet(options?: {
   initialTab?: SettingsTab;
+  format?: 'auto' | 'm4a' | 'wav';
   onOpenThemeSwitcher?: () => void;
   onUpdateSettings?: ReturnType<typeof vi.fn>;
 }) {
-  const settings = getDefaultSettings();
+  const base = getDefaultSettings();
+  const settings = options?.format
+    ? {
+        ...base,
+        audioQuality: { ...base.audioQuality, format: options.format },
+      }
+    : base;
   const onUpdateSettings = options?.onUpdateSettings ?? vi.fn();
   const onOpenThemeSwitcher = options?.onOpenThemeSwitcher ?? vi.fn();
 
@@ -143,5 +169,54 @@ describe('SettingsSheet reorganization', () => {
     expect(screen.getByTestId('settings-storage-card')).toBeInTheDocument();
     expect(screen.getByTestId('settings-install-card')).toBeInTheDocument();
     expect(screen.getByTestId('app-version-value')).toBeInTheDocument();
+  });
+
+  it('toggles tap-friendly ? helper tooltips for recording options (including Mono vs Stereo, Bitrate, Format, and DSP toggles)', async () => {
+    const user = userEvent.setup();
+    renderSettingsSheet({ format: 'm4a' });
+
+    // Recording Device & Quality Presets ? buttons
+    const deviceHelpBtn = screen.getByTestId('help-btn-recording-device');
+    expect(deviceHelpBtn).toHaveAttribute('aria-expanded', 'false');
+    await user.click(deviceHelpBtn);
+    expect(deviceHelpBtn).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByTestId('help-panel-recording-device')).toHaveTextContent(
+      /System Default/i,
+    );
+    await user.click(deviceHelpBtn);
+    expect(
+      screen.queryByTestId('help-panel-recording-device'),
+    ).not.toBeInTheDocument();
+
+    // Expand Advanced Audio and inspect Channels (Mono vs Stereo) & Bitrate help cards
+    await user.click(screen.getByTestId('advanced-audio-toggle'));
+
+    const channelsHelpBtn = screen.getByTestId('help-btn-channels');
+    await user.click(channelsHelpBtn);
+    const channelsPanel = screen.getByTestId('help-panel-channels');
+    expect(channelsPanel).toHaveTextContent(/Mono vs\. Stereo/i);
+    expect(channelsPanel).toHaveTextContent(/half the file size/i);
+
+    const bitrateHelpBtn = screen.getByTestId('help-btn-bitrate');
+    await user.click(bitrateHelpBtn);
+    expect(screen.getByTestId('help-panel-bitrate')).toHaveTextContent(
+      /96k–128k/i,
+    );
+
+    // Close panel via its internal close button
+    await user.click(screen.getByLabelText('Close Channels help'));
+    expect(screen.queryByTestId('help-panel-channels')).not.toBeInTheDocument();
+    expect(channelsHelpBtn).toHaveAttribute('aria-expanded', 'false');
+
+    // DSP toggle help card does not flip the underlying switch
+    const echoSwitch = screen.getByRole('switch', {
+      name: 'Browser Echo Cancellation',
+    });
+    expect(echoSwitch).toHaveAttribute('aria-checked', 'false');
+    await user.click(screen.getByTestId('help-btn-dsp-echo-cancellation'));
+    expect(
+      screen.getByTestId('help-panel-dsp-echo-cancellation'),
+    ).toHaveTextContent(/speakerphone calls/i);
+    expect(echoSwitch).toHaveAttribute('aria-checked', 'false');
   });
 });

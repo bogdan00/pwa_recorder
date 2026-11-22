@@ -242,7 +242,9 @@ test.describe('CUJ-06: Audiobook Library Browsing (Search & Sort) & Themes', () 
       await assertElementsFitViewport(`SettingsSheet Tabs (${vp.label})`, '.settings-tab');
       await page.getByTestId('advanced-audio-toggle').click();
       await expect(page.getByTestId('advanced-audio-panel')).toBeVisible();
-      await assertNoHorizontalOverflow(`SettingsSheet Advanced Audio (${vp.label})`, ['.gain-scale-ticks']);
+      await page.getByTestId('help-btn-channels').click();
+      await expect(page.getByTestId('help-panel-channels')).toBeVisible();
+      await assertNoHorizontalOverflow(`SettingsSheet Advanced Audio (${vp.label})`, ['.gain-scale-ticks', '.info-tip-panel']);
       await page.getByTestId('settings-tab-drive').click();
       await assertNoHorizontalOverflow(`SettingsSheet Drive (${vp.label})`);
       await page.getByTestId('settings-tab-app').click();

@@ -4,6 +4,7 @@ import type { AppSettings } from '../../types/models';
 import { getThemeDefinition } from '../../styles/themes';
 import { resolveEffectiveTheme } from '../../storage/settings';
 import { ToggleRow } from '../../components/ToggleRow';
+import { SETTINGS_HELP } from './settingsHelpContent';
 
 export interface AppearanceDefaultsSectionProps {
   settings: AppSettings;
@@ -88,6 +89,7 @@ export const AppearanceDefaultsSection: React.FC<
         title="Keep Screen Awake While Recording"
         description="Prevents your phone from locking mid-chapter (Screen Wake Lock)"
         checked={settings.keepScreenAwake}
+        help={SETTINGS_HELP['keep-screen-awake']}
         onToggle={() =>
           onUpdateSettings({
             ...settings,

@@ -12,7 +12,13 @@ import type {
   CapturedMicTestAudio,
   MicTestTelemetry,
 } from '../../audio/audioDevices';
+import {
+  InfoTipButton,
+  InfoTipPanel,
+  useInfoTip,
+} from '../../components/InfoTip';
 import { formatDurationMs, formatSampleRate } from '../../utils/format';
+import { SETTINGS_HELP } from './settingsHelpContent';
 
 export interface DeviceSettingsSectionProps {
   settings: AppSettings;
@@ -44,24 +50,43 @@ export const DeviceSettingsSection: React.FC<DeviceSettingsSectionProps> = ({
   onToggleMicTest,
   onSelectDevice,
   onOpenMicQualityLab,
-}) => (
-  <section className="settings-section" aria-label="Recording Device">
-    <div className="settings-section__head">
-      <h3 className="settings-section__title">
-        <Mic size={17} />
-        Recording Device
-      </h3>
-      <button
-        type="button"
-        className="btn btn-ghost btn-sm"
-        onClick={onRefreshDevices}
-        disabled={deviceLoading}
-        aria-label="Refresh microphones"
-      >
-        <RefreshCw size={14} className={deviceLoading ? 'spin' : ''} />
-        Refresh
-      </button>
-    </div>
+}) => {
+  const deviceTip = useInfoTip();
+
+  return (
+    <section className="settings-section" aria-label="Recording Device">
+      <div className="settings-section__head">
+        <div className="info-tip-label-row">
+          <h3 className="settings-section__title">
+            <Mic size={17} />
+            Recording Device
+          </h3>
+          <InfoTipButton
+            content={SETTINGS_HELP['recording-device']}
+            open={deviceTip.open}
+            panelId={deviceTip.panelId}
+            onToggle={deviceTip.toggle}
+          />
+        </div>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={onRefreshDevices}
+          disabled={deviceLoading}
+          aria-label="Refresh microphones"
+        >
+          <RefreshCw size={14} className={deviceLoading ? 'spin' : ''} />
+          Refresh
+        </button>
+      </div>
+
+      {deviceTip.open && (
+        <InfoTipPanel
+          content={SETTINGS_HELP['recording-device']}
+          panelId={deviceTip.panelId}
+          onClose={deviceTip.close}
+        />
+      )}
 
     {!micPermGranted && (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -224,4 +249,5 @@ export const DeviceSettingsSection: React.FC<DeviceSettingsSectionProps> = ({
 
     {deviceError && <span className="badge badge-danger">{deviceError}</span>}
   </section>
-);
+  );
+};
