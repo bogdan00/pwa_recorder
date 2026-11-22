@@ -18,6 +18,7 @@ import {
 } from '../storage/db';
 import { setPlaybackAudioSession } from '../audio/backgroundCaptureKeepalive';
 import { downloadCloudRecording } from '../drive/syncService';
+import { useOptionalAppNavigation } from '../navigation/AppNavigationContext';
 import {
   formatPlaybackErrorMessage,
   isNotAllowedPlaybackError,
@@ -94,6 +95,10 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
   children,
   onProgressUpdated,
 }) => {
+  const nav = useOptionalAppNavigation();
+  const navRef = useRef(nav);
+  navRef.current = nav;
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const coverUrlRef = useRef<string | null>(null);
@@ -115,8 +120,34 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
   const [sleepTimerMode, setSleepTimerModeState] =
     useState<SleepTimerMode>('off');
   const [sleepSecondsLeft, setSleepSecondsLeft] = useState<number | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [localExpanded, setLocalExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const navHasPlayerOverlay =
+    nav?.overlays.some((o) => o.kind === 'player') ?? false;
+  const isExpanded = nav
+    ? Boolean(navHasPlayerOverlay && project && chapters[currentIndex])
+    : localExpanded;
+
+  const requestExpandPlayer = useCallback(() => {
+    const currentNav = navRef.current;
+    if (currentNav) {
+      if (!currentNav.overlays.some((o) => o.kind === 'player')) {
+        currentNav.openOverlay({ kind: 'player' });
+      }
+    } else {
+      setLocalExpanded(true);
+    }
+  }, []);
+
+  const requestCollapsePlayer = useCallback(() => {
+    const currentNav = navRef.current;
+    if (currentNav) {
+      currentNav.closeOverlay('player');
+    } else {
+      setLocalExpanded(false);
+    }
+  }, []);
 
   // Refs for latest state inside DOM audio event callbacks
   const projectRef = useRef<BookProject | null>(null);
@@ -394,10 +425,10 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
         }
       }
 
-      if (options.expand) setIsExpanded(true);
+      if (options.expand) requestExpandPlayer();
       await loadAndPlayIndex(proj, list, targetIndex, startSec, true);
     },
-    [loadAndPlayIndex],
+    [loadAndPlayIndex, requestExpandPlayer],
   );
 
   const playChapter = useCallback(
@@ -409,7 +440,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
     ) => {
       const idx = list.findIndex((r) => r.id === recordingId);
       if (idx < 0) return;
-      if (expand) setIsExpanded(true);
+      if (expand) requestExpandPlayer();
 
       // If tapping currently loaded chapter, just toggle play/pause
       if (
@@ -579,7 +610,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       audio.pause();
       setIsPlaying(false);
     }
-    setIsExpanded(false);
+    setLocalExpanded(false);
   }, []);
 
   const closePlayer = useCallback(() => {
@@ -602,11 +633,14 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
     setIsLoading(false);
     setCurrentTime(0);
     setDuration(0);
-    setIsExpanded(false);
+    setLocalExpanded(false);
     setSleepTimerModeState('off');
     setSleepSecondsLeft(null);
     setError(null);
     updateMediaSession(null, null, null);
+    if (navRef.current?.overlays.some((o) => o.kind === 'player')) {
+      navRef.current.closeOverlay('player');
+    }
   }, [clearSleepInterval, updateMediaSession]);
 
   const refreshChaptersForProject = useCallback(async (projId: string) => {
@@ -766,9 +800,9 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       cyclePlaybackRate,
       setSleepTimer,
       expandPlayer: () => {
-        if (chaptersRef.current.length > 0) setIsExpanded(true);
+        if (chaptersRef.current.length > 0) requestExpandPlayer();
       },
-      collapsePlayer: () => setIsExpanded(false),
+      collapsePlayer: requestCollapsePlayer,
       closePlayer,
       pauseForRecording,
       refreshChaptersForProject,
@@ -798,6 +832,8 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       setPlaybackRate,
       cyclePlaybackRate,
       setSleepTimer,
+      requestExpandPlayer,
+      requestCollapsePlayer,
       closePlayer,
       pauseForRecording,
       refreshChaptersForProject,

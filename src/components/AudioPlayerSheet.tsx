@@ -16,6 +16,7 @@ import {
   type SleepTimerMode,
   usePlayer,
 } from '../player/PlayerContext';
+import { useOptionalAppNavigation } from '../navigation/AppNavigationContext';
 import {
   formatBookNarrators,
   formatDurationMs,
@@ -33,6 +34,7 @@ const SLEEP_OPTIONS: Array<{ mode: SleepTimerMode; label: string }> = [
 ];
 
 export const AudioPlayerSheet: React.FC = () => {
+  const nav = useOptionalAppNavigation();
   const {
     project,
     chapters,
@@ -59,7 +61,36 @@ export const AudioPlayerSheet: React.FC = () => {
     collapsePlayer,
   } = usePlayer();
 
-  const [drawer, setDrawer] = useState<'none' | 'chapters' | 'sleep'>('none');
+  const [localDrawer, setLocalDrawer] = useState<'none' | 'chapters' | 'sleep'>(
+    'none',
+  );
+
+  const navDrawerOverlay = nav?.overlays.find(
+    (o): o is { kind: 'player-drawer'; drawer: 'chapters' | 'sleep' } =>
+      o.kind === 'player-drawer',
+  );
+  const drawer: 'none' | 'chapters' | 'sleep' = nav
+    ? (navDrawerOverlay?.drawer ?? 'none')
+    : localDrawer;
+
+  const setDrawer = (
+    next:
+      | 'none'
+      | 'chapters'
+      | 'sleep'
+      | ((prev: 'none' | 'chapters' | 'sleep') => 'none' | 'chapters' | 'sleep'),
+  ) => {
+    const resolved = typeof next === 'function' ? next(drawer) : next;
+    if (!nav) {
+      setLocalDrawer(resolved);
+      return;
+    }
+    if (resolved === 'none') {
+      nav.closeOverlay('player-drawer');
+    } else {
+      nav.openOverlay({ kind: 'player-drawer', drawer: resolved });
+    }
+  };
 
   const displayPeaks = useMemo(() => {
     const raw = currentRecording?.peaks ?? [];
@@ -108,7 +139,7 @@ export const AudioPlayerSheet: React.FC = () => {
             type="button"
             className="icon-btn"
             onClick={() => {
-              setDrawer('none');
+              if (!nav) setLocalDrawer('none');
               collapsePlayer();
             }}
             aria-label="Minimize player"

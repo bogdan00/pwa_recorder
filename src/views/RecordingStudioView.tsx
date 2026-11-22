@@ -27,6 +27,8 @@ import {
   type StudioSnapshot,
 } from '../audio/recordingEngine';
 import { formatDurationMs } from '../utils/format';
+import { routesEqual } from '../navigation/appHistory';
+import { useOptionalAppNavigation } from '../navigation/AppNavigationContext';
 import { useConfirm } from '../components/ConfirmDialogContext';
 import { SaveRecordingSheet } from '../components/SaveRecordingSheet';
 import { WaveformCanvas } from '../components/WaveformCanvas';
@@ -77,6 +79,10 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   engineFactory,
 }) => {
   const confirm = useConfirm();
+  const nav = useOptionalAppNavigation();
+  const navRef = useRef(nav);
+  navRef.current = nav;
+
   const engineRef = useRef<RecordingEngine | null>(null);
   if (!engineRef.current) {
     engineRef.current = engineFactory
@@ -104,6 +110,9 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmExitOpen, setConfirmExitOpen] = useState(false);
 
+  const saveTransientIdRef = useRef<string | null>(null);
+  const exitingRef = useRef(false);
+
   useEffect(() => {
     void probeAudioCapabilities().then(setCaps);
   }, []);
@@ -120,6 +129,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
       if (blackoutWakeTimerRef.current !== null) {
         window.clearTimeout(blackoutWakeTimerRef.current);
       }
+      saveTransientIdRef.current = null;
     };
   }, []);
 
@@ -161,6 +171,21 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
 
   const hasUnsaved = snap.durationMs > 0 || snap.phase === 'recording';
 
+  const guardStateRef = useRef({
+    hasUnsaved,
+    isSaving,
+    blackoutActive,
+    confirmExitOpen,
+    saveOpen,
+  });
+  guardStateRef.current = {
+    hasUnsaved,
+    isSaving,
+    blackoutActive,
+    confirmExitOpen,
+    saveOpen,
+  };
+
   // Warn before accidental browser refresh/close while audio is unsaved
   useEffect(() => {
     if (!hasUnsaved) return;
@@ -171,6 +196,44 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [hasUnsaved]);
+
+  // Intercept mobile swipe-back while audio is unsaved or encoding (ADR-12)
+  useEffect(() => {
+    if (!nav) return;
+    return nav.registerBackGuard({
+      shouldBlock: (current, target) => {
+        if (exitingRef.current) return false;
+        const st = guardStateRef.current;
+        // Never allow back navigation to interrupt an active encode/save
+        if (st.isSaving) return true;
+        // Only intercept attempts to leave the recording route itself (allow overlay/sheet pops)
+        if (
+          st.hasUnsaved &&
+          current.route.view === 'record' &&
+          !routesEqual(current.route, target.route)
+        ) {
+          return true;
+        }
+        return false;
+      },
+      onBlocked: () => {
+        const st = guardStateRef.current;
+        if (st.isSaving) return;
+        if (st.confirmExitOpen) {
+          setConfirmExitOpen(false);
+          return;
+        }
+        if (st.blackoutActive) {
+          setBlackoutWakeArmed(false);
+          setBlackoutActive(false);
+          return;
+        }
+        void engineRef.current?.pauseForStopPrompt().then(() => {
+          setConfirmExitOpen(true);
+        });
+      },
+    });
+  }, [nav]);
 
   const isScrubbedBack =
     snap.phase === 'paused' &&
@@ -245,23 +308,48 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
     if (ok) onToast('Restored trimmed audio');
   };
 
-  const handleStopClick = async () => {
-    if (snap.durationMs === 0 && snap.phase === 'idle') return;
-    await engineRef.current!.pauseForStopPrompt();
+  const openSaveSheet = () => {
     setSaveKeepMaster(settings.keepLocalMaster);
     setSaveError(null);
     setEncodeProgress(0);
     setSaveOpen(true);
+    if (navRef.current && !saveTransientIdRef.current) {
+      saveTransientIdRef.current = navRef.current.pushTransient(
+        'studio-save',
+        () => {
+          saveTransientIdRef.current = null;
+          if (engineRef.current?.getSnapshot().phase === 'playing') {
+            engineRef.current.pausePreview();
+          }
+          setSaveOpen(false);
+        },
+      );
+    }
+  };
+
+  const closeSaveSheet = () => {
+    if (snap.phase === 'playing') {
+      engineRef.current!.pausePreview();
+    }
+    setSaveOpen(false);
+    const id = saveTransientIdRef.current;
+    if (id) {
+      saveTransientIdRef.current = null;
+      navRef.current?.dismissTransient(id);
+    }
+  };
+
+  const handleStopClick = async () => {
+    if (snap.durationMs === 0 && snap.phase === 'idle') return;
+    await engineRef.current!.pauseForStopPrompt();
+    openSaveSheet();
   };
 
   const handleStopHere = async () => {
     if (snap.durationMs === 0 || snap.playheadMs < 150) return;
     const res = await engineRef.current!.trimToPlayhead();
     if (res.newDurationMs <= 0) return;
-    setSaveKeepMaster(settings.keepLocalMaster);
-    setSaveError(null);
-    setEncodeProgress(0);
-    setSaveOpen(true);
+    openSaveSheet();
   };
 
   const handleConfirmSave = async (name: string, notes: string) => {
@@ -276,6 +364,8 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
           { captureLocalMaster: saveKeepMaster },
         );
 
+      exitingRef.current = true;
+      saveTransientIdRef.current = null;
       await onRecordingSaved({
         name,
         notes,
@@ -293,6 +383,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
       });
       setSaveOpen(false);
     } catch (err) {
+      exitingRef.current = false;
       setSaveError(
         err instanceof Error ? err.message : 'Failed to encode recording.',
       );
@@ -303,6 +394,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
 
   const handleBackRequest = async () => {
     if (snap.durationMs === 0 && snap.phase === 'idle') {
+      exitingRef.current = true;
       onExit();
       return;
     }
@@ -661,12 +753,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
             void engineRef.current!.playPreviewFromPlayhead();
           }
         }}
-        onBackToRecording={() => {
-          if (snap.phase === 'playing') {
-            engineRef.current!.pausePreview();
-          }
-          setSaveOpen(false);
-        }}
+        onBackToRecording={closeSaveSheet}
         onConfirmSave={(name, notes) => void handleConfirmSave(name, notes)}
       />
 
@@ -696,6 +783,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
                 className="btn btn-danger"
                 onClick={async () => {
                   await engineRef.current!.discard();
+                  exitingRef.current = true;
                   setConfirmExitOpen(false);
                   onExit();
                 }}
@@ -706,6 +794,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
                 type="button"
                 className="btn btn-primary"
                 onClick={() => {
+                  exitingRef.current = true;
                   setConfirmExitOpen(false);
                   onToast('Draft saved locally — resume anytime from Library');
                   onExit();

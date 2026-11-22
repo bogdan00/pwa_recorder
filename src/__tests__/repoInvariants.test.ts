@@ -176,6 +176,10 @@ describe('Repository E2E, CUJ & ADR systemic invariants', () => {
       globalCss,
       'src/styles/global.css must use overflow-x: clip (not overflow-x: hidden) so position: sticky headers keep working',
     ).not.toMatch(/overflow-x\s*:\s*hidden/);
+    expect(
+      globalCss,
+      'src/styles/global.css must use overscroll-behavior-y: none (not overscroll-behavior: none or overscroll-behavior-x: none) so mobile horizontal swipe-back/forward gestures work (ADR-12)',
+    ).not.toMatch(/overscroll-behavior(?:-x)?\s*:\s*none/);
   });
 
   it('enforces ADR-11 two-tier formal verification parity across precheck, CI, and formal specs', () => {

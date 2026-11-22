@@ -18,6 +18,7 @@ For enduring system invariants and architectural decisions backing these journey
 | [CUJ-08](./CUJ-08-draft-recovery-drive-pwa.md) | Crash-Safe Draft Recovery, Google Drive Two-Way Sync, PWA Install Prompt & Subpath Integrity | P0 | [`e2e/cuj-08-draft-recovery-drive-pwa.spec.ts`](../e2e/cuj-08-draft-recovery-drive-pwa.spec.ts) |
 | [CUJ-09](./CUJ-09-multi-user-sharing.md) | Multi-User Family Sharing, Guided Join, Conflict-Safe Co-Narration, Listener Mode & Quick Chapter Share | P0 | [`e2e/cuj-09-multi-user-sharing.spec.ts`](../e2e/cuj-09-multi-user-sharing.spec.ts) |
 | [CUJ-10](./CUJ-10-local-master-export-compare.md) | Local Lossless Master Archival, Multi-Bitrate Export & Quality Lab (Blind A/B Threshold Finder) | P1 | [`e2e/cuj-10-local-master-export-compare.spec.ts`](../e2e/cuj-10-local-master-export-compare.spec.ts) |
+| [CUJ-11](./CUJ-11-history-back-forward-navigation.md) | Mobile Back & Forward History Navigation, Sheet Dismissal & Recording Exit Guard | P0 | [`e2e/cuj-11-history-back-forward-navigation.spec.ts`](../e2e/cuj-11-history-back-forward-navigation.spec.ts) |
 
 ## Running All CUJ E2E Tests
 

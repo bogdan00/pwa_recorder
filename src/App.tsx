@@ -59,9 +59,12 @@ import {
   canAutoSyncDrive,
   useDriveSync,
 } from './hooks/useDriveSync';
-import { useHashRoute } from './hooks/useHashRoute';
 import { useLibraryData } from './hooks/useLibraryData';
 import { useToasts } from './hooks/useToasts';
+import {
+  AppNavigationProvider,
+  useAppNavigation,
+} from './navigation/AppNavigationContext';
 import {
   pwaInstallController,
   type PwaInstallState,
@@ -102,11 +105,19 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
   const { toasts, showToast } = useToasts();
   const {
     route,
+    overlays,
     navigate,
+    replace,
+    openOverlay,
+    updateOverlayInPlace,
+    replaceOverlays,
+    closeOverlay,
+    goBackOrReplace,
+    unwindToRoute,
     pendingJoinInvite,
     setPendingJoinInvite,
     clearJoinHash,
-  } = useHashRoute();
+  } = useAppNavigation();
   const {
     projects,
     allRecordings,
@@ -121,25 +132,51 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  // Modals & transient status
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] =
-    useState<SettingsTab>('recording');
-  const [themeSwitcherOpen, setThemeSwitcherOpen] = useState(false);
-  const [iosInstallGuideOpen, setIosInstallGuideOpen] = useState(false);
+  // History-backed sheets & modals (ADR-12)
+  const settingsOverlay =
+    overlays.find(
+      (o): o is { kind: 'settings'; tab: SettingsTab } => o.kind === 'settings',
+    ) ?? null;
+  const settingsOpen = settingsOverlay !== null;
+  const settingsInitialTab: SettingsTab = settingsOverlay?.tab ?? 'recording';
+  const themeSwitcherOpen = overlays.some((o) => o.kind === 'theme');
+  const iosInstallGuideOpen = overlays.some((o) => o.kind === 'ios-install');
+  const bookEditorOverlay =
+    overlays.find(
+      (o): o is { kind: 'book-editor'; projectId: string | null } =>
+        o.kind === 'book-editor',
+    ) ?? null;
+  const bookEditorOpen = bookEditorOverlay !== null;
+  const editingBook = bookEditorOverlay?.projectId
+    ? (projects.find((p) => p.id === bookEditorOverlay.projectId) ?? null)
+    : null;
+  const shareOverlay =
+    overlays.find(
+      (
+        o,
+      ): o is
+        | { kind: 'share'; scope: 'library' }
+        | { kind: 'share'; scope: 'book'; projectId: string } =>
+        o.kind === 'share',
+    ) ?? null;
+  const shareTarget: ShareTarget | null = shareOverlay
+    ? shareOverlay.scope === 'book'
+      ? { scope: 'book', projectId: shareOverlay.projectId }
+      : { scope: 'library' }
+    : null;
+
   const [pwaInstallState, setPwaInstallState] = useState<PwaInstallState>(() =>
     pwaInstallController.getState(),
   );
-  const [bookEditorOpen, setBookEditorOpen] = useState(false);
-  const [editingBook, setEditingBook] = useState<BookProject | null>(null);
-  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
   const [micTestCapture, setMicTestCapture] =
     useState<CapturedMicTestAudio | null>(null);
 
-  const openSettings = useCallback((tab: SettingsTab = 'recording') => {
-    setSettingsInitialTab(tab);
-    setSettingsOpen(true);
-  }, []);
+  const openSettings = useCallback(
+    (tab: SettingsTab = 'recording') => {
+      openOverlay({ kind: 'settings', tab });
+    },
+    [openOverlay],
+  );
 
   useEffect(() => {
     registerProgressHandler(upsertProgress);
@@ -188,7 +225,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
     reloadData,
     showToast,
     onOpenSettings: () => openSettings('drive'),
-    onCloseSettings: () => setSettingsOpen(false),
+    onCloseSettings: () => closeOverlay('settings'),
     onSetPendingJoinInvite: setPendingJoinInvite,
     onClearJoinHash: clearJoinHash,
   });
@@ -205,10 +242,13 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
       return;
     }
     if (current.isIosManualInstall) {
-      setSettingsOpen(false);
-      setIosInstallGuideOpen(true);
+      if (settingsOpen) {
+        replaceOverlays([{ kind: 'ios-install' }]);
+      } else {
+        openOverlay({ kind: 'ios-install' });
+      }
     }
-  }, [showToast]);
+  }, [openOverlay, replaceOverlays, settingsOpen, showToast]);
 
   const notifySavedWithOptionalReconnect = (
     message: string,
@@ -288,7 +328,9 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
     );
 
     if (!isEdit) {
-      navigate({ view: 'book', projectId: savedProject.id });
+      // Replace the BookEditor overlay entry with the newly created Book Detail route
+      // so swiping back from the new book returns directly to Library.
+      replace({ view: 'book', projectId: savedProject.id }, []);
     }
     if (canAutoSync) {
       void drive.handleSyncProject(savedProject.id, true);
@@ -301,7 +343,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
     }
     await deleteProject(projectId);
     await reloadData();
-    navigate({ view: 'library' });
+    unwindToRoute({ view: 'library' });
     showToast('Book removed from device');
   };
 
@@ -361,7 +403,10 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
     await reloadData();
     await player.refreshChaptersForProject(project.id);
 
-    navigate({ view: 'book', projectId: project.id });
+    unwindToRoute(
+      { view: 'book', projectId: project.id },
+      { unwindFromViews: ['record'] },
+    );
     notifySavedWithOptionalReconnect(
       saved.localMaster
         ? `Saved "${rec.name}" + local lossless master`
@@ -605,7 +650,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           onOpenSettings={() => openSettings('recording')}
           onExit={() => {
             void reloadData();
-            navigate({ view: 'book', projectId: activeBook.id });
+            goBackOrReplace({ view: 'book', projectId: activeBook.id });
           }}
           onToast={(msg) => showToast(msg)}
           onRecordingSaved={(saved) => handleRecordingSaved(activeBook, saved)}
@@ -620,7 +665,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           onOpenSettings={() => openSettings('recording')}
           audioQuality={settings.audioQuality}
           hasMiniPlayer={hasMiniPlayer}
-          onBack={() => navigate({ view: 'library' })}
+          onBack={() => goBackOrReplace({ view: 'library' })}
           onApplyRecommendedQuality={(nextQuality) =>
             handleUpdateSettings({
               ...settingsRef.current,
@@ -635,7 +680,9 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           recording={activeCompareRecording}
           audioQuality={settings.audioQuality}
           hasMiniPlayer={hasMiniPlayer}
-          onBack={() => navigate({ view: 'book', projectId: activeBook.id })}
+          onBack={() =>
+            goBackOrReplace({ view: 'book', projectId: activeBook.id })
+          }
           onApplyRecommendedQuality={(nextQuality) =>
             handleUpdateSettings({
               ...settingsRef.current,
@@ -661,13 +708,16 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           }
           isSyncing={drive.isSyncing}
           hasMiniPlayer={hasMiniPlayer}
-          onBack={() => navigate({ view: 'library' })}
-          onEditBook={() => {
-            setEditingBook(activeBook);
-            setBookEditorOpen(true);
-          }}
+          onBack={() => goBackOrReplace({ view: 'library' })}
+          onEditBook={() =>
+            openOverlay({ kind: 'book-editor', projectId: activeBook.id })
+          }
           onShareBook={() =>
-            setShareTarget({ scope: 'book', projectId: activeBook.id })
+            openOverlay({
+              kind: 'share',
+              scope: 'book',
+              projectId: activeBook.id,
+            })
           }
           onStartRecording={() => {
             player.pauseForRecording();
@@ -713,7 +763,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
               player.closePlayer();
             }
             return drive.handleRemoveImportedBook(activeBook.id, () =>
-              navigate({ view: 'library' }),
+              unwindToRoute({ view: 'library' }),
             );
           }}
         />
@@ -740,13 +790,12 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           onInstallApp={handleInstallApp}
           onDismissInstallBanner={() => pwaInstallController.dismissBanner()}
           onOpenBook={(projectId) => navigate({ view: 'book', projectId })}
-          onNewBook={() => {
-            setEditingBook(null);
-            setBookEditorOpen(true);
-          }}
-          onOpenThemeSwitcher={() => setThemeSwitcherOpen(true)}
+          onNewBook={() => openOverlay({ kind: 'book-editor', projectId: null })}
+          onOpenThemeSwitcher={() => openOverlay({ kind: 'theme' })}
           onOpenSettings={openSettings}
-          onOpenShareLibrary={() => setShareTarget({ scope: 'library' })}
+          onOpenShareLibrary={() =>
+            openOverlay({ kind: 'share', scope: 'library' })
+          }
           onSyncNow={drive.handleSyncOrReconnectAll}
           onReconnectDrive={() => drive.handleConnectDrive()}
           onResumeDraft={(draft) => {
@@ -806,7 +855,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
       <BookEditorSheet
         open={bookEditorOpen}
         initialProject={editingBook}
-        onClose={() => setBookEditorOpen(false)}
+        onClose={() => closeOverlay('book-editor')}
         onSave={handleSaveBook}
         onDelete={editingBook ? handleDeleteBook : undefined}
       />
@@ -833,7 +882,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
             : settings.driveAccessRole
         }
         isDriveConnected={drive.authState.status === 'connected'}
-        onClose={() => setShareTarget(null)}
+        onClose={() => closeOverlay('share')}
         onConnectDrive={() => drive.handleConnectDrive({ skipAutoSync: true })}
         onPrepareFolder={async () => {
           if (shareTarget?.scope === 'book' && shareSheetBook) {
@@ -890,6 +939,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
       <SettingsSheet
         open={settingsOpen}
         initialTab={settingsInitialTab}
+        onTabChange={(tab) => updateOverlayInPlace({ kind: 'settings', tab })}
         settings={settings}
         authState={drive.authState}
         pwaInstallState={pwaInstallState}
@@ -900,11 +950,10 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
         onOpenMicQualityLab={(clip) => {
           if (clip) setMicTestCapture(clip);
           player.pauseForRecording();
-          setSettingsOpen(false);
-          navigate({ view: 'mic-compare' });
+          replace({ view: 'mic-compare' }, []);
         }}
-        onOpenThemeSwitcher={() => setThemeSwitcherOpen(true)}
-        onClose={() => setSettingsOpen(false)}
+        onOpenThemeSwitcher={() => openOverlay({ kind: 'theme' })}
+        onClose={() => closeOverlay('settings')}
         onUpdateSettings={handleUpdateSettings}
         onInstallApp={handleInstallApp}
         onConnectDrive={() => drive.handleConnectDrive()}
@@ -913,10 +962,9 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           showToast('Signed out of Google Drive');
         }}
         onSyncAll={drive.handleSyncOrReconnectAll}
-        onOpenShareLibrary={() => {
-          setSettingsOpen(false);
-          setShareTarget({ scope: 'library' });
-        }}
+        onOpenShareLibrary={() =>
+          replaceOverlays([{ kind: 'share', scope: 'library' }])
+        }
         onJoinSharedFolder={drive.handleJoinSharedFolderFromSettings}
         onPickSharedFolder={drive.handlePickSharedFolder}
         onSwitchToPersonalLibrary={drive.handleSwitchToPersonalLibrary}
@@ -941,13 +989,13 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
         onSelectTheme={(theme) =>
           handleUpdateSettings({ ...settingsRef.current, theme })
         }
-        onClose={() => setThemeSwitcherOpen(false)}
+        onClose={() => closeOverlay('theme')}
       />
 
       {/* iOS / iPadOS Add to Home Screen Guide */}
       <IosInstallGuideModal
         open={iosInstallGuideOpen}
-        onClose={() => setIosInstallGuideOpen(false)}
+        onClose={() => closeOverlay('ios-install')}
       />
     </>
   );
@@ -968,14 +1016,16 @@ export const App: React.FC<AppProps> = (props) => {
   }, []);
 
   return (
-    <ConfirmProvider>
-      <PlayerProvider onProgressUpdated={handleProgressUpdated}>
-        <StoryTapeShell
-          {...props}
-          registerProgressHandler={registerProgressHandler}
-        />
-      </PlayerProvider>
-    </ConfirmProvider>
+    <AppNavigationProvider>
+      <ConfirmProvider>
+        <PlayerProvider onProgressUpdated={handleProgressUpdated}>
+          <StoryTapeShell
+            {...props}
+            registerProgressHandler={registerProgressHandler}
+          />
+        </PlayerProvider>
+      </ConfirmProvider>
+    </AppNavigationProvider>
   );
 };
 

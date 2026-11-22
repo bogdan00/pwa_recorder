@@ -207,6 +207,7 @@ export const test = base.extend<StoryTapeTestOptions>({
       window.addEventListener('load', scheduleCheck);
       window.addEventListener('resize', scheduleCheck);
       window.addEventListener('hashchange', scheduleCheck);
+      window.addEventListener('popstate', scheduleCheck);
 
       const startObservers = () => {
         if (!document.body) return;

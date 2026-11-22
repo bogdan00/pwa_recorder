@@ -28,6 +28,7 @@ export type SettingsTab = 'recording' | 'drive' | 'app';
 interface SettingsSheetProps {
   open: boolean;
   initialTab?: SettingsTab;
+  onTabChange?: (tab: SettingsTab) => void;
   settings: AppSettings;
   authState: GoogleAuthState;
   pwaInstallState?: PwaInstallState;
@@ -66,6 +67,7 @@ const SETTINGS_TABS: Array<{
 export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   open,
   initialTab = 'recording',
+  onTabChange,
   settings,
   authState,
   pwaInstallState,
@@ -186,6 +188,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
       micTest.stop();
     }
     setActiveTab(tab);
+    onTabChange?.(tab);
     if (bodyRef.current) {
       bodyRef.current.scrollTop = 0;
     }
