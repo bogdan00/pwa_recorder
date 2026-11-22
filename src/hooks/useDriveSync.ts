@@ -5,6 +5,7 @@ import {
   getProject,
   putProject,
 } from '../storage/db';
+import { recordSyncDebugEvent } from '../drive/debugLog';
 import { DriveApiError, DriveClient } from '../drive/driveClient';
 import { googleAuth, type GoogleAuthState } from '../drive/googleAuth';
 import { pickSharedDriveFolder } from '../drive/googlePicker';
@@ -222,7 +223,15 @@ export function useDriveSync({
       error?: string;
       importedProjectId?: string;
     }> => {
+      recordSyncDebugEvent('share', 'join_start', {
+        folderId: options.folderId,
+        name: options.name,
+        requestedScope: options.scope,
+        requestedRole: options.role,
+        requestedMode: options.mode ?? 'default',
+      });
       if (!canAutoSyncDrive()) {
+        recordSyncDebugEvent('share', 'join_blocked_not_connected', {});
         return { ok: false, error: 'Please connect Google Drive first.' };
       }
 
@@ -233,6 +242,15 @@ export function useDriveSync({
         const resolvedRole: 'writer' | 'reader' =
           info.accessRole === 'reader' ? 'reader' : 'writer';
         const resolvedName = info.name || options.name || 'Shared Audiobooks';
+
+        recordSyncDebugEvent('share', 'join_inspected', {
+          folderId: info.folderId,
+          resolvedName,
+          resolvedScope,
+          resolvedRole,
+          rawAccessRole: info.accessRole,
+          requestedMode: options.mode ?? 'default',
+        });
 
         const activeSettings = settingsRef.current;
         const canImportToActiveLibrary = !(
@@ -261,6 +279,12 @@ export function useDriveSync({
           onSetPendingJoinInvite(null);
           onClearJoinHash();
           await reloadData();
+          recordSyncDebugEvent('share', 'join_import_success', {
+            projectId: imported.projectId,
+            title: imported.title,
+            copiedChapters: imported.copiedChapters,
+            alreadyExisted: imported.alreadyExisted,
+          });
           showToast(
             imported.alreadyExisted
               ? `Updated "${imported.title}" from source`
@@ -298,6 +322,11 @@ export function useDriveSync({
         onClearJoinHash();
 
         await handleSyncAll(nextSettings);
+        recordSyncDebugEvent('share', 'join_link_success', {
+          folderId: info.folderId,
+          resolvedScope,
+          resolvedRole,
+        });
         showToast(
           resolvedScope === 'book'
             ? `Joined shared book "${resolvedName}"`
@@ -306,6 +335,11 @@ export function useDriveSync({
         return { ok: true };
       } catch (err) {
         if (err instanceof DriveApiError && (err.status === 404 || err.status === 403)) {
+          recordSyncDebugEvent('share', 'join_needs_picker', {
+            folderId: options.folderId,
+            status: err.status,
+            error: err.message,
+          });
           return {
             ok: false,
             needsPicker: true,
@@ -315,6 +349,10 @@ export function useDriveSync({
         }
         const msg =
           err instanceof Error ? err.message : 'Could not link shared folder.';
+        recordSyncDebugEvent('share', 'join_error', {
+          folderId: options.folderId,
+          error: msg,
+        });
         showToast(msg);
         return { ok: false, error: msg };
       } finally {

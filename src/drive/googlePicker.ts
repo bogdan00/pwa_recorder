@@ -1,3 +1,5 @@
+import { recordSyncDebugEvent } from './debugLog';
+
 export interface PickedDriveFolder {
   folderId: string;
   name: string;
@@ -114,9 +116,15 @@ export async function pickSharedDriveFolder(options: {
   clientId?: string;
   title?: string;
 }): Promise<PickedDriveFolder | null> {
+  recordSyncDebugEvent('picker', 'open_requested', {
+    title: options.title,
+    hasApiKey: Boolean(options.apiKey?.trim()),
+    hasClientId: Boolean(options.clientId?.trim()),
+  });
   await ensureGapiLoaded();
   const pickerApi = getGooglePickerApi();
   if (!pickerApi) {
+    recordSyncDebugEvent('picker', 'init_failed', {});
     throw new Error('Google Picker could not be initialized.');
   }
 
@@ -131,11 +139,14 @@ export async function pickSharedDriveFolder(options: {
       .setOAuthToken(options.accessToken)
       .setCallback((data) => {
         if (data.action === pickerApi.Action.PICKED && data.docs?.[0]?.id) {
-          resolve({
+          const picked = {
             folderId: data.docs[0].id,
             name: data.docs[0].name || 'Shared Audiobooks',
-          });
+          };
+          recordSyncDebugEvent('picker', 'folder_picked', picked);
+          resolve(picked);
         } else if (data.action === pickerApi.Action.CANCEL) {
+          recordSyncDebugEvent('picker', 'cancelled', {});
           resolve(null);
         }
       });

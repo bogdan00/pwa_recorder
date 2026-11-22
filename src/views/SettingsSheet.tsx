@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Cloud, Mic, SlidersHorizontal, X } from 'lucide-react';
+import { Bug, Cloud, Mic, SlidersHorizontal, X } from 'lucide-react';
 import type { AppSettings } from '../types/models';
 import {
   type AudioInputDeviceInfo,
@@ -18,12 +18,13 @@ import type { PwaInstallState } from '../pwa/installPrompt';
 import { getLocalMastersSummary } from '../storage/db';
 import { AppearanceDefaultsSection } from './settings/AppearanceDefaultsSection';
 import { DeviceSettingsSection } from './settings/DeviceSettingsSection';
+import { DiagnosticsSettingsSection } from './settings/DiagnosticsSettingsSection';
 import { DriveSyncSettingsSection } from './settings/DriveSyncSettingsSection';
 import { QualitySettingsSection } from './settings/QualitySettingsSection';
 import { StorageAppSection } from './settings/StorageAppSection';
 import './SettingsSheet.css';
 
-export type SettingsTab = 'recording' | 'drive' | 'app';
+export type SettingsTab = 'recording' | 'drive' | 'app' | 'debug';
 
 interface SettingsSheetProps {
   open: boolean;
@@ -62,6 +63,7 @@ const SETTINGS_TABS: Array<{
   { id: 'recording', label: 'Recording', icon: <Mic size={15} /> },
   { id: 'drive', label: 'Drive', icon: <Cloud size={15} /> },
   { id: 'app', label: 'App', icon: <SlidersHorizontal size={15} /> },
+  { id: 'debug', label: 'Debug', icon: <Bug size={15} /> },
 ];
 
 export const SettingsSheet: React.FC<SettingsSheetProps> = ({
@@ -373,6 +375,13 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
                 onToast={onToast}
               />
             </>
+          )}
+
+          {activeTab === 'debug' && (
+            <DiagnosticsSettingsSection
+              settings={settings}
+              onToast={onToast}
+            />
           )}
         </div>
       </div>

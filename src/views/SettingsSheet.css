@@ -8,8 +8,8 @@
 
 .settings-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
   padding: 4px;
   border-radius: var(--radius-md);
   background: var(--bg-input);
@@ -20,19 +20,32 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   min-height: 38px;
-  padding: 6px 8px;
+  padding: 6px 4px;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--ink-muted);
   white-space: nowrap;
   min-width: 0;
+  overflow: hidden;
   transition:
     background-color 140ms var(--ease-out),
     color 140ms var(--ease-out),
     box-shadow 140ms var(--ease-out);
+}
+
+@media (min-width: 420px) {
+  .settings-tabs {
+    gap: 4px;
+  }
+
+  .settings-tab {
+    gap: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+  }
 }
 
 .settings-tab:hover {

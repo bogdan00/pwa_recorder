@@ -2,6 +2,7 @@ import type {
   DriveAccessProposal,
   DriveCollaboratorPermission,
 } from '../types/models';
+import { recordSyncDebugEvent } from './debugLog';
 
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
@@ -11,6 +12,8 @@ const FILE_SUMMARY_FIELDS =
   'id,name,mimeType,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare)';
 const FILE_LIST_FIELDS =
   'nextPageToken,files(id,name,mimeType,size,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare))';
+const VISIBLE_LIST_FIELDS =
+  'files(id,name,mimeType,parents,modifiedTime,ownedByMe,shared,capabilities(canEdit,canAddChildren,canShare))';
 const UPLOAD_SUMMARY_FIELDS = 'id,name,mimeType,size,modifiedTime';
 const PERMISSION_FIELDS = 'id,type,role,emailAddress,displayName';
 
@@ -27,6 +30,7 @@ export interface DriveFileSummary {
   id: string;
   name: string;
   mimeType: string;
+  parents?: string[];
   size?: string;
   modifiedTime?: string;
   ownedByMe?: boolean;
@@ -79,15 +83,47 @@ export class DriveClient {
       ignore404?: boolean;
     } = {},
   ): Promise<Response> {
-    const res = await fetch(url, {
-      method: init.method,
-      headers: this.authHeaders(init.headers),
-      body: init.body,
-    });
-    if (!res.ok && !(init.ignore404 && res.status === 404)) {
-      throw await parseErrorResponse(res);
+    const method = (init.method || 'GET').toUpperCase();
+    const startedAt = Date.now();
+    const shortUrl = url
+      .replace(/^https:\/\/www\.googleapis\.com/, '')
+      .slice(0, 260);
+    try {
+      const res = await fetch(url, {
+        method: init.method,
+        headers: this.authHeaders(init.headers),
+        body: init.body,
+      });
+      const durationMs = Date.now() - startedAt;
+      if (!res.ok && !(init.ignore404 && res.status === 404)) {
+        const parsedErr = await parseErrorResponse(res);
+        recordSyncDebugEvent('drive_api', 'http_error', {
+          method,
+          url: shortUrl,
+          status: res.status,
+          durationMs,
+          error: parsedErr.message,
+        });
+        throw parsedErr;
+      }
+      recordSyncDebugEvent('drive_api', 'http_ok', {
+        method,
+        url: shortUrl,
+        status: res.status,
+        durationMs,
+      });
+      return res;
+    } catch (err) {
+      if (!(err instanceof DriveApiError)) {
+        recordSyncDebugEvent('drive_api', 'network_error', {
+          method,
+          url: shortUrl,
+          durationMs: Date.now() - startedAt,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      throw err;
     }
-    return res;
   }
 
   private async requestJson<T>(
@@ -184,7 +220,36 @@ export class DriveClient {
       pageToken = data.nextPageToken;
     } while (pageToken);
 
+    recordSyncDebugEvent('drive_api', 'list_folder_children', {
+      folderId,
+      count: files.length,
+      items: files.slice(0, 20).map((f) => ({
+        id: f.id,
+        name: f.name,
+        mimeType: f.mimeType,
+        ownedByMe: f.ownedByMe,
+        shared: f.shared,
+      })),
+    });
+
     return files;
+  }
+
+  /**
+   * Lists non-trashed Drive files/folders currently visible to StoryTape under `drive.file`.
+   * Used by the Settings diagnostics exporter to verify Drive visibility across devices.
+   */
+  async listVisibleFiles(pageSize = 40): Promise<DriveFileSummary[]> {
+    const params = new URLSearchParams({
+      q: 'trashed = false',
+      fields: VISIBLE_LIST_FIELDS,
+      pageSize: String(Math.min(100, Math.max(1, pageSize))),
+      orderBy: 'modifiedTime desc',
+    });
+    const data = await this.requestJson<{ files?: DriveFileSummary[] }>(
+      `${DRIVE_API_BASE}/files?${params.toString()}`,
+    );
+    return data.files ?? [];
   }
 
   async uploadJsonFile(

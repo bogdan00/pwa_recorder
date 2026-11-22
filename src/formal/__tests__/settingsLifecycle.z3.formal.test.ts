@@ -135,9 +135,9 @@ describe('Tier 2 Z3 SMT Proofs: Studio Settings Lifecycle Unbounded Inductive Sa
     z3 = await getZ3();
   });
 
-  it('proves all 9 shared SETTINGS_INVARIANT_IR formulas hold inductively across all 12 transitions for unbounded openCount ∈ ℤ≥0', async () => {
+  it('proves all 9 shared SETTINGS_INVARIANT_IR formulas hold inductively across all 13 transitions for unbounded openCount ∈ ℤ≥0', async () => {
     const allTransitions = Object.values(SETTINGS_TRANSITIONS_IR);
-    expect(allTransitions.length).toBe(12);
+    expect(allTransitions.length).toBe(13);
 
     const result = await proveInductiveInvariant<Z3SettingsState>(
       'SettingsLifecycle',

@@ -3,7 +3,7 @@ import {
   parseJoinInviteInput,
 } from '../drive/shareUtils';
 
-export type SettingsTab = 'recording' | 'drive' | 'app';
+export type SettingsTab = 'recording' | 'drive' | 'app' | 'debug';
 
 export type Route =
   | { view: 'library' }

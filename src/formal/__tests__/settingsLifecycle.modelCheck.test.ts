@@ -229,6 +229,12 @@ describe('Tier 1 Formal Proofs: Studio Settings Modal, Tabs, Disclosure & Mic Te
             .getAttribute('aria-selected') === 'true'
         ) {
           tab = 'app';
+        } else if (
+          screen
+            .getByTestId('settings-tab-debug')
+            .getAttribute('aria-selected') === 'true'
+        ) {
+          tab = 'debug';
         }
       }
 
@@ -283,6 +289,7 @@ describe('Tier 1 Formal Proofs: Studio Settings Modal, Tabs, Disclosure & Mic Te
         'switch_recording',
         'switch_drive',
         'switch_app',
+        'switch_debug',
         'toggle_advanced',
         'start_mic_test',
         'stop_mic_test',
@@ -321,6 +328,9 @@ describe('Tier 1 Formal Proofs: Studio Settings Modal, Tabs, Disclosure & Mic Te
               break;
             case 'switch_app':
               clickIfInteractive(screen.queryByTestId('settings-tab-app'));
+              break;
+            case 'switch_debug':
+              clickIfInteractive(screen.queryByTestId('settings-tab-debug'));
               break;
             case 'toggle_advanced':
               clickIfInteractive(screen.queryByTestId('advanced-audio-toggle'));

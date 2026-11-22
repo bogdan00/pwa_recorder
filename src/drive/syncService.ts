@@ -26,6 +26,7 @@ import {
   createId,
   sanitizeFileName,
 } from '../utils/format';
+import { recordSyncDebugEvent } from './debugLog';
 import {
   DriveApiError,
   DriveClient,
@@ -271,18 +272,34 @@ export async function pullSingleBookFolderFromDrive(
 ): Promise<{ projectId: string | null; updated: boolean }> {
   const files = await client.listFolderChildren(folder.id);
   const metaFile = files.find((f) => f.name === PROJECT_METADATA_FILENAME);
-  if (!metaFile) return { projectId: null, updated: false };
+  if (!metaFile) {
+    recordSyncDebugEvent('sync', 'pull_book_skipped_no_manifest', {
+      folderId: folder.id,
+      folderName: folder.name,
+      childCount: files.length,
+    });
+    return { projectId: null, updated: false };
+  }
 
   let remoteMeta: DriveProjectMetadataFile;
   try {
     remoteMeta = await client.downloadJsonFile<DriveProjectMetadataFile>(
       metaFile.id,
     );
-  } catch {
+  } catch (err) {
+    recordSyncDebugEvent('sync', 'pull_book_manifest_download_error', {
+      folderId: folder.id,
+      metaFileId: metaFile.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return { projectId: null, updated: false };
   }
 
   if (!remoteMeta?.id || !remoteMeta?.title) {
+    recordSyncDebugEvent('sync', 'pull_book_manifest_invalid', {
+      folderId: folder.id,
+      metaFileId: metaFile.id,
+    });
     return { projectId: null, updated: false };
   }
 
@@ -626,6 +643,14 @@ export async function pullRemoteProjectsFromDrive(
 
   const children = await client.listFolderChildren(rootFolderId);
   const bookFolders = children.filter((c) => c.mimeType === FOLDER_MIME);
+  recordSyncDebugEvent('sync', 'pull_root_children', {
+    rootFolderId,
+    isSharedLibrary: Boolean(options?.isSharedLibrary),
+    rootRole: options?.rootRole,
+    totalChildren: children.length,
+    folderCount: bookFolders.length,
+    linkedSharedBookCount: options?.sharedBookFolders?.length ?? 0,
+  });
   const seenFolderIds = new Set<string>();
   let pulledProjects = 0;
 
@@ -643,14 +668,25 @@ export async function pullRemoteProjectsFromDrive(
     if (seenFolderIds.has(link.folderId)) continue;
     try {
       const folder = await client.verifyFileExists(link.folderId);
-      if (!folder || folder.mimeType !== FOLDER_MIME) continue;
+      if (!folder || folder.mimeType !== FOLDER_MIME) {
+        recordSyncDebugEvent('sync', 'pull_linked_book_missing', {
+          folderId: link.folderId,
+          title: link.title,
+        });
+        continue;
+      }
       seenFolderIds.add(folder.id);
       const res = await pullSingleBookFolderFromDrive(client, folder, {
         isShared: true,
         defaultRole: link.role,
       });
       if (res.updated) pulledProjects += 1;
-    } catch {
+    } catch (err) {
+      recordSyncDebugEvent('sync', 'pull_linked_book_error', {
+        folderId: link.folderId,
+        title: link.title,
+        error: err instanceof Error ? err.message : String(err),
+      });
       // Skip inaccessible individual shared book without breaking overall sync
     }
   }

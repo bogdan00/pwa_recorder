@@ -57,8 +57,11 @@ Family members can share either their entire StoryTape Family Library or an indi
      - Listener can stream, download, and play all chapters normally.
      - Record, Edit, Reorder, and Delete controls are gracefully disabled or hidden, and sync never triggers failing write/upload requests to Google Drive.
 
-4. **Zero-Account Quick Chapter Share**
+4. **Zero-Account Quick Chapter Share & Sync Diagnostics Export**
    - From Book Detail, open a chapter's action menu and tap **Share Audio** (quick chapter share).
    - **Expected:**
      - Shares the chapter audio file directly via Web Share API (`navigator.share` with `files`) when supported by the browser/device (requiring no Google account or StoryTape login for the recipient).
      - Falls back automatically to downloading the chapter audio file when `navigator.share` with files is unavailable or unsupported.
+   - From Settings → **Debug** tab → **Sync & Sharing Diagnostics**, tap **Copy Debug JSON** or **Share / Save JSON**.
+   - **Expected:**
+     - Generates a redacted JSON report (zero OAuth tokens or API keys) containing app/auth metadata, Drive folder settings, local IndexedDB books/recordings, a live Google Drive visibility probe, and the persistent API/sync trace log.

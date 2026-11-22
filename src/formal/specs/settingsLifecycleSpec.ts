@@ -38,14 +38,15 @@ export const SETTINGS_TAB_CODE: Readonly<Record<SettingsTab, number>> = {
   recording: 0,
   drive: 1,
   app: 2,
+  debug: 3,
 };
 
-const CODE_TO_TAB: readonly SettingsTab[] = ['recording', 'drive', 'app'];
+const CODE_TO_TAB: readonly SettingsTab[] = ['recording', 'drive', 'app', 'debug'];
 
 export interface SettingsFormalState {
   /** Whether Studio Settings sheet is open. */
   readonly open: boolean;
-  /** Currently active segmented tab (recording | drive | app). */
+  /** Currently active segmented tab (recording | drive | app | debug). */
   readonly tab: SettingsTab;
   /** Whether the collapsible "Advanced Audio & Input Gain" panel is expanded. */
   readonly advancedOpen: boolean;
@@ -63,6 +64,7 @@ export type SettingsAction =
   | 'switch_recording'
   | 'switch_drive'
   | 'switch_app'
+  | 'switch_debug'
   | 'toggle_advanced'
   | 'start_mic_test'
   | 'stop_mic_test'
@@ -77,6 +79,7 @@ export const SETTINGS_ACTIONS: readonly SettingsAction[] = [
   'switch_recording',
   'switch_drive',
   'switch_app',
+  'switch_debug',
   'toggle_advanced',
   'start_mic_test',
   'stop_mic_test',
@@ -144,6 +147,7 @@ const S = settingsIrVars();
 const REC = E.int(SETTINGS_TAB_CODE.recording);
 const DRIVE = E.int(SETTINGS_TAB_CODE.drive);
 const APP = E.int(SETTINGS_TAB_CODE.app);
+const DEBUG = E.int(SETTINGS_TAB_CODE.debug);
 
 /**
  * The 8 Safety Invariants (□ Inv) defined ONCE as Expression IR ASTs.
@@ -152,7 +156,7 @@ const APP = E.int(SETTINGS_TAB_CODE.app);
 export const SETTINGS_INVARIANT_IR: readonly SettingsInvariantIr[] = [
   {
     name: 'valid_tab_enum',
-    expr: E.and(E.ge(S.tab, REC), E.le(S.tab, APP)),
+    expr: E.and(E.ge(S.tab, REC), E.le(S.tab, DEBUG)),
   },
   {
     name: 'open_count_non_negative',
@@ -202,7 +206,7 @@ export interface SettingsTransitionIr {
 }
 
 /**
- * All 12 Transitions defined ONCE as declarative Expression IR ASTs.
+ * All 13 Transitions defined ONCE as declarative Expression IR ASTs.
  * Both Tier 1 and Tier 2 execute/compile these exact records.
  */
 export const SETTINGS_TRANSITIONS_IR: Readonly<
@@ -253,6 +257,15 @@ export const SETTINGS_TRANSITIONS_IR: Readonly<
     guard: E.and(S.open, E.not(S.themeSwitcherOpen), E.neq(S.tab, APP)),
     next: {
       tab: APP,
+      advancedOpen: E.bool(false),
+      micTestActive: E.bool(false),
+    },
+  },
+  switch_debug: {
+    name: 'switch_debug',
+    guard: E.and(S.open, E.not(S.themeSwitcherOpen), E.neq(S.tab, DEBUG)),
+    next: {
+      tab: DEBUG,
       advancedOpen: E.bool(false),
       micTestActive: E.bool(false),
     },

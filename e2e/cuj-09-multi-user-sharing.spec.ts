@@ -1164,6 +1164,15 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     await expect(page.getByTestId('settings-collab-box')).toContainText(
       'Grandpa’s Adventure Tales',
     );
+
+    // Switch to Debug tab -> Sync & Sharing Diagnostics runs live Drive probe and copies redacted JSON cleanly
+    await page.getByTestId('settings-tab-debug').click();
+    await expect(page.getByTestId('settings-diagnostics-box')).toBeVisible();
+    await page.locator('#export-debug-copy-btn').click();
+    await expect(page.getByTestId('settings-diagnostics-box')).toContainText(
+      /Drive probe:/i,
+    );
+
     await page.getByLabel('Close settings').click();
 
     // Open the read-only shared book
