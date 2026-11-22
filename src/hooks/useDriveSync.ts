@@ -3,6 +3,7 @@ import type { AppSettings, SharedBookLink } from '../types/models';
 import {
   deleteProject,
   getProject,
+  listProjects,
   putProject,
 } from '../storage/db';
 import { recordSyncDebugEvent } from '../drive/debugLog';
@@ -16,6 +17,8 @@ import {
 import {
   importSharedBookIntoLibrary,
   inspectSharedDriveFolder,
+  isUnsharedPersonalBook,
+  shareLocalBooksIntoSharedLibrary,
   syncAllWithDrive,
   syncSingleProjectWithDrive,
   trashDriveFolder,
@@ -33,6 +36,11 @@ export interface UseDriveSyncOptions {
   onCloseSettings: () => void;
   onSetPendingJoinInvite: (invite: JoinShareInvite | null) => void;
   onClearJoinHash: () => void;
+  onPromptShareExistingBooks?: (info: {
+    folderName: string;
+    unsharedCount: number;
+    onConfirmShare: () => Promise<void>;
+  }) => void;
 }
 
 export function canAutoSyncDrive(): boolean {
@@ -53,6 +61,7 @@ export function useDriveSync({
   onCloseSettings,
   onSetPendingJoinInvite,
   onClearJoinHash,
+  onPromptShareExistingBooks,
 }: UseDriveSyncOptions) {
   const [authState, setAuthState] = useState<GoogleAuthState>(() =>
     googleAuth.getState(),
@@ -113,6 +122,60 @@ export function useDriveSync({
       }
     },
     [isSyncing, onOpenSettings, onUpdateSettings, reloadData, settingsRef, showToast],
+  );
+
+  const handleSharePersonalBooksToLibrary = useCallback(
+    async (overrideSettings?: AppSettings) => {
+      if (!canAutoSyncDrive()) {
+        onOpenSettings();
+        showToast('Connect Google Drive in Settings first');
+        return;
+      }
+      const activeSettings = overrideSettings ?? settingsRef.current;
+      if (
+        activeSettings.driveLibraryMode !== 'shared' ||
+        activeSettings.driveAccessRole === 'reader'
+      ) {
+        return;
+      }
+
+      const all = await listProjects();
+      const eligible = all.filter(isUnsharedPersonalBook);
+      if (eligible.length === 0) {
+        showToast('All your books are already in the shared library');
+        return;
+      }
+
+      setIsSyncing(true);
+      setSyncStatusMessage(
+        `Sharing ${eligible.length} personal ${eligible.length === 1 ? 'book' : 'books'}…`,
+      );
+      try {
+        const res = await shareLocalBooksIntoSharedLibrary(
+          eligible.map((p) => p.id),
+          activeSettings,
+          { onProgress: (u) => setSyncStatusMessage(u.message) },
+        );
+        await reloadData();
+        if (res.errors.length > 0) {
+          showToast(
+            `Shared ${res.sharedProjects} book(s) with ${res.errors.length} error(s)`,
+          );
+        } else if (res.sharedProjects > 0) {
+          showToast(
+            `Shared ${res.sharedProjects} ${res.sharedProjects === 1 ? 'book' : 'books'} into "${activeSettings.driveSharedFolderName || 'Shared Library'}"`,
+          );
+        }
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : 'Could not share personal books';
+        setSyncStatusMessage(msg);
+        showToast(msg);
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [onOpenSettings, reloadData, settingsRef, showToast],
   );
 
   const handleSyncProject = useCallback(
@@ -217,6 +280,7 @@ export function useDriveSync({
       scope: 'library' | 'book';
       role: 'writer' | 'reader';
       mode?: JoinBookMode;
+      shareExistingBooks?: boolean;
     }): Promise<{
       ok: boolean;
       needsPicker?: boolean;
@@ -229,6 +293,7 @@ export function useDriveSync({
         requestedScope: options.scope,
         requestedRole: options.role,
         requestedMode: options.mode ?? 'default',
+        shareExistingBooks: options.shareExistingBooks ?? 'unspecified',
       });
       if (!canAutoSyncDrive()) {
         recordSyncDebugEvent('share', 'join_blocked_not_connected', {});
@@ -322,15 +387,45 @@ export function useDriveSync({
         onClearJoinHash();
 
         await handleSyncAll(nextSettings);
+
+        let sharedExistingCount = 0;
+        if (resolvedScope === 'library' && resolvedRole === 'writer') {
+          const allLocal = await listProjects();
+          const unsharedPersonal = allLocal.filter(isUnsharedPersonalBook);
+          if (options.shareExistingBooks === true && unsharedPersonal.length > 0) {
+            const shareRes = await shareLocalBooksIntoSharedLibrary(
+              unsharedPersonal.map((p) => p.id),
+              nextSettings,
+              { onProgress: (u) => setSyncStatusMessage(u.message) },
+            );
+            sharedExistingCount = shareRes.sharedProjects;
+            await reloadData();
+          } else if (
+            options.shareExistingBooks === undefined &&
+            unsharedPersonal.length > 0 &&
+            onPromptShareExistingBooks
+          ) {
+            onPromptShareExistingBooks({
+              folderName: resolvedName,
+              unsharedCount: unsharedPersonal.length,
+              onConfirmShare: () =>
+                handleSharePersonalBooksToLibrary(nextSettings),
+            });
+          }
+        }
+
         recordSyncDebugEvent('share', 'join_link_success', {
           folderId: info.folderId,
           resolvedScope,
           resolvedRole,
+          sharedExistingCount,
         });
         showToast(
           resolvedScope === 'book'
             ? `Joined shared book "${resolvedName}"`
-            : `Connected to shared library "${resolvedName}"`,
+            : sharedExistingCount > 0
+              ? `Connected to "${resolvedName}" & shared ${sharedExistingCount} existing ${sharedExistingCount === 1 ? 'book' : 'books'}`
+              : `Connected to shared library "${resolvedName}"`,
         );
         return { ok: true };
       } catch (err) {
@@ -360,8 +455,10 @@ export function useDriveSync({
       }
     },
     [
+      handleSharePersonalBooksToLibrary,
       handleSyncAll,
       onClearJoinHash,
+      onPromptShareExistingBooks,
       onSetPendingJoinInvite,
       onUpdateSettings,
       reloadData,
@@ -512,6 +609,7 @@ export function useDriveSync({
     handleJoinFolder,
     handleJoinSharedFolderFromSettings,
     handlePickSharedFolder,
+    handleSharePersonalBooksToLibrary,
     handleSwitchToPersonalLibrary,
     handleUnlinkSharedBook,
     handleDetachImportedBook,

@@ -34,6 +34,7 @@ export interface JoinShareModalProps {
   isDriveConnected: boolean;
   isJoining: boolean;
   canImportToLibrary?: boolean;
+  unsharedPersonalBooksCount?: number;
   onClose: () => void;
   onConnectDrive: () => void;
   onJoinFolder: (options: {
@@ -42,6 +43,7 @@ export interface JoinShareModalProps {
     scope: 'library' | 'book';
     role: 'writer' | 'reader';
     mode?: JoinBookMode;
+    shareExistingBooks?: boolean;
   }) => Promise<{ ok: boolean; needsPicker?: boolean; error?: string }>;
   onToast: (message: string) => void;
 }
@@ -53,6 +55,7 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
   isDriveConnected,
   isJoining,
   canImportToLibrary = true,
+  unsharedPersonalBooksCount = 0,
   onClose,
   onConnectDrive,
   onJoinFolder,
@@ -63,6 +66,7 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
   const [requestedAccess, setRequestedAccess] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinMode, setJoinMode] = useState<JoinBookMode>('import');
+  const [shareExistingBooks, setShareExistingBooks] = useState(true);
 
   const busy = isJoining || pickingFolder;
 
@@ -77,6 +81,7 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
         ? 'import'
         : 'link';
     setJoinMode(defaultMode);
+    setShareExistingBooks(true);
   }, [open, invite, canImportToLibrary]);
 
   useEffect(() => {
@@ -92,6 +97,8 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
 
   const isLibrary = invite.scope === 'library';
   const isCoNarrator = invite.role === 'writer';
+  const showShareExistingPrompt =
+    isLibrary && isCoNarrator && unsharedPersonalBooksCount > 0;
   const effectiveMode: JoinBookMode =
     !isLibrary && canImportToLibrary ? joinMode : 'link';
   const isImportMode = !isLibrary && effectiveMode === 'import';
@@ -116,6 +123,9 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
         scope: invite.scope,
         role: invite.role,
         mode: isLibrary ? undefined : effectiveMode,
+        shareExistingBooks: showShareExistingPrompt
+          ? shareExistingBooks
+          : undefined,
       });
       if (result.ok) {
         setNeedsPicker(false);
@@ -164,6 +174,9 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
         scope: invite.scope,
         role: invite.role,
         mode: isLibrary ? undefined : effectiveMode,
+        shareExistingBooks: showShareExistingPrompt
+          ? shareExistingBooks
+          : undefined,
       });
       if (result.ok) {
         setNeedsPicker(false);
@@ -290,6 +303,38 @@ export const JoinShareModal: React.FC<JoinShareModalProps> = ({
                 </span>
               </button>
             </div>
+          )}
+
+          {/* Ask whether to also share existing personal books when joining a writable shared library */}
+          {showShareExistingPrompt && (
+            <label
+              htmlFor="join-share-existing-books-toggle"
+              className={`join-share-existing-card ${
+                shareExistingBooks ? 'join-share-existing-card--checked' : ''
+              }`}
+              data-testid="join-share-existing-books-card"
+            >
+              <input
+                id="join-share-existing-books-toggle"
+                type="checkbox"
+                className="join-share-existing-card__checkbox"
+                checked={shareExistingBooks}
+                onChange={(e) => setShareExistingBooks(e.target.checked)}
+                disabled={busy}
+              />
+              <span className="join-share-existing-card__text">
+                <span className="join-share-existing-card__title">
+                  Also share my {unsharedPersonalBooksCount} existing{' '}
+                  {unsharedPersonalBooksCount === 1 ? 'book' : 'books'} into{' '}
+                  &ldquo;{invite.name}&rdquo;
+                </span>
+                <span className="join-share-existing-card__sub">
+                  Copies your existing personal recordings into the shared
+                  folder so family members can listen too. Your original
+                  private copies stay untouched.
+                </span>
+              </span>
+            </label>
           )}
 
           {/* Two-step progress indicator */}

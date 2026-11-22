@@ -1,4 +1,4 @@
-const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
 export const GOOGLE_AUTH_STORAGE_KEY = 'storytape.googleAuth.v1';
 const TOKEN_EXPIRY_BUFFER_MS = 15_000;
 const PROACTIVE_REFRESH_BUFFER_MS = 5 * 60_000;
@@ -37,6 +37,7 @@ interface PersistedGoogleAuth {
   accessToken?: string | null;
   expiresAt?: number | null;
   encryptedRefreshToken?: string | null;
+  grantedScope?: string | null;
   userEmail?: string | null;
   userName?: string | null;
   wasConnected?: boolean;
@@ -84,6 +85,8 @@ export interface GoogleAuthState {
   status: 'unconfigured' | 'disconnected' | 'connected' | 'expired';
   accessToken: string | null;
   expiresAt: number | null;
+  grantedScope: string | null;
+  needsScopeUpgrade: boolean;
   userEmail: string | null;
   userName: string | null;
   wasConnected: boolean;
@@ -129,6 +132,8 @@ export class GoogleAuthManager {
     status: 'unconfigured',
     accessToken: null,
     expiresAt: null,
+    grantedScope: null,
+    needsScopeUpgrade: false,
     userEmail: null,
     userName: null,
     wasConnected: false,
@@ -396,6 +401,8 @@ export class GoogleAuthManager {
             status: 'connected',
             accessToken: data.accessToken,
             expiresAt,
+            grantedScope: this.state.grantedScope ?? DRIVE_SCOPE,
+            needsScopeUpgrade: false,
             wasConnected: true,
             hasPersistentRefresh: this.canRefreshSilently(),
             isRefreshing: false,
@@ -507,7 +514,7 @@ export class GoogleAuthManager {
         try {
           const codeClient = initCodeClient({
             client_id: this.clientId,
-            scope: DRIVE_FILE_SCOPE,
+            scope: DRIVE_SCOPE,
             ux_mode: 'popup',
             select_account: prompt === 'select_account',
             ...(this.state.userEmail && prompt !== 'select_account'
@@ -541,6 +548,7 @@ export class GoogleAuthManager {
     }
 
     // Mode 2: Zero-infra browser GIS Token Model with explicit prompt:'' + login_hint
+    // (forces prompt:'consent' once when upgrading from legacy drive.file sessions)
     this.tryInitTokenClient();
     if (!this.tokenClient) {
       return Promise.reject(
@@ -550,7 +558,8 @@ export class GoogleAuthManager {
       );
     }
 
-    const effectivePrompt: GoogleOAuthPrompt = prompt ?? '';
+    const effectivePrompt: GoogleOAuthPrompt =
+      prompt ?? (this.state.needsScopeUpgrade ? 'consent' : '');
     const overrideConfig: GoogleTokenOverrideConfig = {
       prompt: effectivePrompt,
     };
@@ -602,6 +611,8 @@ export class GoogleAuthManager {
       status: this.clientId ? 'disconnected' : 'unconfigured',
       accessToken: null,
       expiresAt: null,
+      grantedScope: null,
+      needsScopeUpgrade: false,
       userEmail: null,
       userName: null,
       wasConnected: false,
@@ -644,6 +655,8 @@ export class GoogleAuthManager {
         status: 'connected',
         accessToken: data.accessToken,
         expiresAt,
+        grantedScope: DRIVE_SCOPE,
+        needsScopeUpgrade: false,
         wasConnected: true,
         hasPersistentRefresh: this.canRefreshSilently(),
         isRefreshing: false,
@@ -695,7 +708,7 @@ export class GoogleAuthManager {
     this.state.gisLoaded = true;
     this.tokenClient = oauth2.initTokenClient({
       client_id: this.clientId,
-      scope: DRIVE_FILE_SCOPE,
+      scope: DRIVE_SCOPE,
       prompt: '',
       callback: (resp) => {
         if (resp.error || !resp.access_token) {
@@ -720,6 +733,8 @@ export class GoogleAuthManager {
           status: 'connected',
           accessToken: resp.access_token,
           expiresAt,
+          grantedScope: DRIVE_SCOPE,
+          needsScopeUpgrade: false,
           wasConnected: true,
           hasPersistentRefresh: this.canRefreshSilently(),
           isRefreshing: false,
@@ -812,6 +827,7 @@ export class GoogleAuthManager {
         accessToken: this.state.accessToken,
         expiresAt: this.state.expiresAt,
         encryptedRefreshToken: this.encryptedRefreshToken,
+        grantedScope: this.state.grantedScope,
         userEmail: this.state.userEmail,
         userName: this.state.userName,
         wasConnected: this.state.wasConnected,
@@ -865,6 +881,8 @@ export class GoogleAuthManager {
           status: this.clientId ? 'disconnected' : 'unconfigured',
           accessToken: null,
           expiresAt: null,
+          grantedScope: null,
+          needsScopeUpgrade: false,
           userEmail: null,
           userName: null,
           wasConnected: false,
@@ -889,7 +907,37 @@ export class GoogleAuthManager {
           this.encryptedRefreshToken,
       );
 
-      if (
+      const savedScope =
+        typeof saved.grantedScope === 'string' && saved.grantedScope.trim()
+          ? saved.grantedScope.trim()
+          : null;
+      const needsScopeUpgrade = remembered && savedScope !== DRIVE_SCOPE;
+      let purgedLegacyScopeCreds = false;
+
+      if (needsScopeUpgrade) {
+        // Legacy drive.file sessions (including persisted Cloud Run refresh tokens)
+        // cannot recursively read collaborator subfolders/files inside shared folders.
+        // Drop the legacy token/refresh envelope while remembering the account so
+        // the user gets a clean 1-tap Reconnect prompt for the upgraded drive scope.
+        purgedLegacyScopeCreds = Boolean(
+          saved.accessToken || this.encryptedRefreshToken,
+        );
+        this.encryptedRefreshToken = null;
+        this.state = {
+          ...this.state,
+          status: this.clientId ? 'expired' : 'unconfigured',
+          accessToken: null,
+          expiresAt: null,
+          grantedScope: savedScope,
+          needsScopeUpgrade: true,
+          userEmail: saved.userEmail ?? null,
+          userName: saved.userName ?? null,
+          wasConnected: true,
+          hasPersistentRefresh: false,
+          isRefreshing: false,
+          lastError: null,
+        };
+      } else if (
         saved.accessToken &&
         saved.expiresAt &&
         Date.now() < saved.expiresAt - TOKEN_EXPIRY_BUFFER_MS
@@ -899,6 +947,8 @@ export class GoogleAuthManager {
           status: 'connected',
           accessToken: saved.accessToken,
           expiresAt: saved.expiresAt,
+          grantedScope: DRIVE_SCOPE,
+          needsScopeUpgrade: false,
           userEmail: saved.userEmail ?? null,
           userName: saved.userName ?? null,
           wasConnected: true,
@@ -913,6 +963,8 @@ export class GoogleAuthManager {
           status: this.clientId ? 'expired' : 'unconfigured',
           accessToken: null,
           expiresAt: null,
+          grantedScope: savedScope,
+          needsScopeUpgrade: false,
           userEmail: saved.userEmail ?? null,
           userName: saved.userName ?? null,
           wasConnected: true,
@@ -927,6 +979,8 @@ export class GoogleAuthManager {
           status: this.clientId ? 'disconnected' : 'unconfigured',
           accessToken: null,
           expiresAt: null,
+          grantedScope: null,
+          needsScopeUpgrade: false,
           userEmail: null,
           userName: null,
           wasConnected: false,
@@ -936,12 +990,14 @@ export class GoogleAuthManager {
         };
       }
 
-      if (migratedFromSession) {
+      if (migratedFromSession || purgedLegacyScopeCreds) {
         this.persistSession();
-        try {
-          window.sessionStorage?.removeItem(GOOGLE_AUTH_STORAGE_KEY);
-        } catch {
-          // Ignore
+        if (migratedFromSession) {
+          try {
+            window.sessionStorage?.removeItem(GOOGLE_AUTH_STORAGE_KEY);
+          } catch {
+            // Ignore
+          }
         }
       }
     } catch {

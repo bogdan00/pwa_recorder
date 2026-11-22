@@ -21,6 +21,7 @@ export interface DriveSyncSettingsSectionProps {
   authState: GoogleAuthState;
   isSyncing: boolean;
   syncStatusMessage: string | null;
+  unsharedPersonalBooksCount?: number;
   onUpdateSettings: (next: AppSettings) => void;
   onConnectDrive: () => void;
   onSignOutDrive: () => void;
@@ -28,6 +29,7 @@ export interface DriveSyncSettingsSectionProps {
   onOpenShareLibrary: () => void;
   onJoinSharedFolder: (input: string) => Promise<void>;
   onPickSharedFolder: () => Promise<void>;
+  onSharePersonalBooksToLibrary?: () => Promise<void>;
   onSwitchToPersonalLibrary: () => Promise<void>;
   onUnlinkSharedBook: (folderId: string) => void;
 }
@@ -39,6 +41,7 @@ export const DriveSyncSettingsSection: React.FC<
   authState,
   isSyncing,
   syncStatusMessage,
+  unsharedPersonalBooksCount = 0,
   onUpdateSettings,
   onConnectDrive,
   onSignOutDrive,
@@ -46,6 +49,7 @@ export const DriveSyncSettingsSection: React.FC<
   onOpenShareLibrary,
   onJoinSharedFolder,
   onPickSharedFolder,
+  onSharePersonalBooksToLibrary,
   onSwitchToPersonalLibrary,
   onUnlinkSharedBook,
 }) => {
@@ -97,10 +101,17 @@ export const DriveSyncSettingsSection: React.FC<
         {authState.userEmail && (
           <span className="field-hint">
             {authState.status === 'expired' ? (
-              <>
-                Linked to <strong>{authState.userEmail}</strong> · Tap Reconnect
-                to refresh sync
-              </>
+              authState.needsScopeUpgrade ? (
+                <>
+                  Linked to <strong>{authState.userEmail}</strong> · Tap
+                  Reconnect once to enable full shared-folder sync
+                </>
+              ) : (
+                <>
+                  Linked to <strong>{authState.userEmail}</strong> · Tap
+                  Reconnect to refresh sync
+                </>
+              )
             ) : authState.hasPersistentRefresh ? (
               <>
                 Signed in as <strong>{authState.userEmail}</strong> · Stays
@@ -252,33 +263,81 @@ export const DriveSyncSettingsSection: React.FC<
               </strong>
               .
             </span>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              id="switch-personal-library-btn"
-              onClick={() =>
-                confirm({
-                  title: 'Switch to Personal Library?',
-                  description: (
-                    <>
-                      Stop syncing with shared folder{' '}
-                      <strong>
-                        {settings.driveSharedFolderName || 'Shared Audiobooks'}
-                      </strong>{' '}
-                      and switch back to your personal Google Drive library?
-                    </>
-                  ),
-                  confirmLabel: 'Switch Library',
-                  tone: 'warning',
-                  onConfirm: async () => {
-                    await onSwitchToPersonalLibrary();
-                  },
-                })
-              }
-              disabled={isSyncing}
-            >
-              Switch to My Personal Library
-            </button>
+            <div className="drive-actions-row">
+              {settings.driveAccessRole !== 'reader' &&
+                unsharedPersonalBooksCount > 0 &&
+                onSharePersonalBooksToLibrary && (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    id="share-existing-books-btn"
+                    disabled={isSyncing}
+                    onClick={() => {
+                      if (authState.status !== 'connected') {
+                        onConnectDrive();
+                        return;
+                      }
+                      confirm({
+                        title: 'Share Existing Personal Books?',
+                        description: (
+                          <>
+                            Copy your{' '}
+                            <strong>
+                              {unsharedPersonalBooksCount} existing personal{' '}
+                              {unsharedPersonalBooksCount === 1
+                                ? 'book'
+                                : 'books'}
+                            </strong>{' '}
+                            into{' '}
+                            <strong>
+                              {settings.driveSharedFolderName ||
+                                'Shared Audiobooks'}
+                            </strong>{' '}
+                            so family members can listen too? Your original
+                            private Drive copies stay untouched.
+                          </>
+                        ),
+                        confirmLabel: `Share ${unsharedPersonalBooksCount} ${unsharedPersonalBooksCount === 1 ? 'Book' : 'Books'}`,
+                        onConfirm: async () => {
+                          await onSharePersonalBooksToLibrary();
+                        },
+                      });
+                    }}
+                  >
+                    <Share2 size={14} />
+                    {authState.status !== 'connected'
+                      ? `Reconnect to Share ${unsharedPersonalBooksCount} Personal ${unsharedPersonalBooksCount === 1 ? 'Book' : 'Books'}`
+                      : `Share ${unsharedPersonalBooksCount} Personal ${unsharedPersonalBooksCount === 1 ? 'Book' : 'Books'} to Library`}
+                  </button>
+                )}
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                id="switch-personal-library-btn"
+                onClick={() =>
+                  confirm({
+                    title: 'Switch to Personal Library?',
+                    description: (
+                      <>
+                        Stop syncing with shared folder{' '}
+                        <strong>
+                          {settings.driveSharedFolderName || 'Shared Audiobooks'}
+                        </strong>{' '}
+                        and switch back to your personal Google Drive library?
+                      </>
+                    ),
+                    confirmLabel: 'Switch Library',
+                    tone: 'warning',
+                    onConfirm: async () => {
+                      await onSwitchToPersonalLibrary();
+                    },
+                  })
+                }
+                disabled={isSyncing}
+              >
+                Switch to My Personal Library
+              </button>
+            </div>
           </div>
         )}
 

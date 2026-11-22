@@ -63,9 +63,9 @@ Enforce clear separation of concerns across layers—avoid putting audio DSP, In
   - Route `AudioWorkletNode` (`numberOfOutputs: 1`) through a unity `GainNode(1)` to `ctx.destination` while `pcm-capture-worklet.js` outputs only an inaudible ultrasonic Nyquist keepalive (`±1e-5` / `-100 dBFS`, never copying mic audio to output) while active. This pulls frames reliably on iOS Safari WebKit AND prevents Chromium's 30-second `SilentSinkSuspender` from switching to `FakeAudioWorker` and dropping 10ms capture chunks. Use `AudioContext({ latencyHint: 'playback' })`, align `getUserMedia` sample rate to `ctx.sampleRate`, and guard `ctx.audioWorklet.addModule()` once per `AudioContext`.
   - Keep `RecordingEngine` lifecycle subscriptions separate from draft-loading effects; never clear active UI listeners inside async `dispose()`.
 - `src/drive/` — Client-side Google Drive integration (zero backend):
-  - `googleAuth.ts`: Google Identity Services OAuth using the narrow `drive.file` scope.
-  - `driveClient.ts`: REST API v3 client (folders, resumable binary uploads, multipart JSON, Permissions API, capabilities inspection).
-  - `googlePicker.ts`: Lazy-loaded Google Picker for unlocking shared Drive folders cleanly under `drive.file`.
+  - `googleAuth.ts`: Google Identity Services OAuth using `https://www.googleapis.com/auth/drive` (required for recursive multi-user shared folder visibility) with automatic scope upgrade migration.
+  - `driveClient.ts`: REST API v3 client (folders, resumable binary uploads, server-side file copy, multipart JSON, Permissions API, capabilities inspection).
+  - `googlePicker.ts`: Lazy-loaded Google Picker for browsing shared Drive folders cleanly.
   - `shareUtils.ts`: `#/join?...` invite link builder/parser, Drive URL extraction, clipboard & Web Share API helpers.
   - `syncService.ts`: Two-way sync engine.
 - `src/player/` — Persistent `PlayerContext` managing audio playback, saved resume progress, sleep timer fade-out, and Media Session API lock-screen controls.

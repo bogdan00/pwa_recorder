@@ -502,6 +502,7 @@ async function installMockDriveBackend(
           id: entry.id,
           name: entry.name,
           mimeType: entry.mimeType,
+          parents: entry.parents,
           trashed: Boolean(entry.trashed),
           ownedByMe: entry.ownedByMe ?? true,
           shared: entry.shared ?? false,
@@ -1642,5 +1643,188 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
     expect(state.driveFiles.get(copiedBookFolderId)?.trashed).toBe(true);
     expect(state.driveFiles.get(colleagueFolderId)?.trashed).toBeFalsy();
     expect(state.writeAttemptsById).not.toContain(colleagueFolderId);
+  });
+
+  test('collaborator with an existing personal book is asked to share it when joining a writable shared library, keeps it private when unchecked, and can share it later from Settings', async ({
+    page,
+  }) => {
+    const remoteAudio = createSilentWavBuffer(1.2);
+    const familyLibId = 'shared-family-root-existing';
+    const remoteBookFolderId = 'remote-book-folder-existing';
+    const remoteMetaId = 'remote-book-meta-existing';
+    const remoteAudioId = 'remote-audio-existing';
+
+    const state: MockDriveState = {
+      driveFiles: new Map([
+        [
+          familyLibId,
+          {
+            id: familyLibId,
+            name: 'StoryTape Audiobooks',
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: ['dad-root'],
+            ownedByMe: false,
+            shared: true,
+            capabilities: {
+              canEdit: true,
+              canAddChildren: true,
+              canShare: true,
+            },
+          },
+        ],
+        [
+          remoteBookFolderId,
+          {
+            id: remoteBookFolderId,
+            name: 'Bedtime Classics',
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: [familyLibId],
+            ownedByMe: false,
+            shared: true,
+            capabilities: {
+              canEdit: true,
+              canAddChildren: true,
+              canShare: true,
+            },
+          },
+        ],
+        [
+          remoteMetaId,
+          {
+            id: remoteMetaId,
+            name: 'project.json',
+            mimeType: 'application/json',
+            parents: [remoteBookFolderId],
+            ownedByMe: false,
+            shared: true,
+            content: {
+              schemaVersion: 1,
+              id: 'book-dad-shared-1',
+              title: 'Bedtime Classics',
+              author: 'Dad',
+              narrator: 'Dad',
+              dedicatedTo: '',
+              description: '',
+              language: 'English',
+              tags: [],
+              coverColor: '#3D6352',
+              createdAt: 1700000000000,
+              updatedAt: 1700000001000,
+              recordings: [
+                {
+                  id: 'rec-dad-ch1',
+                  name: 'Goodnight Moon',
+                  notes: '',
+                  recordedBy: 'Dad',
+                  orderIndex: 0,
+                  durationMs: 1200,
+                  mimeType: 'audio/wav',
+                  extension: 'wav',
+                  sampleRate: 8000,
+                  channels: 1,
+                  fileSizeBytes: remoteAudio.byteLength,
+                  peaks: [0.4, 0.7],
+                  driveFileId: remoteAudioId,
+                  driveFileName: '01 - Goodnight Moon.wav',
+                  createdAt: 1700000000500,
+                  updatedAt: 1700000000500,
+                },
+              ],
+            },
+          },
+        ],
+        [
+          remoteAudioId,
+          {
+            id: remoteAudioId,
+            name: '01 - Goodnight Moon.wav',
+            mimeType: 'audio/wav',
+            parents: [remoteBookFolderId],
+            ownedByMe: false,
+            shared: true,
+            binary: remoteAudio,
+          },
+        ],
+      ]),
+      permissions: new Map(),
+      unlockedFolders: new Set([familyLibId]),
+      pushedManifests: [],
+      writeAttemptsById: [],
+    };
+
+    await stubGoogleIdentity(page);
+    await installMockDriveBackend(
+      page,
+      { displayName: 'Mom', emailAddress: 'mom@example.com' },
+      state,
+    );
+
+    // 1. Mom records a personal book before joining the shared family folder
+    await page.goto('./');
+    await createBook(page, { title: 'Mica sirenă', author: 'H. C. Andersen' });
+    await recordAndSaveChapter(page, { name: 'Chapter 1' });
+    await expect(page.locator('.rec-card__title')).toHaveText(['Chapter 1']);
+
+    // 2. Mom opens the shared library invite link -> JoinShareModal asks whether to share her existing book
+    await page.goto(
+      `./#/join?folderId=${familyLibId}&name=StoryTape%20Audiobooks&scope=library&role=writer`,
+    );
+    await expect(page.getByTestId('join-share-modal')).toBeVisible();
+
+    const existingBooksCard = page.getByTestId('join-share-existing-books-card');
+    await expect(existingBooksCard).toBeVisible();
+    await expect(existingBooksCard).toContainText(
+      'Also share my 1 existing book into “StoryTape Audiobooks”',
+    );
+    const shareExistingToggle = page.locator('#join-share-existing-books-toggle');
+    await expect(shareExistingToggle).toBeChecked();
+
+    // 3. Uncheck to keep her existing book private initially, connect Drive, and join
+    await shareExistingToggle.uncheck();
+    await expect(shareExistingToggle).not.toBeChecked();
+
+    await page.locator('#join-connect-drive-btn').click();
+    await page.locator('#join-confirm-btn').click();
+    await expect(page.getByTestId('join-share-modal')).toBeHidden();
+
+    // Both books appear locally, Dad's book was pulled, and Mom's personal book was NOT silently uploaded into the shared root
+    const library = page.getByLabel('Audiobook library');
+    await expect(library).toContainText('Bedtime Classics');
+    await expect(library).toContainText('Mica sirenă');
+
+    const sharedChildrenBefore = Array.from(state.driveFiles.values()).filter(
+      (f) => f.parents?.includes(familyLibId) && !f.trashed,
+    );
+    expect(sharedChildrenBefore.map((f) => f.name)).toEqual(['Bedtime Classics']);
+
+    // 4. Open Settings -> Drive -> tap "Share 1 Personal Book to Library"
+    await page.getByRole('button', { name: /Manage/i }).click();
+    await expect(page.getByTestId('settings-sheet')).toBeVisible();
+    const shareExistingBtn = page.locator('#share-existing-books-btn');
+    await expect(shareExistingBtn).toBeVisible();
+    await expect(shareExistingBtn).toContainText('Share 1 Personal Book to Library');
+
+    await shareExistingBtn.click();
+    await expect(page.getByTestId('confirm-dialog')).toBeVisible();
+    await page.getByTestId('confirm-dialog-confirm').click();
+
+    // Button disappears once the book is shared, and "Mica sirenă" + its manifest & audio now live inside familyLibId!
+    await expect(shareExistingBtn).toBeHidden();
+
+    const sharedChildrenAfter = Array.from(state.driveFiles.values()).filter(
+      (f) => f.parents?.includes(familyLibId) && !f.trashed,
+    );
+    const sharedPersonalFolder = sharedChildrenAfter.find(
+      (f) => f.name === 'Mica sirenă',
+    );
+    expect(sharedPersonalFolder).toBeDefined();
+
+    const sharedPersonalContents = Array.from(state.driveFiles.values()).filter(
+      (f) => f.parents?.includes(sharedPersonalFolder!.id) && !f.trashed,
+    );
+    expect(sharedPersonalContents.some((f) => f.name === 'project.json')).toBe(true);
+    expect(
+      sharedPersonalContents.some((f) => f.name.startsWith('01 - Chapter 1')),
+    ).toBe(true);
   });
 });

@@ -31,6 +31,7 @@ import {
   downloadCloudRecording,
   ensureShareableBookFolder,
   ensureShareableLibraryFolder,
+  isUnsharedPersonalBook,
 } from './drive/syncService';
 import { PlayerProvider, usePlayer } from './player/PlayerContext';
 import { preparePlayableAudioBlob } from './player/playbackBlob';
@@ -218,6 +219,41 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
     return () => mq.removeEventListener?.('change', handler);
   }, [settings.theme]);
 
+  const handlePromptShareExistingBooks = useCallback(
+    ({
+      folderName,
+      unsharedCount,
+      onConfirmShare,
+    }: {
+      folderName: string;
+      unsharedCount: number;
+      onConfirmShare: () => Promise<void>;
+    }) => {
+      confirm({
+        title: 'Share Your Existing Recordings?',
+        description: (
+          <>
+            You have{' '}
+            <strong>
+              {unsharedCount} existing personal{' '}
+              {unsharedCount === 1 ? 'book' : 'books'}
+            </strong>{' '}
+            on this device. Would you like to copy{' '}
+            {unsharedCount === 1 ? 'it' : 'them'} into{' '}
+            <strong>{folderName}</strong> so family members can listen too?
+            Your original private copies stay untouched.
+          </>
+        ),
+        confirmLabel: `Share ${unsharedCount} ${unsharedCount === 1 ? 'Book' : 'Books'}`,
+        cancelLabel: 'Keep Private',
+        onConfirm: async () => {
+          await onConfirmShare();
+        },
+      });
+    },
+    [confirm],
+  );
+
   const drive = useDriveSync({
     settingsRef,
     googleClientId: settings.googleClientId,
@@ -228,6 +264,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
     onCloseSettings: () => closeOverlay('settings'),
     onSetPendingJoinInvite: setPendingJoinInvite,
     onClearJoinHash: clearJoinHash,
+    onPromptShareExistingBooks: handlePromptShareExistingBooks,
   });
 
   const handleInstallApp = useCallback(() => {
@@ -926,6 +963,9 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
             settings.driveAccessRole === 'reader'
           )
         }
+        unsharedPersonalBooksCount={
+          projects.filter(isUnsharedPersonalBook).length
+        }
         onClose={() => {
           setPendingJoinInvite(null);
           clearJoinHash();
@@ -945,6 +985,9 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
         pwaInstallState={pwaInstallState}
         isSyncing={drive.isSyncing}
         syncStatusMessage={drive.syncStatusMessage}
+        unsharedPersonalBooksCount={
+          projects.filter(isUnsharedPersonalBook).length
+        }
         lastMicCapture={micTestCapture}
         onMicTestCaptured={setMicTestCapture}
         onOpenMicQualityLab={(clip) => {
@@ -967,6 +1010,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
         }
         onJoinSharedFolder={drive.handleJoinSharedFolderFromSettings}
         onPickSharedFolder={drive.handlePickSharedFolder}
+        onSharePersonalBooksToLibrary={drive.handleSharePersonalBooksToLibrary}
         onSwitchToPersonalLibrary={drive.handleSwitchToPersonalLibrary}
         onUnlinkSharedBook={drive.handleUnlinkSharedBook}
         onClearSyncedCache={async () => {

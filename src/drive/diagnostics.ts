@@ -65,6 +65,8 @@ export interface SyncDiagnosticsReport {
     expiresAt: number | null;
     expiresInSec: number | null;
     hasPersistentRefresh: boolean;
+    grantedScope: string | null;
+    needsScopeUpgrade: boolean;
     lastError: string | null;
     hasGoogleClientId: boolean;
     hasGoogleApiKey: boolean;
@@ -344,6 +346,8 @@ export async function buildSyncDiagnosticsReport(
         ? Math.round((authState.expiresAt - Date.now()) / 1000)
         : null,
       hasPersistentRefresh: authState.hasPersistentRefresh,
+      grantedScope: authState.grantedScope,
+      needsScopeUpgrade: authState.needsScopeUpgrade,
       lastError: authState.lastError,
       hasGoogleClientId: Boolean(settings.googleClientId?.trim()),
       hasGoogleApiKey: Boolean(settings.googleApiKey?.trim()),

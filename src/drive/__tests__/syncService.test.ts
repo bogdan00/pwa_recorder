@@ -16,7 +16,9 @@ import { DriveClient } from '../driveClient';
 import {
   downloadCloudRecording,
   importSharedBookIntoLibrary,
+  isUnsharedPersonalBook,
   mirrorImportedBookFromSource,
+  shareLocalBooksIntoSharedLibrary,
   syncAllWithDrive,
 } from '../syncService';
 
@@ -1610,5 +1612,327 @@ describe('Google Drive client & two-way syncService', () => {
     const preservedRecs = await listProjectRecordings(importedBook.id);
     expect(preservedRecs).toHaveLength(1);
     expect(preservedRecs[0].name).toBe('The Ember Bridge');
+  });
+
+  it('skips pushing unshared personal books during shared library sync and copies/uploads them into the shared root only when explicitly shared', async () => {
+    // 1. Existing Drive-synced personal book (like "Mica sirenă" in "Own StoryTape Audiobooks")
+    const personalSyncedBook: BookProject = {
+      id: 'book-personal-synced',
+      title: 'Mica sirenă',
+      author: 'H. C. Andersen',
+      narrator: 'Mom',
+      dedicatedTo: '',
+      description: 'Recorded before joining shared library',
+      language: 'Romanian',
+      tags: [],
+      coverColor: '#3D6352',
+      hasCover: true,
+      coverMimeType: 'image/jpeg',
+      coverUpdatedAt: 1000,
+      driveFolderId: 'personal-book-folder-1',
+      driveMetadataFileId: 'personal-meta-1',
+      driveCoverFileId: 'personal-cover-1',
+      isShared: false,
+      accessRole: 'owner',
+      syncStatus: 'synced',
+      createdAt: 1000,
+      updatedAt: 1000,
+    };
+    const personalSyncedRec: Recording = {
+      id: 'rec-personal-1',
+      projectId: personalSyncedBook.id,
+      name: 'Chapter 1',
+      notes: '',
+      recordedBy: 'Mom',
+      orderIndex: 0,
+      durationMs: 4000,
+      mimeType: 'audio/mp4',
+      extension: 'm4a',
+      sampleRate: 44100,
+      channels: 1,
+      fileSizeBytes: 128,
+      peaks: [0.4],
+      driveFileId: 'personal-audio-1',
+      driveFileName: '01 - Chapter 1.m4a',
+      syncStatus: 'synced',
+      createdAt: 1000,
+      updatedAt: 1000,
+    };
+
+    // 2. Local-only personal book (never synced to Drive before)
+    const personalLocalBook: BookProject = {
+      id: 'book-personal-local',
+      title: 'Bedtime Rhymes',
+      author: '',
+      narrator: 'Mom',
+      dedicatedTo: '',
+      description: '',
+      language: '',
+      tags: [],
+      coverColor: '#9E4736',
+      hasCover: false,
+      isShared: false,
+      accessRole: 'owner',
+      syncStatus: 'local_only',
+      createdAt: 1100,
+      updatedAt: 1100,
+    };
+    const personalLocalRec: Recording = {
+      id: 'rec-local-1',
+      projectId: personalLocalBook.id,
+      name: 'Lullaby',
+      notes: '',
+      recordedBy: 'Mom',
+      orderIndex: 0,
+      durationMs: 2500,
+      mimeType: 'audio/mp4',
+      extension: 'm4a',
+      sampleRate: 44100,
+      channels: 1,
+      fileSizeBytes: 12,
+      peaks: [0.2],
+      driveFileName: '01 - Lullaby.m4a',
+      syncStatus: 'local_only',
+      createdAt: 1100,
+      updatedAt: 1100,
+    };
+
+    await putProject(personalSyncedBook);
+    await putProjectCover(
+      personalSyncedBook.id,
+      new Blob([new Uint8Array([1, 2, 3])], { type: 'image/jpeg' }),
+    );
+    await putRecording(
+      personalSyncedRec,
+      new Blob([new Uint8Array([4, 5, 6])], { type: 'audio/mp4' }),
+    );
+
+    await putProject(personalLocalBook);
+    await putRecording(
+      personalLocalRec,
+      new Blob([new Uint8Array([7, 8, 9])], { type: 'audio/mp4' }),
+    );
+
+    expect(isUnsharedPersonalBook(personalSyncedBook)).toBe(true);
+    expect(isUnsharedPersonalBook(personalLocalBook)).toBe(true);
+
+    const createdFolders: Array<{ id: string; name: string; parents?: string[] }> = [];
+    const copiedFiles: Array<{ srcId: string; name: string; parents?: string[] }> = [];
+    const uploadedBinaries: Array<{ name: string; parents?: string[] }> = [];
+    const uploadedManifests: Array<{ parentId?: string; manifest: DriveProjectMetadataFile }> = [];
+    let folderCounter = 0;
+    let uploadCounter = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method || 'GET').toUpperCase();
+
+      // Verify shared root folder
+      if (url.includes('/drive/v3/files/shared-root-family?fields=') && method === 'GET') {
+        return jsonResponse({
+          id: 'shared-root-family',
+          name: 'StoryTape Audiobooks',
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: ['other-root'],
+          ownedByMe: false,
+          shared: true,
+          capabilities: { canEdit: true, canAddChildren: true, canShare: true },
+        });
+      }
+
+      // Verify existing personal book folder -> lives inside personal root, NOT shared root
+      if (url.includes('/drive/v3/files/personal-book-folder-1?fields=') && method === 'GET') {
+        return jsonResponse({
+          id: 'personal-book-folder-1',
+          name: 'Mica sirenă',
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: ['personal-own-root'],
+          ownedByMe: true,
+          shared: false,
+          capabilities: { canEdit: true, canAddChildren: true, canShare: true },
+        });
+      }
+
+      // List children of shared root or findFolderByName -> empty initially
+      if (url.includes('/drive/v3/files?q=') && method === 'GET') {
+        return jsonResponse({ files: [] });
+      }
+
+      // Create book subfolder inside shared-root-family
+      if (url.includes('/drive/v3/files?fields=') && method === 'POST') {
+        folderCounter += 1;
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          name: string;
+          parents?: string[];
+        };
+        const created = {
+          id: `shared-book-sub-${folderCounter}`,
+          name: body.name,
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: body.parents,
+          ownedByMe: true,
+          shared: true,
+          capabilities: { canEdit: true, canAddChildren: true, canShare: true },
+        };
+        createdFolders.push(created);
+        return jsonResponse(created);
+      }
+
+      // Server-side files.copy for already-synced personal cover/audio
+      const copyMatch = url.match(/\/drive\/v3\/files\/([^/?]+)\/copy/);
+      if (copyMatch && method === 'POST') {
+        const srcId = decodeURIComponent(copyMatch[1]);
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          name: string;
+          parents?: string[];
+        };
+        copiedFiles.push({ srcId, name: body.name, parents: body.parents });
+        return jsonResponse({
+          id: `copied-${srcId}`,
+          name: body.name,
+          mimeType: srcId.includes('cover') ? 'image/jpeg' : 'audio/mp4',
+        });
+      }
+
+      // Resumable upload init for local-only recording
+      if (url.includes('uploadType=resumable') && method === 'POST') {
+        uploadCounter += 1;
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          name: string;
+          parents?: string[];
+        };
+        uploadedBinaries.push({ name: body.name, parents: body.parents });
+        return new Response(null, {
+          status: 200,
+          headers: {
+            Location: `https://upload.example.test/session/${uploadCounter}`,
+          },
+        });
+      }
+      if (url.startsWith('https://upload.example.test/session/') && method === 'PUT') {
+        const idx = url.split('/').pop();
+        return jsonResponse({
+          id: `uploaded-bin-${idx}`,
+          name: '01 - Lullaby.m4a',
+          mimeType: 'audio/mp4',
+        });
+      }
+
+      // Multipart JSON project.json upload (POST = fresh file in shared subfolder)
+      if (url.includes('uploadType=multipart') && method === 'POST') {
+        const raw = String(init?.body || '');
+        const boundary = raw.split('\r\n')[0].trim();
+        const parts = raw
+          .split(boundary)
+          .map((p) => p.trim())
+          .filter((p) => p && p !== '--');
+        const metaPart = parts[0].slice(parts[0].indexOf('\r\n\r\n') + 4);
+        const metaObj = JSON.parse(metaPart) as { parents?: string[] };
+        const manifest = extractMultipartJsonPayload<DriveProjectMetadataFile>(raw);
+        uploadedManifests.push({
+          parentId: metaObj.parents?.[0],
+          manifest,
+        });
+        return jsonResponse({
+          id: `shared-meta-${uploadedManifests.length}`,
+          name: 'project.json',
+          mimeType: 'application/json',
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    });
+
+    const sharedSettings = {
+      ...getDefaultSettings(),
+      driveLibraryMode: 'shared' as const,
+      driveRootFolderId: 'shared-root-family',
+      driveSharedFolderName: 'StoryTape Audiobooks',
+      driveAccessRole: 'writer' as const,
+    };
+
+    const client = new DriveClient('mom-token');
+
+    // Step A: Routine syncAllWithDrive MUST NOT silently upload unshared personal books
+    const syncRes = await syncAllWithDrive(sharedSettings, undefined, client);
+    expect(syncRes.errors).toEqual([]);
+    expect(syncRes.pushedProjects).toBe(0);
+    expect(createdFolders).toHaveLength(0);
+    expect(copiedFiles).toHaveLength(0);
+    expect(uploadedBinaries).toHaveLength(0);
+
+    // Step B: User explicitly chooses to share both existing personal books into the shared library
+    const shareRes = await shareLocalBooksIntoSharedLibrary(
+      [personalSyncedBook.id, personalLocalBook.id],
+      sharedSettings,
+      { clientOverride: client },
+    );
+
+    expect(shareRes.errors).toEqual([]);
+    expect(shareRes.sharedProjects).toBe(2);
+    expect(shareRes.sharedRecordings).toBe(2);
+
+    // Both subfolders created directly inside shared-root-family
+    expect(createdFolders).toEqual([
+      expect.objectContaining({
+        id: 'shared-book-sub-1',
+        name: 'Mica sirenă',
+        parents: ['shared-root-family'],
+      }),
+      expect.objectContaining({
+        id: 'shared-book-sub-2',
+        name: 'Bedtime Rhymes',
+        parents: ['shared-root-family'],
+      }),
+    ]);
+
+    // Previously Drive-synced book's cover + chapter copied server-side into shared subfolder
+    expect(copiedFiles).toEqual([
+      {
+        srcId: 'personal-cover-1',
+        name: 'cover.jpg',
+        parents: ['shared-book-sub-1'],
+      },
+      {
+        srcId: 'personal-audio-1',
+        name: '01 - Chapter 1.m4a',
+        parents: ['shared-book-sub-1'],
+      },
+    ]);
+
+    // Local-only book's chapter uploaded directly into its shared subfolder
+    expect(uploadedBinaries).toEqual([
+      {
+        name: '01 - Lullaby.m4a',
+        parents: ['shared-book-sub-2'],
+      },
+    ]);
+
+    // Both local BookProjects are now marked isShared: true and point to the new shared subfolders
+    const updatedSynced = await getProject(personalSyncedBook.id);
+    expect(updatedSynced).toMatchObject({
+      driveFolderId: 'shared-book-sub-1',
+      driveMetadataFileId: 'shared-meta-1',
+      driveCoverFileId: 'copied-personal-cover-1',
+      isShared: true,
+      accessRole: 'writer',
+      syncStatus: 'synced',
+    });
+    expect(isUnsharedPersonalBook(updatedSynced!)).toBe(false);
+
+    const updatedLocal = await getProject(personalLocalBook.id);
+    expect(updatedLocal).toMatchObject({
+      driveFolderId: 'shared-book-sub-2',
+      driveMetadataFileId: 'shared-meta-2',
+      isShared: true,
+      accessRole: 'writer',
+      syncStatus: 'synced',
+    });
+    expect(isUnsharedPersonalBook(updatedLocal!)).toBe(false);
+
+    const updatedSyncedRec = await getRecording(personalSyncedRec.id);
+    expect(updatedSyncedRec?.driveFileId).toBe('copied-personal-audio-1');
+    const updatedLocalRec = await getRecording(personalLocalRec.id);
+    expect(updatedLocalRec?.driveFileId).toBe('uploaded-bin-1');
   });
 });

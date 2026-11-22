@@ -138,7 +138,7 @@ describe('Cloud Run stateless OAuth token broker (auth-broker)', () => {
             access_token: 'ya29.initial-access',
             expires_in: 3600,
             refresh_token: '1//google-refresh-secret-1',
-            scope: 'https://www.googleapis.com/auth/drive.file',
+            scope: 'https://www.googleapis.com/auth/drive',
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );

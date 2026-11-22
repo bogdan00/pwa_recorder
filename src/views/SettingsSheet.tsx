@@ -35,6 +35,7 @@ interface SettingsSheetProps {
   pwaInstallState?: PwaInstallState;
   isSyncing: boolean;
   syncStatusMessage: string | null;
+  unsharedPersonalBooksCount?: number;
   lastMicCapture?: CapturedMicTestAudio | null;
   onMicTestCaptured?: (capture: CapturedMicTestAudio) => void;
   onOpenMicQualityLab?: (capture?: CapturedMicTestAudio | null) => void;
@@ -48,6 +49,7 @@ interface SettingsSheetProps {
   onOpenShareLibrary: () => void;
   onJoinSharedFolder: (input: string) => Promise<void>;
   onPickSharedFolder: () => Promise<void>;
+  onSharePersonalBooksToLibrary?: () => Promise<void>;
   onSwitchToPersonalLibrary: () => Promise<void>;
   onUnlinkSharedBook: (folderId: string) => void;
   onClearSyncedCache: () => Promise<number>;
@@ -75,6 +77,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   pwaInstallState,
   isSyncing,
   syncStatusMessage,
+  unsharedPersonalBooksCount = 0,
   lastMicCapture = null,
   onMicTestCaptured,
   onOpenMicQualityLab,
@@ -88,6 +91,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   onOpenShareLibrary,
   onJoinSharedFolder,
   onPickSharedFolder,
+  onSharePersonalBooksToLibrary,
   onSwitchToPersonalLibrary,
   onUnlinkSharedBook,
   onClearSyncedCache,
@@ -342,6 +346,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
               authState={authState}
               isSyncing={isSyncing}
               syncStatusMessage={syncStatusMessage}
+              unsharedPersonalBooksCount={unsharedPersonalBooksCount}
               onUpdateSettings={onUpdateSettings}
               onConnectDrive={onConnectDrive}
               onSignOutDrive={onSignOutDrive}
@@ -349,6 +354,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
               onOpenShareLibrary={onOpenShareLibrary}
               onJoinSharedFolder={onJoinSharedFolder}
               onPickSharedFolder={onPickSharedFolder}
+              onSharePersonalBooksToLibrary={onSharePersonalBooksToLibrary}
               onSwitchToPersonalLibrary={onSwitchToPersonalLibrary}
               onUnlinkSharedBook={onUnlinkSharedBook}
             />

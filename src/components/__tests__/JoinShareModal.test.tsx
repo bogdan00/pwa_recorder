@@ -145,4 +145,83 @@ describe('JoinShareModal request-access handoff', () => {
     expect(screen.queryByTestId('join-book-mode-selector')).toBeNull();
     expect(screen.getByRole('button', { name: /Join & Sync Now/i })).toBeInTheDocument();
   });
+
+  it('asks to share existing personal books when joining a writable shared library and forwards user choice', async () => {
+    const onJoinFolder = vi.fn().mockResolvedValue({ ok: true });
+
+    const { rerender } = render(
+      <JoinShareModal
+        open
+        invite={{
+          folderId: 'shared-family-root',
+          name: 'StoryTape Audiobooks',
+          scope: 'library',
+          role: 'writer',
+        }}
+        settings={getDefaultSettings()}
+        isDriveConnected
+        isJoining={false}
+        unsharedPersonalBooksCount={2}
+        onClose={vi.fn()}
+        onConnectDrive={vi.fn()}
+        onJoinFolder={onJoinFolder}
+        onToast={vi.fn()}
+      />,
+    );
+
+    const card = screen.getByTestId('join-share-existing-books-card');
+    expect(card).toHaveTextContent('Also share my 2 existing books');
+    const toggle = screen.getByRole('checkbox');
+    expect(toggle).toBeChecked();
+
+    // Default checked -> passes shareExistingBooks: true
+    fireEvent.click(screen.getByRole('button', { name: /Join & Sync Now/i }));
+    await waitFor(() => {
+      expect(onJoinFolder).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          folderId: 'shared-family-root',
+          scope: 'library',
+          role: 'writer',
+          shareExistingBooks: true,
+        }),
+      );
+    });
+
+    // Uncheck -> passes shareExistingBooks: false
+    fireEvent.click(toggle);
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: /Join & Sync Now/i }));
+    await waitFor(() => {
+      expect(onJoinFolder).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          folderId: 'shared-family-root',
+          shareExistingBooks: false,
+        }),
+      );
+    });
+
+    // Read-only Listener library invite does NOT show the share-existing-books prompt
+    rerender(
+      <JoinShareModal
+        open
+        invite={{
+          folderId: 'shared-readonly-root',
+          name: 'Grandpa Library',
+          scope: 'library',
+          role: 'reader',
+        }}
+        settings={getDefaultSettings()}
+        isDriveConnected
+        isJoining={false}
+        unsharedPersonalBooksCount={2}
+        onClose={vi.fn()}
+        onConnectDrive={vi.fn()}
+        onJoinFolder={onJoinFolder}
+        onToast={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('join-share-existing-books-card')).toBeNull();
+  });
 });

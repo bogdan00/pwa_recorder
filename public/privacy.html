@@ -170,20 +170,21 @@
         <h2>3. Google Drive Integration</h2>
         <p>
           If you choose to connect your Google account, StoryTape uses Google Identity Services
-          (OAuth 2.0) directly from your browser to request the narrow
-          <code>https://www.googleapis.com/auth/drive.file</code> scope.
+          (OAuth 2.0) directly from your browser to request the
+          <code>https://www.googleapis.com/auth/drive</code> scope so family collaborators can
+          recursively sync audiobooks, covers, and chapters inside shared Google Drive folders.
         </p>
         <ul>
           <li>
-            <strong>What StoryTape can access:</strong> Only the folders and files created or opened
-            by StoryTape in your Google Drive (e.g., <code>project.json</code>,
-            <code>cover.jpg</code>, and chapter audio files). StoryTape cannot read or modify your
-            other Google Drive files.
+            <strong>What StoryTape accesses:</strong> StoryTape only creates, reads, and updates
+            your configured StoryTape audiobook root folder and any shared audiobook folders you
+            explicitly link or import (e.g., <code>project.json</code>, <code>cover.jpg</code>,
+            and chapter audio files). StoryTape never scans, modifies, or transmits unrelated files
+            in your Google Drive.
           </li>
           <li>
-            <strong>Authentication tokens:</strong> OAuth access tokens are kept only in your
-            browser's <code>sessionStorage</code> for your active session and are cleared when you
-            sign out or close the session.
+            <strong>Authentication tokens:</strong> OAuth tokens are stored only in your browser's
+            <code>localStorage</code> on your device and are revoked and cleared when you sign out.
           </li>
           <li>
             <strong>Google API Services User Data Policy:</strong> StoryTape's use of information

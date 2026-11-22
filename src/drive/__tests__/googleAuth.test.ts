@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  DRIVE_SCOPE,
   GOOGLE_AUTH_STORAGE_KEY,
   GoogleAuthManager,
   getConfiguredAuthBrokerUrl,
@@ -86,6 +87,7 @@ describe('GoogleAuthManager persistent PWA session & fast reconnect', () => {
 
     const token = await mgr1.requestSignIn();
     expect(token).toBe('tok-initial');
+    expect(gis.initConfigs[0]?.scope).toBe(DRIVE_SCOPE);
     expect(gis.initConfigs[0]?.prompt).toBe('');
     expect(gis.requestCalls[0]).toEqual({ prompt: '' });
 
@@ -103,6 +105,8 @@ describe('GoogleAuthManager persistent PWA session & fast reconnect', () => {
     expect(mgr2.getState()).toMatchObject({
       status: 'connected',
       accessToken: 'tok-initial',
+      grantedScope: DRIVE_SCOPE,
+      needsScopeUpgrade: false,
       userEmail: 'parent@example.com',
       userName: 'Story Parent',
       wasConnected: true,
@@ -117,6 +121,7 @@ describe('GoogleAuthManager persistent PWA session & fast reconnect', () => {
       JSON.stringify({
         accessToken: 'legacy-session-token',
         expiresAt,
+        grantedScope: DRIVE_SCOPE,
         userEmail: 'legacy@example.com',
         userName: 'Legacy User',
       }),
@@ -132,11 +137,65 @@ describe('GoogleAuthManager persistent PWA session & fast reconnect', () => {
 
     const migrated = JSON.parse(
       window.localStorage.getItem(GOOGLE_AUTH_STORAGE_KEY) || '{}',
-    ) as { accessToken?: string; wasConnected?: boolean; userEmail?: string };
+    ) as { accessToken?: string; wasConnected?: boolean; userEmail?: string; grantedScope?: string };
     expect(migrated).toMatchObject({
       accessToken: 'legacy-session-token',
+      grantedScope: DRIVE_SCOPE,
       wasConnected: true,
       userEmail: 'legacy@example.com',
+    });
+  });
+
+  it('invalidates legacy drive.file tokens and refresh envelopes on restore and forces one-time consent on reconnect', async () => {
+    const gis = installMockGis({ nextToken: 'tok-upgraded-drive', nextExpiresIn: 3600 });
+    window.localStorage.setItem(
+      GOOGLE_AUTH_STORAGE_KEY,
+      JSON.stringify({
+        accessToken: 'tok-old-drive-file',
+        expiresAt: Date.now() + 3600_000,
+        encryptedRefreshToken: 'v1.legacy-drive-file-envelope',
+        userEmail: 'mom@example.com',
+        userName: 'Mom',
+        wasConnected: true,
+      }),
+    );
+
+    const mgr = createManager();
+    mgr.configure('test-client-id', 'https://auth.example.com');
+
+    expect(mgr.hasValidToken()).toBe(false);
+    expect(mgr.canRefreshSilently()).toBe(false);
+    expect(mgr.getState()).toMatchObject({
+      status: 'expired',
+      accessToken: null,
+      grantedScope: null,
+      needsScopeUpgrade: true,
+      userEmail: 'mom@example.com',
+      userName: 'Mom',
+      wasConnected: true,
+      hasPersistentRefresh: false,
+    });
+
+    // Persisted storage should already have the stale drive.file credentials scrubbed
+    const scrubbed = JSON.parse(
+      window.localStorage.getItem(GOOGLE_AUTH_STORAGE_KEY) || '{}',
+    ) as { accessToken?: string | null; encryptedRefreshToken?: string | null; userEmail?: string };
+    expect(scrubbed.accessToken).toBeNull();
+    expect(scrubbed.encryptedRefreshToken).toBeNull();
+    expect(scrubbed.userEmail).toBe('mom@example.com');
+
+    // Reconnecting in Token Model passes prompt:'consent' once with login_hint
+    const upgradedToken = await mgr.requestSignIn();
+    expect(upgradedToken).toBe('tok-upgraded-drive');
+    expect(gis.initConfigs.at(-1)?.scope).toBe(DRIVE_SCOPE);
+    expect(gis.requestCalls.at(-1)).toEqual({
+      prompt: 'consent',
+      login_hint: 'mom@example.com',
+    });
+    expect(mgr.getState()).toMatchObject({
+      status: 'connected',
+      grantedScope: DRIVE_SCOPE,
+      needsScopeUpgrade: false,
     });
   });
 
@@ -215,6 +274,7 @@ describe('GoogleAuthManager persistent PWA session & fast reconnect', () => {
     const raw = JSON.stringify({
       accessToken: 'tok-from-other-tab',
       expiresAt,
+      grantedScope: DRIVE_SCOPE,
       userEmail: 'family@example.com',
       userName: 'Family',
       wasConnected: true,
@@ -403,6 +463,7 @@ describe('GoogleAuthManager persistent PWA session & fast reconnect', () => {
         accessToken: 'tok-old',
         expiresAt: Date.now() - 60_000,
         encryptedRefreshToken: 'v1.enc.refresh.persisted',
+        grantedScope: DRIVE_SCOPE,
         userEmail: 'dad@example.com',
         userName: 'Dad',
         wasConnected: true,

@@ -53,6 +53,8 @@ function renderSettingsSheet(options?: {
             status: 'disconnected',
             accessToken: null,
             expiresAt: null,
+            grantedScope: null,
+            needsScopeUpgrade: false,
             userEmail: null,
             userName: null,
             wasConnected: false,

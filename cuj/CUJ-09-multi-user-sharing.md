@@ -28,12 +28,16 @@ Family members can share either their entire StoryTape Family Library or an indi
    - Open a StoryTape join link (`#/join?folderId=...&name=...&scope=library|book&role=...`) as a second user.
    - **Expected:**
      - `JoinShareModal` opens automatically with zero manual credential/Client ID entry.
-     - Guides the collaborator through connecting Google Drive and verifies access to the target folder.
-     - When Google's `drive.file` scope requires explicit folder authorization or the recipient does not yet have Drive permission, presents both:
-       1. A guided **Pick Shared Folder in Google Drive** (Google Picker) unlock flow for already-shared folders, and
+     - Guides the collaborator through connecting Google Drive (using the `drive` scope so joining a shared folder recursively sees all book subfolders, `project.json` manifests, covers, and chapters created by any collaborator, with automatic one-time reconnect prompt for devices upgrading from legacy `drive.file` tokens) and verifies access to the target folder.
+     - If the recipient does not yet have Drive permission on the folder (or needs to browse Drive folders), presents both:
+       1. A **Pick Shared Folder in Google Drive** (Google Picker) fallback, and
        2. An explicit **Request Access in Google Drive** action opening the folder URL directly in Google Drive (where Google's native *"Request access"* screen notifies the owner, since Drive API v3 does not allow programmatic access proposal creation) paired with a retry control once approved.
    - Complete joining for both scopes:
-     - **Shared Library (`scope=library`):** Links the shared Drive root folder, displays a clear **Shared Library** indicator in the Library UI (whose **Manage** button opens **Studio Settings** directly to the **Drive** tab), pulls shared books, and offers a confirmed control to return to the user's personal library.
+     - **Shared Library (`scope=library`):**
+       - Links the shared Drive root folder, displays a clear **Shared Library** indicator in the Library UI (whose **Manage** button opens **Studio Settings** directly to the **Drive** tab), pulls all shared books recursively, and offers a confirmed control to return to the user's personal library.
+       - When joining a writable (`writer`) shared library while already having unshared personal books on the device, explicitly asks whether to also share those previous books into the joined shared library (via a default-enabled opt-in checkbox in `JoinShareModal` or a confirmation dialog when joining from Settings).
+       - If opted in, copies those existing books (cover, chapter audio, and `project.json`) into subfolders of the shared library root so all collaborators see them immediately while leaving any original private Drive folders untouched; if declined, keeps unshared personal books private and never silently uploads them during routine syncs.
+       - When already connected to a writable shared library with remaining unshared personal books on the device, **Studio Settings → Drive** also exposes a confirmed 1-tap **Share Personal Book(s) to Library** action.
      - **Shared Book (`scope=book`):**
        - When joining a **Listener (`reader`)** book into a writable personal or family library, defaults to **Import Copy to My Library** (with a 2-option toggle to pick **Link Live (No Copy)** instead; automatically falls back to **Link Live** when the active library is read-only).
        - Importing copies the book's cover and chapters into a real subfolder of the user's Drive library (preserving narrator attribution and recording `importedFrom` source metadata), making the book automatically visible to everyone sharing the user's Family Library without requiring extra invites or Google Picker taps from family members.
@@ -43,7 +47,7 @@ Family members can share either their entire StoryTape Family Library or an indi
        - Imported books display an **Imported** badge and Listen-only controls until the user confirms **Make Editable (Detach)** (clearing `importedFrom` and unlocking recording/editing) or **Remove Copy** (removing the copy locally and trashing the copied Drive folder without touching the original creator's book).
        - When linking live (`Link Live`, default for **Co-Narrator (`writer`)** single-book invites), adds the shared book alongside the user's existing personal books without replacing or disturbing their personal library (unlinking prompts for confirmation).
    - Also test **Manual Join** in **Studio Settings → Drive** by pasting a StoryTape invite link, a Google Drive folder URL, or a raw Drive folder ID.
-   - **Expected:** Parses all three input formats accurately, links or imports the shared library or book through the same verification flow, and renders the input at `>= 16px` (with `touch-action: manipulation`) so tapping or pasting on iPhone never triggers iOS Safari auto-zoom.
+   - **Expected:** Parses all three input formats accurately, links or imports the shared library or book through the same verification flow (prompting to share existing personal books when joining a writable shared library), and renders the input at `>= 16px` (with `touch-action: manipulation`) so tapping or pasting on iPhone never triggers iOS Safari auto-zoom.
 
 3. **Conflict-Safe Multi-Narrator Sync & Attribution**
    - Two family members (e.g., Mom and Dad) record different chapters into the same shared book concurrently and sync to Google Drive.

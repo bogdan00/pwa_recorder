@@ -26,7 +26,7 @@ Introduce an optional, **stateless Google Cloud Run OAuth Token Broker** in [`au
    - Because GitHub Pages (`bogdan00.github.io`) and Cloud Run (`*.run.app`) run on different origins, cross-origin cookies are blocked or purged by Safari/iOS ITP.
    - Instead, the PWA persists `{ accessToken, expiresAt, encryptedRefreshToken, userEmail, userName, wasConnected }` in `localStorage` (`storytape.googleAuth.v1`) and sends `encryptedRefreshToken` in the JSON body to the broker.
    - When `VITE_GOOGLE_AUTH_BROKER_URL` is configured:
-     - Initial sign-in uses GIS `initCodeClient({ ux_mode: 'popup', scope: 'drive.file' })` triggered synchronously inside the tap handler.
+     - Initial sign-in uses GIS `initCodeClient({ ux_mode: 'popup', scope: 'drive' })` triggered synchronously inside the tap handler.
      - On app boot / PWA update reload, tab foreground (`visibilitychange`), returning `online`, proactive pre-expiry (~5 minutes before expiry), or transparent HTTP `401` retry in [`src/drive/syncService.ts`](../src/drive/syncService.ts), `googleAuth.ensureValidAccessToken()` silently refreshes via `POST /auth/refresh` (deduplicating concurrent calls) with **zero popups and zero user taps**.
      - Network/5xx refresh failures preserve `encryptedRefreshToken` so offline sessions automatically recover once back online; only `401`/`invalid_grant` (user-revoked grant) clears `encryptedRefreshToken` and transitions cleanly to `'expired'`.
 

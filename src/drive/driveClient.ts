@@ -190,7 +190,7 @@ export class DriveClient {
 
   async verifyFileExists(fileId: string): Promise<DriveFileSummary | null> {
     const res = await this.request(
-      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,trashed,ownedByMe,shared,webViewLink,capabilities(canEdit,canAddChildren,canShare)`,
+      `${DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,parents,trashed,ownedByMe,shared,webViewLink,capabilities(canEdit,canAddChildren,canShare)`,
       { ignore404: true },
     );
     if (res.status === 404) return null;

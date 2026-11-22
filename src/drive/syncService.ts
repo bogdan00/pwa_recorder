@@ -1319,6 +1319,268 @@ export async function importSharedBookIntoLibrary(
   });
 }
 
+export function isUnsharedPersonalBook(project: BookProject): boolean {
+  return project.accessRole !== 'reader' && project.isShared !== true;
+}
+
+export interface ShareLocalBooksResult {
+  sharedProjects: number;
+  sharedRecordings: number;
+  errors: string[];
+}
+
+/**
+ * Explicitly copies/uploads selected unshared personal books into the active
+ * writable shared library folder so all family collaborators see them immediately,
+ * while leaving any prior personal Drive backup folders untouched.
+ */
+export async function shareLocalBooksIntoSharedLibrary(
+  projectIds: string[],
+  settings: AppSettings,
+  options?: {
+    onProgress?: (update: SyncProgressUpdate) => void;
+    clientOverride?: DriveClient;
+  },
+): Promise<ShareLocalBooksResult> {
+  return withAuthorizedClient(options?.clientOverride, async (client) => {
+    const onProgress = options?.onProgress;
+    const errors: string[] = [];
+    let sharedProjects = 0;
+    let sharedRecordings = 0;
+
+    if (settings.driveLibraryMode !== 'shared' || !settings.driveRootFolderId) {
+      throw new Error('Connect to a shared library before sharing personal books into it.');
+    }
+
+    onProgress?.({
+      phase: 'connecting',
+      message: 'Checking shared library folder…',
+    });
+
+    const root = await ensureRootFolder(client, settings);
+    if (root.role === 'reader') {
+      throw new Error('This shared library is read-only (Listener access).');
+    }
+
+    for (const projectId of projectIds) {
+      const project = await getProject(projectId);
+      if (!project || project.accessRole === 'reader') continue;
+
+      try {
+        // If the book's Drive folder is already directly inside the shared root,
+        // just mark it shared and run normal push sync.
+        if (project.driveFolderId) {
+          const existingFolder = await client.verifyFileExists(project.driveFolderId);
+          if (existingFolder?.parents?.includes(root.id)) {
+            await putProject({
+              ...project,
+              isShared: true,
+              accessRole: root.role,
+            });
+            const pushed = await pushProjectToDrive(
+              client,
+              project.id,
+              root.id,
+              onProgress,
+            );
+            sharedProjects += 1;
+            sharedRecordings += pushed.pushedRecordings;
+            continue;
+          }
+        }
+
+        const safeFolderName = sanitizeFileName(project.title, 'Untitled Book');
+        onProgress?.({
+          phase: 'pushing',
+          message: `Sharing "${project.title}"…`,
+        });
+
+        let destFolder: DriveFileSummary | null = null;
+        const candidate = await client.findFolderByName(safeFolderName, root.id);
+        if (candidate) {
+          const candidateChildren = await client.listFolderChildren(candidate.id);
+          const candidateMetaFile = candidateChildren.find(
+            (f) => f.name === PROJECT_METADATA_FILENAME,
+          );
+          if (candidateMetaFile) {
+            try {
+              const candidateMeta =
+                await client.downloadJsonFile<DriveProjectMetadataFile>(
+                  candidateMetaFile.id,
+                );
+              if (candidateMeta?.id === project.id) {
+                destFolder = candidate;
+              }
+            } catch {
+              // Ignore unreadable manifest and create a fresh folder
+            }
+          } else if (candidateChildren.length === 0) {
+            destFolder = candidate;
+          }
+        }
+        if (!destFolder) {
+          destFolder = await client.createFolder(safeFolderName, root.id);
+        }
+
+        // 1. Copy or upload cover image into the shared book subfolder
+        let nextDriveCoverFileId: string | undefined;
+        if (project.hasCover) {
+          if (project.driveCoverFileId) {
+            try {
+              const copiedCover = await copyDriveFileWithFallback(
+                client,
+                project.driveCoverFileId,
+                COVER_FILENAME,
+                project.coverMimeType || 'image/jpeg',
+                destFolder.id,
+              );
+              nextDriveCoverFileId = copiedCover.id;
+            } catch (err) {
+              if (err instanceof DriveApiError && err.status === 401) throw err;
+            }
+          }
+          if (!nextDriveCoverFileId) {
+            const coverBlob = await getProjectCover(project.id);
+            if (coverBlob) {
+              const uploadedCover = await client.uploadBinaryResumable(
+                COVER_FILENAME,
+                project.coverMimeType || 'image/jpeg',
+                destFolder.id,
+                coverBlob,
+              );
+              nextDriveCoverFileId = uploadedCover.id;
+            }
+          }
+        }
+
+        // 2. Copy server-side (or upload from IndexedDB) each chapter audio file
+        const recordings = await listProjectRecordings(project.id);
+        const updatedRecordings: Recording[] = [];
+        let bookSharedRecs = 0;
+
+        for (let i = 0; i < recordings.length; i += 1) {
+          const rec = recordings[i];
+          const desiredName = buildChapterDriveFileName(
+            rec.orderIndex,
+            rec.name,
+            rec.extension,
+          );
+
+          onProgress?.({
+            phase: 'pushing',
+            message: `Sharing "${rec.name}"…`,
+            current: i + 1,
+            total: recordings.length,
+          });
+
+          let newFile: DriveFileSummary | null = null;
+          if (
+            rec.driveFileId &&
+            (rec.syncStatus === 'synced' || rec.syncStatus === 'cloud_only')
+          ) {
+            try {
+              newFile = await copyDriveFileWithFallback(
+                client,
+                rec.driveFileId,
+                desiredName,
+                rec.mimeType,
+                destFolder.id,
+              );
+            } catch (err) {
+              if (err instanceof DriveApiError && err.status === 401) throw err;
+            }
+          }
+
+          const localBlob = await getRecordingBlob(rec.id);
+          if (!newFile && localBlob) {
+            newFile = await client.uploadBinaryResumable(
+              desiredName,
+              rec.mimeType,
+              destFolder.id,
+              localBlob,
+            );
+          }
+
+          if (newFile) {
+            const updatedRec: Recording = {
+              ...rec,
+              driveFileId: newFile.id,
+              driveFileName: desiredName,
+              syncStatus: localBlob ? 'synced' : 'cloud_only',
+              syncError: undefined,
+            };
+            await putRecording(updatedRec);
+            updatedRecordings.push(updatedRec);
+            bookSharedRecs += 1;
+          } else {
+            updatedRecordings.push(rec);
+          }
+        }
+
+        // 3. Write a fresh project.json manifest inside the shared subfolder
+        const now = Date.now();
+        let updatedProject: BookProject = {
+          ...project,
+          driveFolderId: destFolder.id,
+          driveCoverFileId: nextDriveCoverFileId,
+          isShared: true,
+          accessRole: root.role,
+          syncStatus: 'synced',
+          syncError: undefined,
+          updatedAt: Math.max(project.updatedAt, now),
+        };
+
+        const manifest = buildMetadataPayload(updatedProject, updatedRecordings);
+        const metaSummary = await client.uploadJsonFile(
+          PROJECT_METADATA_FILENAME,
+          destFolder.id,
+          manifest,
+        );
+
+        updatedProject = {
+          ...updatedProject,
+          driveMetadataFileId: metaSummary.id,
+        };
+        await putProject(updatedProject);
+
+        sharedProjects += 1;
+        sharedRecordings += bookSharedRecs;
+        recordSyncDebugEvent('share', 'share_local_book_success', {
+          projectId: updatedProject.id,
+          title: updatedProject.title,
+          destFolderId: destFolder.id,
+          sharedChapters: bookSharedRecs,
+        });
+      } catch (err) {
+        if (err instanceof DriveApiError && err.status === 401) {
+          throw err;
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`${project.title}: ${msg}`);
+        recordSyncDebugEvent('share', 'share_local_book_error', {
+          projectId: project.id,
+          title: project.title,
+          error: msg,
+        });
+      }
+    }
+
+    onProgress?.({
+      phase: 'done',
+      message:
+        sharedProjects > 0
+          ? `Shared ${sharedProjects} ${sharedProjects === 1 ? 'book' : 'books'} into your shared library.`
+          : 'No personal books were shared.',
+    });
+
+    return {
+      sharedProjects,
+      sharedRecordings,
+      errors,
+    };
+  });
+}
+
 export function trashDriveFolder(
   folderId: string,
   clientOverride?: DriveClient,
@@ -1383,7 +1645,8 @@ export async function syncAllWithDrive(
       }
     }
 
-    // 2. PUSH local writable projects (skipping read-only Listener books and already-synced mirrored imports)
+    // 2. PUSH local writable projects (skipping read-only Listener books, unshared personal books
+    // while connected to a shared library, and already-synced mirrored imports)
     const localProjects = await listProjects();
     let pushedProjects = 0;
     let pushedRecordings = 0;
@@ -1391,6 +1654,7 @@ export async function syncAllWithDrive(
     for (const project of localProjects) {
       if (project.accessRole === 'reader') continue;
       if (root.role === 'reader' && !project.driveFolderId) continue;
+      if (isSharedLibrary && isUnsharedPersonalBook(project)) continue;
       if (project.importedFrom && project.syncStatus === 'synced') continue;
 
       try {
@@ -1477,6 +1741,19 @@ export async function syncSingleProjectWithDrive(
         mirroredChapters: mirrorRes.copiedChapters,
         sourceUnavailable: mirrorRes.sourceUnavailable,
       };
+    }
+
+    if (
+      settings.driveLibraryMode === 'shared' &&
+      project &&
+      isUnsharedPersonalBook(project) &&
+      !project.driveFolderId
+    ) {
+      onProgress?.({
+        phase: 'done',
+        message: 'Personal book kept private (not shared to family library).',
+      });
+      return { rootFolderId: root.id, pushedRecordings: 0 };
     }
 
     const { pushedRecordings } = await pushProjectToDrive(
