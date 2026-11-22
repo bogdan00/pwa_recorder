@@ -193,4 +193,49 @@ describe('WaveformCanvas scrub momentum cancellation', () => {
     flushNextRaf(16);
     expect(onSeekMs.mock.calls.length).toBe(callsAfterRecord);
   });
+
+  it('suspends the live rAF waveform loop while paused (OLED Blackout Mode) and resumes on wake', () => {
+    const onSeekMs = vi.fn();
+    const { rerender } = render(
+      <WaveformCanvas
+        peaks={[0.2, 0.5, 0.7]}
+        durationMs={2000}
+        playheadMs={2000}
+        phase="recording"
+        liveLevel={0.4}
+        paused={false}
+        onSeekMs={onSeekMs}
+      />,
+    );
+
+    expect(rafQueue.size).toBeGreaterThan(0);
+
+    rerender(
+      <WaveformCanvas
+        peaks={[0.2, 0.5, 0.7]}
+        durationMs={2000}
+        playheadMs={2000}
+        phase="recording"
+        liveLevel={0.4}
+        paused={true}
+        onSeekMs={onSeekMs}
+      />,
+    );
+
+    expect(rafQueue.size).toBe(0);
+
+    rerender(
+      <WaveformCanvas
+        peaks={[0.2, 0.5, 0.7]}
+        durationMs={2000}
+        playheadMs={2000}
+        phase="recording"
+        liveLevel={0.4}
+        paused={false}
+        onSeekMs={onSeekMs}
+      />,
+    );
+
+    expect(rafQueue.size).toBeGreaterThan(0);
+  });
 });

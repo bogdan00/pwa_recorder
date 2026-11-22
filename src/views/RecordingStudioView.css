@@ -138,6 +138,9 @@
   font-weight: 500;
   letter-spacing: -0.02em;
   line-height: 1.05;
+  min-width: 7.5ch;
+  text-align: center;
+  contain: layout style;
   color: var(--ink-primary);
 }
 
@@ -262,8 +265,8 @@
   inset: -6px;
   border-radius: 50%;
   border: 2px solid var(--accent-record);
+  opacity: 0.45;
   pointer-events: none;
-  animation: pulse-ring 1.8s var(--ease-out) infinite;
 }
 
 .record-btn {
@@ -448,6 +451,9 @@
   font-size: 32px;
   font-weight: 500;
   letter-spacing: -0.02em;
+  min-width: 5.5ch;
+  text-align: center;
+  contain: layout style;
   color: rgba(255, 255, 255, 0.28);
 }
 

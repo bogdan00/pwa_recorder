@@ -56,6 +56,7 @@ export function getDefaultSettings(): AppSettings {
     defaultNarrator: '',
     theme: DEFAULT_THEME_ID,
     keepScreenAwake: true,
+    backgroundRecordingKeepalive: false,
     keepLocalMaster: false,
     audioQuality: { ...DEFAULT_AUDIO_QUALITY },
     audioDevice: {
@@ -75,6 +76,7 @@ export function loadSettings(): AppSettings {
       ...defaults,
       ...parsed,
       theme: normalizeThemePreference(parsed.theme),
+      backgroundRecordingKeepalive: Boolean(parsed.backgroundRecordingKeepalive),
       keepLocalMaster: Boolean(parsed.keepLocalMaster),
       googleClientId:
         parsed.googleClientId?.trim() || defaults.googleClientId,

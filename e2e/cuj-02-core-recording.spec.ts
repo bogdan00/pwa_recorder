@@ -132,4 +132,85 @@ test.describe('CUJ-02: Core Audio Recording — Start, Live Waveform, Pause, Saf
     await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
     await expect(page.getByTestId('blackout-mode-btn')).toHaveCount(0);
   });
+
+  test('keeps iOS lock-screen looping audio keepalive OFF by default and honors opt-in Settings toggle', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const win = window as unknown as { __keepalivePlayCount?: number };
+      win.__keepalivePlayCount = 0;
+      const origPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function (...args) {
+        if (this.loop) {
+          win.__keepalivePlayCount = (win.__keepalivePlayCount ?? 0) + 1;
+        }
+        return origPlay.apply(this, args);
+      };
+    });
+
+    await page.goto('./');
+    await createBook(page, { title: 'Smooth Capture Book', author: 'Narrator' });
+
+    // 1. Default recording must NOT trigger looping keepalive <audio> playback
+    await page.locator('#record-chapter-btn').click();
+    await expect(page.getByTestId('recording-studio-view')).toBeVisible();
+    await page.locator('#big-record-pause-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('REC');
+
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= 0.5,
+      'default recording should advance smoothly without keepalive',
+    );
+    const defaultPlayCount = await page.evaluate(
+      () => (window as unknown as { __keepalivePlayCount?: number }).__keepalivePlayCount ?? 0,
+    );
+    expect(defaultPlayCount).toBe(0);
+
+    await page.locator('#big-record-pause-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
+
+    // Discard take and navigate back to Library to toggle opt-in setting
+    await page.getByRole('button', { name: 'Discard current recording' }).click();
+    await page.getByRole('button', { name: 'Discard Take', exact: true }).click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('READY');
+    await page.getByRole('button', { name: 'Leave recording studio' }).click();
+
+    // 2. Open Studio Settings -> App tab -> verify iOS Lock-Screen Audio Keepalive defaults OFF
+    await page.getByRole('button', { name: 'Back to library' }).click();
+    await page.getByRole('button', { name: 'Open settings' }).click();
+    await page.getByTestId('settings-tab-app').click();
+
+    const keepaliveRow = page.getByTestId('background-keepalive-row');
+    await expect(keepaliveRow).toBeVisible();
+    const keepaliveSwitch = keepaliveRow.getByRole('switch');
+    await expect(keepaliveSwitch).toHaveAttribute('aria-checked', 'false');
+
+    // Opt in and verify persistence across reload
+    await keepaliveSwitch.click();
+    await expect(keepaliveSwitch).toHaveAttribute('aria-checked', 'true');
+    await page.getByRole('button', { name: 'Close settings' }).click();
+
+    await page.reload();
+    await page.getByRole('button', { name: 'Open settings' }).click();
+    await page.getByTestId('settings-tab-app').click();
+    await expect(
+      page.getByTestId('background-keepalive-row').getByRole('switch'),
+    ).toHaveAttribute('aria-checked', 'true');
+    await page.getByRole('button', { name: 'Close settings' }).click();
+
+    // 3. When opted in, starting a recording activates the looping keepalive <audio>
+    await page.locator('.book-card__title', { hasText: 'Smooth Capture Book' }).click();
+    await page.locator('#record-chapter-btn').click();
+    await page.locator('#big-record-pause-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('REC');
+
+    const optInPlayCount = await page.evaluate(
+      () => (window as unknown as { __keepalivePlayCount?: number }).__keepalivePlayCount ?? 0,
+    );
+    expect(optInPlayCount).toBeGreaterThanOrEqual(1);
+
+    await page.locator('#big-record-pause-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
+  });
 });

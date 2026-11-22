@@ -350,15 +350,36 @@ export function buildStudioInputStrip(
     }
   }
 
+  let lastAppliedGain = autoGainController?.getGain() ?? 1;
   const updateAutoGain = (samples: Float32Array, durationSec: number): number => {
     if (!autoGainController || !autoGainNode) return 1;
     const nextGain = autoGainController.processSamples(samples, durationSec);
+    if (Math.abs(nextGain - lastAppliedGain) < 0.002) {
+      return nextGain;
+    }
+    lastAppliedGain = nextGain;
     const param = autoGainNode.gain;
     if (
       typeof param.setTargetAtTime === 'function' &&
       Number.isFinite(ctx.currentTime)
     ) {
-      param.setTargetAtTime(nextGain, ctx.currentTime, 0.03);
+      const now = ctx.currentTime;
+      const paramWithCancel = param as AudioParam & {
+        cancelAndHoldAtTime?: (cancelTime: number) => AudioParam;
+      };
+      if (typeof paramWithCancel.cancelAndHoldAtTime === 'function') {
+        try {
+          paramWithCancel.cancelAndHoldAtTime(now);
+        } catch {
+          // Ignore if browser rejects cancelAndHoldAtTime at t=0
+        }
+      } else if (typeof param.cancelScheduledValues === 'function') {
+        param.cancelScheduledValues(now);
+        if (typeof param.setValueAtTime === 'function') {
+          param.setValueAtTime(param.value, now);
+        }
+      }
+      param.setTargetAtTime(nextGain, now, 0.03);
     } else {
       param.value = nextGain;
     }

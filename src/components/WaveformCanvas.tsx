@@ -10,11 +10,13 @@ interface WaveformCanvasProps {
   playheadMs: number;
   phase: StudioPhase;
   liveLevel: number;
+  paused?: boolean;
   onSeekMs: (ms: number) => void;
   onScrubStart?: () => void;
 }
 
 interface WaveformThemeColors {
+  bg: string;
   active: string;
   recording: string;
   played: string;
@@ -43,6 +45,7 @@ declare global {
 }
 
 const DEFAULT_THEME_COLORS: WaveformThemeColors = {
+  bg: '#0c0c0e',
   active: '#ede4d8',
   recording: '#e25a44',
   played: '#e6a94d',
@@ -62,6 +65,7 @@ function readWaveformThemeColors(): WaveformThemeColors {
   }
   const styles = getComputedStyle(document.documentElement);
   return {
+    bg: styles.getPropertyValue('--bg-surface').trim() || DEFAULT_THEME_COLORS.bg,
     active: styles.getPropertyValue('--wave-active').trim() || DEFAULT_THEME_COLORS.active,
     recording: styles.getPropertyValue('--wave-recording').trim() || DEFAULT_THEME_COLORS.recording,
     played: styles.getPropertyValue('--wave-played').trim() || DEFAULT_THEME_COLORS.played,
@@ -78,29 +82,27 @@ function formatRulerTick(sec: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function appendRoundedBar(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
-): void {
-  if (typeof ctx.roundRect === 'function') {
-    ctx.roundRect(x, y, w, h, r);
-    return;
+function buildHaloSprite(): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  try {
+    const size = 96;
+    const half = size / 2;
+    const offscreen = document.createElement('canvas');
+    offscreen.width = size;
+    offscreen.height = size;
+    const octx = offscreen.getContext('2d');
+    if (!octx || typeof octx.createRadialGradient !== 'function') return null;
+    const grad = octx.createRadialGradient(half, half, 2, half, half, half);
+    grad.addColorStop(0, 'rgba(226, 90, 68, 0.36)');
+    grad.addColorStop(1, 'rgba(226, 90, 68, 0)');
+    octx.fillStyle = grad;
+    octx.beginPath();
+    octx.arc(half, half, half, 0, Math.PI * 2);
+    octx.fill();
+    return offscreen;
+  } catch {
+    return null;
   }
-  const radius = Math.min(r, w / 2, h / 2);
-  ctx.moveTo(x + radius, y);
-  ctx.lineTo(x + w - radius, y);
-  ctx.arcTo(x + w, y, x + w, y + radius, radius);
-  ctx.lineTo(x + w, y + h - radius);
-  ctx.arcTo(x + w, y + h, x + w - radius, y + h, radius);
-  ctx.lineTo(x + radius, y + h);
-  ctx.arcTo(x, y + h, x, y + h - radius, radius);
-  ctx.lineTo(x, y + radius);
-  ctx.arcTo(x, y, x + radius, y, radius);
-  ctx.closePath();
 }
 
 export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
@@ -110,12 +112,14 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
   playheadMs,
   phase,
   liveLevel,
+  paused = false,
   onSeekMs,
   onScrubStart,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const haloSpriteRef = useRef<HTMLCanvasElement | null>(null);
   const [zoom, setZoom] = useState<1 | 2>(1);
   const [isDragging, setIsDragging] = useState(false);
   const [hasScrubbedOnce, setHasScrubbedOnce] = useState(false);
@@ -128,7 +132,7 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
   });
   const themeColorsRef = useRef<WaveformThemeColors>(DEFAULT_THEME_COLORS);
 
-  // Latest props ref so the 60/120fps rAF loop stays unbroken across 15Hz React updates
+  // Latest props ref so the 60/120fps rAF loop stays unbroken across state transitions
   const pixelsPerSecond = 84 * zoom;
   const propsRef = useRef({
     engine,
@@ -234,7 +238,7 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
 
     let ctx = ctxRef.current;
     if (!ctx) {
-      ctx = canvas.getContext('2d');
+      ctx = canvas.getContext('2d', { alpha: false }) ?? canvas.getContext('2d');
       ctxRef.current = ctx;
     }
     if (!ctx) return;
@@ -336,7 +340,8 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
     const playheadSec = displayPlayheadMs / 1000;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = colors.bg;
+    ctx.fillRect(0, 0, width, height);
 
     // Time ruler ticks & subtle vertical guides (batched by stroke style)
     const visibleStartSec = playheadSec - centerX / pps;
@@ -346,6 +351,7 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
     const lastTick = Math.ceil(visibleEndSec);
 
     ctx.lineWidth = 1;
+    ctx.lineCap = 'butt';
 
     // 1. Batched center baseline + vertical major grid lines (ONE stroke)
     ctx.strokeStyle = colors.grid;
@@ -404,7 +410,7 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
       }
     }
 
-    // 4. Batched waveform bars (50 peaks/sec) — at most 2 fill() calls per frame!
+    // 4. Batched waveform bars (50 peaks/sec) — at most 2 lineCap='round' stroke() calls per frame!
     const peakCount = activePeaks.length;
     if (peakCount > 0) {
       const barSpacing = pps / PEAKS_PER_SECOND;
@@ -453,7 +459,9 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
           color: string,
         ) => {
           if (fromIdx > toIdx) return;
-          ctx!.fillStyle = color;
+          ctx!.strokeStyle = color;
+          ctx!.lineWidth = barWidth;
+          ctx!.lineCap = 'round';
           ctx!.beginPath();
           let drawn = false;
           for (let i = fromIdx; i <= toIdx; i += stride) {
@@ -472,18 +480,13 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
             // Subtle perceptual curve so soft bedtime whispers remain clearly visible
             const shaped = Math.pow(Math.min(1, amp * 1.15), 0.72);
             const halfH = Math.max(2, shaped * maxHalfBar);
-            appendRoundedBar(
-              ctx!,
-              x - barRadius,
-              waveCenterY - halfH,
-              barWidth,
-              halfH * 2,
-              barRadius,
-            );
+            const stemHalf = Math.max(0.25, halfH - barRadius);
+            ctx!.moveTo(x, waveCenterY - stemHalf);
+            ctx!.lineTo(x, waveCenterY + stemHalf);
             drawn = true;
           }
           if (drawn) {
-            ctx!.fill();
+            ctx!.stroke();
           }
         };
 
@@ -503,26 +506,26 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
             drawBarBucket(leftLast + stride, endIdx, rightColor);
           }
         }
+        ctx.lineCap = 'butt';
       }
     }
 
-    // Live input halo right at center playhead while recording
+    // Live input halo right at center playhead while recording (cached offscreen radial sprite)
     if (activePhase === 'recording') {
-      const liveRadius = 6 + Math.min(1, displayLiveLevel * 1.4) * 20;
-      const grad = ctx.createRadialGradient(
-        centerX,
-        waveCenterY,
-        2,
-        centerX,
-        waveCenterY,
-        liveRadius * 1.6,
-      );
-      grad.addColorStop(0, 'rgba(226, 90, 68, 0.36)');
-      grad.addColorStop(1, 'rgba(226, 90, 68, 0)');
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(centerX, waveCenterY, liveRadius * 1.6, 0, Math.PI * 2);
-      ctx.fill();
+      const liveRadius = (6 + Math.min(1, displayLiveLevel * 1.4) * 20) * 1.6;
+      if (!haloSpriteRef.current) {
+        haloSpriteRef.current = buildHaloSprite();
+      }
+      const halo = haloSpriteRef.current;
+      if (halo && typeof ctx.drawImage === 'function') {
+        ctx.drawImage(
+          halo,
+          centerX - liveRadius,
+          waveCenterY - liveRadius,
+          liveRadius * 2,
+          liveRadius * 2,
+        );
+      }
     }
 
     // Center fixed playhead hairline + top cap
@@ -569,7 +572,8 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
     const updateSize = (rawWidth: number, rawHeight: number) => {
       const width = Math.max(0, Math.floor(rawWidth));
       const height = Math.max(0, Math.floor(rawHeight));
-      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      // Cap DPR at 2 (Retina-crisp while cutting pixel fill & commit bandwidth by 56% on 3x phones)
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       if (width <= 0 || height <= 0) return;
 
       const pixelW = Math.floor(width * dpr);
@@ -586,7 +590,8 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
         sizeRef.current = { width, height, dpr };
         if (canvas.width !== pixelW) canvas.width = pixelW;
         if (canvas.height !== pixelH) canvas.height = pixelH;
-        ctxRef.current = canvas.getContext('2d');
+        ctxRef.current =
+          canvas.getContext('2d', { alpha: false }) ?? canvas.getContext('2d');
         drawFrame(nowPerfMs(), false);
       }
     };
@@ -617,8 +622,9 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
   }, [drawFrame]);
 
   // Continuous 60/120fps requestAnimationFrame loop while recording or preview-playing
+  // (automatically suspended while OLED Blackout Mode covers the screen)
   useEffect(() => {
-    if (phase !== 'recording' && phase !== 'playing') {
+    if (paused || (phase !== 'recording' && phase !== 'playing')) {
       return;
     }
 
@@ -636,13 +642,13 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
       active = false;
       window.cancelAnimationFrame(rafId);
     };
-  }, [phase, drawFrame]);
+  }, [phase, paused, drawFrame]);
 
   // Static/paused/idle redraws on prop changes (rAF loop handles recording/playing)
   useEffect(() => {
-    if (phase === 'recording' || phase === 'playing') return;
+    if (paused || phase === 'recording' || phase === 'playing') return;
     drawFrame(nowPerfMs(), false);
-  }, [durationMs, liveLevel, peaks, phase, playheadMs, zoom, drawFrame]);
+  }, [durationMs, liveLevel, peaks, phase, playheadMs, zoom, paused, drawFrame]);
 
   // Pointer drag-to-scrub handlers (touch + mouse)
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {

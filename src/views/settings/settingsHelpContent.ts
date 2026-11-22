@@ -18,6 +18,7 @@ export type SettingsHelpKey =
   | 'dsp-echo-cancellation'
   | 'drive-root-folder'
   | 'keep-screen-awake'
+  | 'background-recording-keepalive'
   | 'local-offline-storage';
 
 export const SETTINGS_HELP: Readonly<Record<SettingsHelpKey, InfoTipContent>> =
@@ -364,6 +365,25 @@ export const SETTINGS_HELP: Readonly<Record<SettingsHelpKey, InfoTipContent>> =
       summary:
         'Keeps your phone from auto-locking mid-chapter so the timer and waveform stay visible.',
       tip: 'Recording in a dark nursery? Tap the moon icon in Recording Studio for pure-black OLED Blackout Mode while recording continues.',
+    },
+
+    'background-recording-keepalive': {
+      id: 'background-recording-keepalive',
+      topic: 'iOS Lock-Screen Audio Keepalive',
+      title: 'Experimental iOS lock-screen workaround',
+      summary:
+        'Plays an inaudible looping audio file and switches Safari AudioSession to play-and-record so iOS Safari may keep recording if you manually lock the screen.',
+      bullets: [
+        {
+          label: 'OFF (Recommended)',
+          text: 'Avoids extra OS audio-session contention and resampling so recording stays smooth and glitch-free on iPhone, Android, Bluetooth mics, and desktop.',
+        },
+        {
+          label: 'ON (Experimental)',
+          text: 'Only try this if you specifically need to lock your iPhone mid-chapter in Safari. Some iOS versions or Bluetooth devices may experience choppy audio with this enabled.',
+        },
+      ],
+      tip: 'For dark rooms, Keep Screen Awake + Blackout screen inside Recording Studio gives zero glare without touching iOS audio sessions.',
     },
 
     'local-offline-storage': {

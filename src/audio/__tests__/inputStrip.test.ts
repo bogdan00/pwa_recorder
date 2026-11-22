@@ -149,6 +149,8 @@ describe('inputStrip DSP & true-peak ceiling', () => {
   it('buildStudioInputStrip inserts software AGC ahead of the safety limiter only when requested', () => {
     const order: string[] = [];
     const setTargetAtTime = vi.fn();
+    const cancelScheduledValues = vi.fn();
+    const setValueAtTime = vi.fn();
     const mockCtx = {
       currentTime: 1.25,
       createBiquadFilter: () => {
@@ -157,7 +159,11 @@ describe('inputStrip DSP & true-peak ceiling', () => {
       },
       createGain: () => {
         order.push('gain');
-        return { gain: { value: 1, setTargetAtTime }, connect: vi.fn(), disconnect: vi.fn() };
+        return {
+          gain: { value: 1, setTargetAtTime, cancelScheduledValues, setValueAtTime },
+          connect: vi.fn(),
+          disconnect: vi.fn(),
+        };
       },
       createDynamicsCompressor: () => {
         order.push('comp');
@@ -190,10 +196,16 @@ describe('inputStrip DSP & true-peak ceiling', () => {
     expect(withAgc.autoGainNode!.gain.value).toBe(SOFTWARE_AGC_INITIAL_GAIN);
     expect(order).toEqual(['hpf', 'gain', 'gain', 'comp', 'shaper']);
 
-    // Updating with quiet speech schedules smooth gain update via setTargetAtTime
+    // Silence holds gain steady and skips redundant AudioParam scheduling completely
+    const silence = new Float32Array(1200);
+    withAgc.updateAutoGain(silence, 0.025);
+    expect(setTargetAtTime).not.toHaveBeenCalled();
+
+    // Updating with quiet speech cancels superseded automation and schedules smooth update
     const samples = new Float32Array(1200).fill(0.04);
     const nextGain = withAgc.updateAutoGain(samples, 0.025);
     expect(nextGain).toBeGreaterThan(SOFTWARE_AGC_INITIAL_GAIN);
+    expect(cancelScheduledValues).toHaveBeenCalledWith(1.25);
     expect(setTargetAtTime).toHaveBeenCalledWith(nextGain, 1.25, 0.03);
   });
 });

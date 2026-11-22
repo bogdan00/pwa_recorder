@@ -361,6 +361,7 @@ export class MicLevelTester {
       acquired.actualSampleRate || ctx.sampleRate;
     const actualChannels = acquired.actualChannels || targetChannels;
     let lastTickMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    let lastEmitMs = -Infinity;
 
     const tick = () => {
       if (this.stopped) return;
@@ -373,26 +374,29 @@ export class MicLevelTester {
         strip.updateAutoGain(timeData, dtSec);
       }
 
-      let peak = 0;
-      for (let i = 0; i < timeData.length; i += 1) {
-        const a = Math.abs(timeData[i]);
-        if (a > peak) peak = a;
+      if (nowMs - lastEmitMs >= 60) {
+        lastEmitMs = nowMs;
+        let peak = 0;
+        for (let i = 0; i < timeData.length; i += 1) {
+          const a = Math.abs(timeData[i]);
+          if (a > peak) peak = a;
+        }
+        const db = peak > 1e-4 ? Math.max(-60, 20 * Math.log10(peak)) : -60;
+        const capturedDurationMs = Math.round(
+          (this.capturedFrames / Math.max(1, this.captureSampleRate)) * 1000,
+        );
+        onTelemetry({
+          level: Math.min(1, peak),
+          db,
+          clipping: peak >= 0.96,
+          actualDeviceLabel: acquired.actualDeviceLabel,
+          actualSampleRate,
+          actualChannels,
+          capturedDurationMs,
+          softwareAgcActive: enableSoftwareAgc,
+          autoGainDb: strip.autoGainController?.getGainDb(),
+        });
       }
-      const db = peak > 1e-4 ? Math.max(-60, 20 * Math.log10(peak)) : -60;
-      const capturedDurationMs = Math.round(
-        (this.capturedFrames / Math.max(1, this.captureSampleRate)) * 1000,
-      );
-      onTelemetry({
-        level: Math.min(1, peak),
-        db,
-        clipping: peak >= 0.96,
-        actualDeviceLabel: acquired.actualDeviceLabel,
-        actualSampleRate,
-        actualChannels,
-        capturedDurationMs,
-        softwareAgcActive: enableSoftwareAgc,
-        autoGainDb: strip.autoGainController?.getGainDb(),
-      });
       this.rafId = window.requestAnimationFrame(tick);
     };
 

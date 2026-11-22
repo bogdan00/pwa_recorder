@@ -112,6 +112,8 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
 
   const saveTransientIdRef = useRef<string | null>(null);
   const exitingRef = useRef(false);
+  const timerElRef = useRef<HTMLDivElement | null>(null);
+  const blackoutTimerElRef = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
     void probeAudioCapabilities().then(setCaps);
@@ -157,7 +159,22 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
   useEffect(() => {
     const engine = engineRef.current!;
     const unsub = engine.subscribe(setSnap);
+    const unsubTime = engine.subscribeTime((playheadMs) => {
+      if (timerElRef.current) {
+        const tenthsText = formatDurationMs(playheadMs, { showTenths: true });
+        if (timerElRef.current.textContent !== tenthsText) {
+          timerElRef.current.textContent = tenthsText;
+        }
+      }
+      if (blackoutTimerElRef.current) {
+        const secText = formatDurationMs(playheadMs);
+        if (blackoutTimerElRef.current.textContent !== secText) {
+          blackoutTimerElRef.current.textContent = secText;
+        }
+      }
+    });
     return () => {
+      unsubTime();
       unsub();
       void engine.dispose();
     };
@@ -266,6 +283,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
           settings.audioDevice,
           settings.audioQuality,
           settings.keepScreenAwake,
+          { backgroundKeepalive: settings.backgroundRecordingKeepalive },
         );
         if (feedback.usedFallbackDevice && feedback.fallbackReason) {
           onToast(feedback.fallbackReason);
@@ -290,6 +308,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
         settings.audioDevice,
         settings.audioQuality,
         settings.keepScreenAwake,
+        { backgroundKeepalive: settings.backgroundRecordingKeepalive },
       );
       if (res.usedFallbackDevice && res.fallbackReason) {
         onToast(res.fallbackReason);
@@ -478,8 +497,16 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
             <span className="studio-spec-chip__text">{specSummary}</span>
           </button>
 
-          <div className="studio-timer" data-testid="studio-timer">
-            {formatDurationMs(snap.playheadMs, { showTenths: true })}
+          <div ref={timerElRef} className="studio-timer" data-testid="studio-timer">
+            {formatDurationMs(
+              (() => {
+                const live = engineRef.current?.getLiveRenderState();
+                return live?.isLiveClockActive
+                  ? live.playheadMs
+                  : snap.playheadMs;
+              })(),
+              { showTenths: true },
+            )}
           </div>
 
           <div className="studio-timer-sub">
@@ -500,6 +527,7 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
             playheadMs={snap.playheadMs}
             phase={snap.phase}
             liveLevel={snap.liveLevel}
+            paused={blackoutActive}
             onSeekMs={(ms) => engineRef.current!.seekToMs(ms)}
             onScrubStart={() => {
               if (snap.phase === 'playing') {
@@ -819,8 +847,18 @@ export const RecordingStudioView: React.FC<RecordingStudioViewProps> = ({
             <span className="studio-blackout-overlay__dot" aria-hidden="true" />
             Recording
           </span>
-          <span className="studio-blackout-overlay__timer">
-            {formatDurationMs(snap.playheadMs)}
+          <span
+            ref={blackoutTimerElRef}
+            className="studio-blackout-overlay__timer"
+          >
+            {formatDurationMs(
+              (() => {
+                const live = engineRef.current?.getLiveRenderState();
+                return live?.isLiveClockActive
+                  ? live.playheadMs
+                  : snap.playheadMs;
+              })(),
+            )}
           </span>
           <span
             className={`studio-blackout-overlay__hint ${blackoutWakeArmed ? 'studio-blackout-overlay__hint--armed' : ''}`}

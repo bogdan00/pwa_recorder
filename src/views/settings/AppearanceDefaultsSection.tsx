@@ -97,6 +97,21 @@ export const AppearanceDefaultsSection: React.FC<
           })
         }
       />
+
+      <ToggleRow
+        testId="background-keepalive-row"
+        title="iOS Lock-Screen Audio Keepalive"
+        description="Experimental: plays an inaudible audio loop while recording so iOS Safari may stay awake when locked. Keep OFF for smoothest recording."
+        checked={settings.backgroundRecordingKeepalive}
+        help={SETTINGS_HELP['background-recording-keepalive']}
+        onToggle={() =>
+          onUpdateSettings({
+            ...settings,
+            backgroundRecordingKeepalive:
+              !settings.backgroundRecordingKeepalive,
+          })
+        }
+      />
     </section>
   );
 };

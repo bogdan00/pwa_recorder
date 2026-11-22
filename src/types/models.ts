@@ -99,6 +99,7 @@ export interface AppSettings {
   defaultNarrator: string;
   theme: ThemePreference;
   keepScreenAwake: boolean;
+  backgroundRecordingKeepalive: boolean;
   keepLocalMaster: boolean;
   audioQuality: AudioQualitySettings;
   audioDevice: AudioDeviceSettings;

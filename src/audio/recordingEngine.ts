@@ -9,8 +9,7 @@ import {
   getDraft,
   loadDraftChunks,
   replaceDraftSnapshot,
-  saveDraftChunk,
-  saveDraftMeta,
+  saveDraftChunkAndMeta,
 } from '../storage/db';
 import { createId, downsamplePeaks } from '../utils/format';
 import { acquireMicStream } from './audioDevices';
@@ -56,8 +55,16 @@ export interface StartRecordingFeedback {
   fallbackReason?: string;
 }
 
+export interface StartRecordingOptions {
+  /**
+   * Opt-in iOS lock-screen looping `<audio>` + `play-and-record` audioSession workaround.
+   * Defaults to `false` to prevent OS audio-session contention and choppy mic capture.
+   */
+  backgroundKeepalive?: boolean;
+}
+
 const DRAFT_FLUSH_SECONDS = 2;
-const LIVE_EMIT_INTERVAL_MS = 65; // ~15 Hz React UI updates during live capture/preview
+const LIVE_TIME_EMIT_INTERVAL_MS = 65; // ~15 Hz direct timer DOM updates (zero React re-renders)
 const CAPTURE_WATCHDOG_INTERVAL_MS = 2000;
 const EMPTY_PEAKS: readonly number[] = [];
 
@@ -89,8 +96,9 @@ export class RecordingEngine {
   private captureHandle: PcmCaptureHandle | null = null;
   private activeDeviceLabel = '';
 
-  // iOS background/lock-screen keepalive & interruption recovery
+  // iOS background/lock-screen keepalive (opt-in, OFF by default) & interruption recovery
   private bgKeepalive: BackgroundCaptureKeepalive;
+  private backgroundKeepaliveEnabled = false;
   private ctxStateChangeHandler: (() => void) | null = null;
   private watchedAudioTrack: MediaStreamTrack | null = null;
   private trackEndedHandler: (() => void) | null = null;
@@ -121,6 +129,9 @@ export class RecordingEngine {
 
   // Listeners
   private listeners = new Set<(snap: StudioSnapshot) => void>();
+  private timeListeners = new Set<
+    (playheadMs: number, durationMs: number) => void
+  >();
   private visibilityHandler: (() => void) | null = null;
 
   constructor(projectId: string, projectTitle = 'StoryTape') {
@@ -143,6 +154,21 @@ export class RecordingEngine {
     listener(this.getSnapshot());
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  /**
+   * Lightweight direct-DOM clock listener fired at ~15Hz during recording and preview
+   * playback (and on every snapshot transition) so the timer text updates with zero
+   * React re-renders.
+   */
+  subscribeTime(
+    listener: (playheadMs: number, durationMs: number) => void,
+  ): () => void {
+    this.timeListeners.add(listener);
+    listener(this.playheadMs, this.timeline?.getDurationMs() ?? 0);
+    return () => {
+      this.timeListeners.delete(listener);
     };
   }
 
@@ -204,10 +230,20 @@ export class RecordingEngine {
     };
   }
 
+  private emitTime(): void {
+    this.lastEmitPerfMs = nowPerfMs();
+    if (this.timeListeners.size === 0) return;
+    const durationMs = this.timeline?.getDurationMs() ?? 0;
+    this.timeListeners.forEach((fn) => fn(this.playheadMs, durationMs));
+  }
+
   private emit(): void {
     this.lastEmitPerfMs = nowPerfMs();
     const snap = this.getSnapshot();
     this.listeners.forEach((fn) => fn(snap));
+    if (this.timeListeners.size > 0) {
+      this.timeListeners.forEach((fn) => fn(snap.playheadMs, snap.durationMs));
+    }
   }
 
   /**
@@ -236,9 +272,11 @@ export class RecordingEngine {
     deviceSettings: AudioDeviceSettings,
     quality: AudioQualitySettings,
     keepScreenAwake: boolean,
+    options?: StartRecordingOptions,
   ): Promise<StartRecordingFeedback> {
     this.stopPreviewPlayback();
     this.keepScreenAwake = keepScreenAwake;
+    this.backgroundKeepaliveEnabled = Boolean(options?.backgroundKeepalive);
 
     if (this.timeline) {
       // Safe default: snap playhead to end and continue appending with click-free fade-in
@@ -258,9 +296,11 @@ export class RecordingEngine {
     deviceSettings: AudioDeviceSettings,
     quality: AudioQualitySettings,
     keepScreenAwake: boolean,
+    options?: StartRecordingOptions,
   ): Promise<StartRecordingFeedback & { trimmedMs: number }> {
     this.stopPreviewPlayback();
     this.keepScreenAwake = keepScreenAwake;
+    this.backgroundKeepaliveEnabled = Boolean(options?.backgroundKeepalive);
 
     let trimmedMs = 0;
     if (this.timeline) {
@@ -417,8 +457,8 @@ export class RecordingEngine {
         this.timeline.getDurationMs(),
         this.previewStartOffsetMs + elapsedMs,
       );
-      if (nowPerfMs() - this.lastEmitPerfMs >= LIVE_EMIT_INTERVAL_MS) {
-        this.emit();
+      if (nowPerfMs() - this.lastEmitPerfMs >= LIVE_TIME_EMIT_INTERVAL_MS) {
+        this.emitTime();
       }
       this.previewRafId = window.requestAnimationFrame(step);
     };
@@ -602,7 +642,9 @@ export class RecordingEngine {
 
   private attemptCaptureResume(): void {
     if (this.phase !== 'recording') return;
-    this.bgKeepalive.ensureActive();
+    if (this.backgroundKeepaliveEnabled) {
+      this.bgKeepalive.ensureActive();
+    }
     const ctx = this.audioCtx;
     if (!ctx) return;
     const state = ctx.state as string;
@@ -737,9 +779,12 @@ export class RecordingEngine {
     const targetChannels: ChannelCountOption =
       this.timeline?.channels ?? quality.channels;
 
-    // 1. Synchronously activate iOS background AudioSession + inaudible keepalive <audio>
-    //    and kick AudioContext.resume() INSIDE the user tap gesture (before any await!).
-    this.bgKeepalive.startSync(this.projectTitle);
+    // 1. Synchronously activate opt-in iOS background AudioSession + keepalive <audio>
+    //    (only when explicitly enabled in Settings) and kick AudioContext.resume()
+    //    INSIDE the user tap gesture (before any await!).
+    if (this.backgroundKeepaliveEnabled) {
+      this.bgKeepalive.startSync(this.projectTitle);
+    }
     const ctx = this.createOrGetAudioContext(this.timeline?.sampleRate);
     if (ctx.state !== 'running') {
       void ctx.resume().catch(() => {});
@@ -773,7 +818,9 @@ export class RecordingEngine {
       };
     }
 
-    this.bgKeepalive.reinforceAfterMicAcquired();
+    if (this.backgroundKeepaliveEnabled) {
+      this.bgKeepalive.reinforceAfterMicAcquired();
+    }
 
     // 3. Re-resume AudioContext after permission dialog closes (iOS suspends it during prompt)
     await this.resumeContextSafely(ctx);
@@ -878,12 +925,11 @@ export class RecordingEngine {
       void this.flushPendingDraftToDb();
     }
 
-    if (
-      !this.hasEmittedFirstChunkInSession ||
-      now - this.lastEmitPerfMs >= LIVE_EMIT_INTERVAL_MS
-    ) {
+    if (!this.hasEmittedFirstChunkInSession) {
       this.hasEmittedFirstChunkInSession = true;
       this.emit();
+    } else if (now - this.lastEmitPerfMs >= LIVE_TIME_EMIT_INTERVAL_MS) {
+      this.emitTime();
     }
   }
 
@@ -969,8 +1015,7 @@ export class RecordingEngine {
 
     return this.enqueueDraftPersist(async () => {
       try {
-        await saveDraftChunk(draftId, chunkIdx, merged);
-        await saveDraftMeta(draftMeta);
+        await saveDraftChunkAndMeta(draftMeta, chunkIdx, merged);
       } catch {
         // Non-fatal: recording remains safe in memory
       }

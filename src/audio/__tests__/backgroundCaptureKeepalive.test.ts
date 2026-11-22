@@ -143,7 +143,9 @@ describe('RecordingEngine lock-screen interruption & track-end recovery', () => 
       },
     });
 
-    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const playSpy = vi
+      .spyOn(HTMLMediaElement.prototype, 'play')
+      .mockResolvedValue(undefined);
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
 
     let ctxState: string = 'running';
@@ -200,10 +202,13 @@ describe('RecordingEngine lock-screen interruption & track-end recovery', () => 
 
     vi.stubGlobal('AudioContext', MockAudioContext);
 
+    // Default (backgroundKeepalive omitted / false): NEVER plays looping keepalive <audio>,
+    // yet passive interruption auto-resume and track-end recovery still protect the recording.
     const engine = new RecordingEngine('book-1', 'Mica sirenă');
     await engine.startOrResumeFromEnd(DEFAULT_AUDIO_DEVICE, DEFAULT_AUDIO_QUALITY, true);
     expect(engine.getSnapshot().phase).toBe('recording');
     expect(engine.getSnapshot().captureWarning).toBeNull();
+    expect(playSpy).not.toHaveBeenCalled();
 
     // 1. Simulate iOS lock screen transitioning AudioContext to 'interrupted'
     ctxState = 'interrupted';
@@ -221,6 +226,13 @@ describe('RecordingEngine lock-screen interruption & track-end recovery', () => 
 
     engine.dismissCaptureWarning();
     expect(engine.getSnapshot().captureWarning).toBeNull();
+
+    // 3. Opt-in ({ backgroundKeepalive: true }) activates the looping keepalive <audio> synchronously
+    trackReadyState = 'live';
+    await engine.startOrResumeFromEnd(DEFAULT_AUDIO_DEVICE, DEFAULT_AUDIO_QUALITY, true, {
+      backgroundKeepalive: true,
+    });
+    expect(playSpy).toHaveBeenCalled();
 
     await engine.dispose();
   });

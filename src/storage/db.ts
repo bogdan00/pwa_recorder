@@ -441,6 +441,23 @@ export async function saveDraftChunk(
   });
 }
 
+export async function saveDraftChunkAndMeta(
+  draft: ActiveDraft,
+  chunkIndex: number,
+  data: Float32Array,
+): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction(['drafts', 'draftChunks'], 'readwrite');
+  await tx.objectStore('draftChunks').put({
+    key: `${draft.id}:${chunkIndex}`,
+    draftId: draft.id,
+    chunkIndex,
+    data,
+  });
+  await tx.objectStore('drafts').put(draft);
+  await tx.done;
+}
+
 export async function loadDraftChunks(draftId: string): Promise<Float32Array[]> {
   const db = await getDb();
   const rows = await db.getAllFromIndex('draftChunks', 'by-draft', draftId);
