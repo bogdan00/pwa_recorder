@@ -286,9 +286,10 @@ export class MicLevelTester {
       (window as unknown as { webkitAudioContext: typeof AudioContext })
         .webkitAudioContext;
 
-    // Create native-rate AudioContext with playback latencyHint inside click gesture
+    // Create native-rate AudioContext with low-latency interactive path inside click gesture
+    // (never 'playback', which disables Android AAudio low-latency mode and causes mic FIFO bursts)
     try {
-      this.audioCtx = new AudioCtxCtor({ latencyHint: 'playback' });
+      this.audioCtx = new AudioCtxCtor({ latencyHint: 'interactive' });
     } catch {
       this.audioCtx = new AudioCtxCtor();
     }

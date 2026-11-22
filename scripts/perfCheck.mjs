@@ -258,6 +258,7 @@ async function attachProbeInitScript(page) {
       workletLoaded: 0,
       workletErrors: [],
       scriptProcessorCreated: 0,
+      playbackLatencyHintCalls: 0,
       loopingAudioPlayCalls: 0,
       chunkCount: 0,
       chunkIntervals: [],
@@ -276,6 +277,10 @@ async function attachProbeInitScript(page) {
     const OrigAC = window.AudioContext;
     if (OrigAC) {
       window.AudioContext = function (...args) {
+        const opts = args[0];
+        if (opts && typeof opts === 'object' && opts.latencyHint === 'playback') {
+          window.__perfProbe.playbackLatencyHintCalls += 1;
+        }
         const ctx = new OrigAC(...args);
         if (ctx.audioWorklet && ctx.audioWorklet.addModule) {
           const origAdd = ctx.audioWorklet.addModule.bind(ctx.audioWorklet);
@@ -560,7 +565,11 @@ async function runProfile({ baseUrl, wavPath, profile }) {
       layoutPerSec: round1((m2.LayoutCount - m1.LayoutCount) / elapsedSec),
       workletLoaded: probeAndAudio.probe.workletLoaded,
       scriptProcessorCreated: probeAndAudio.probe.scriptProcessorCreated,
+      playbackLatencyHintCalls: probeAndAudio.probe.playbackLatencyHintCalls,
       loopingAudioPlayCalls: probeAndAudio.probe.loopingAudioPlayCalls,
+      playheadStallFrames: windowResult.playheadStallFrames,
+      playheadJumpFrames: windowResult.playheadJumpFrames,
+      maxPlayheadStepMs: round1(windowResult.maxPlayheadStepMs),
       windowChunks: windowResult.windowChunks,
       meanChunkIntervalMs: round1(mean(sortedChunks)),
       maxChunkIntervalMs: round1(percentile(sortedChunks, 1)),

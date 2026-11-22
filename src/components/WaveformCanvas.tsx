@@ -29,9 +29,18 @@ interface WaveformThemeColors {
 interface WaveformPerfTelemetry {
   renderCount: number;
   rafFrames: number;
+  recordingRafFrames: number;
   lastFrameMs: number;
   avgFrameMs: number;
+  p95FrameMs: number;
+  severeStallsOver50ms: number;
+  playheadStallFrames: number;
+  playheadJumpFrames: number;
+  maxPlayheadStepMs: number;
+  lastPlayheadMs: number;
   phase: StudioPhase;
+  computeP95FrameMs: () => number;
+  resetWindowMetrics: () => void;
 }
 
 type WaveformCanvasElement = HTMLCanvasElement & {
@@ -55,8 +64,19 @@ const DEFAULT_THEME_COLORS: WaveformThemeColors = {
   playhead: '#e6a94d',
 };
 
+const RULER_FONT = '500 10px "JetBrains Mono", monospace';
+const FRAME_RING_SIZE = 256;
+
 function nowPerfMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function configureCanvasContext(ctx: CanvasRenderingContext2D | null): void {
+  if (!ctx) return;
+  ctx.font = RULER_FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.lineCap = 'butt';
 }
 
 function readWaveformThemeColors(): WaveformThemeColors {
@@ -155,28 +175,58 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
     pixelsPerSecond,
   };
 
-  // Smooth playhead & live-level motion state
+  // Smooth playhead & live-level motion state (keeps rAF clock separate from perf clock)
   const motionRef = useRef<{
     playheadMs: number;
     liveLevel: number;
-    lastFramePerfMs: number;
+    lastRafNow: number;
     lastPhase: StudioPhase;
     initialized: boolean;
   }>({
     playheadMs,
     liveLevel: 0,
-    lastFramePerfMs: 0,
+    lastRafNow: 0,
     lastPhase: phase,
     initialized: false,
   });
 
-  // Zero-DOM-cost frame telemetry
+  // Zero-allocation frame delta ring buffer & playhead smoothness telemetry
+  const frameRingRef = useRef<Float32Array>(new Float32Array(FRAME_RING_SIZE));
+  const frameRingCountRef = useRef(0);
   const perfRef = useRef<WaveformPerfTelemetry>({
     renderCount: 0,
     rafFrames: 0,
+    recordingRafFrames: 0,
     lastFrameMs: 0,
     avgFrameMs: 0,
+    p95FrameMs: 0,
+    severeStallsOver50ms: 0,
+    playheadStallFrames: 0,
+    playheadJumpFrames: 0,
+    maxPlayheadStepMs: 0,
+    lastPlayheadMs: 0,
     phase,
+    computeP95FrameMs: () => {
+      const count = Math.min(frameRingCountRef.current, FRAME_RING_SIZE);
+      if (count === 0) return 0;
+      const sample = Array.from(frameRingRef.current.subarray(0, count)).sort(
+        (a, b) => a - b,
+      );
+      const idx = Math.min(sample.length - 1, Math.floor(sample.length * 0.95));
+      return sample[idx] ?? 0;
+    },
+    resetWindowMetrics: () => {
+      const p = perfRef.current;
+      frameRingCountRef.current = 0;
+      p.recordingRafFrames = 0;
+      p.lastFrameMs = 0;
+      p.avgFrameMs = 0;
+      p.p95FrameMs = 0;
+      p.severeStallsOver50ms = 0;
+      p.playheadStallFrames = 0;
+      p.playheadJumpFrames = 0;
+      p.maxPlayheadStepMs = 0;
+    },
   });
 
   // Pointer scrubbing + momentum refs
@@ -239,6 +289,7 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
     let ctx = ctxRef.current;
     if (!ctx) {
       ctx = canvas.getContext('2d', { alpha: false }) ?? canvas.getContext('2d');
+      configureCanvasContext(ctx);
       ctxRef.current = ctx;
     }
     if (!ctx) return;
@@ -252,35 +303,62 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
     const activePeaks = useLive ? live!.peaks : p.peaks;
     const rawPlayheadMs = useLive ? live!.playheadMs : p.playheadMs;
     const rawLiveLevel = useLive ? live!.liveLevel : p.liveLevel;
-    const lastChunkPerfMs = useLive ? live!.lastChunkPerfMs : now;
+    const perfNow = nowPerfMs();
+    const lastChunkPerfMs = useLive ? live!.lastChunkPerfMs : perfNow;
 
     // Smooth playhead & liveLevel interpolation
     const motion = motionRef.current;
+    const perf = perfRef.current;
+    const enteringRecording =
+      activePhase === 'recording' && motion.lastPhase !== 'recording';
+    if (enteringRecording) {
+      perf.resetWindowMetrics();
+    }
+
     const dt =
-      motion.lastFramePerfMs > 0
-        ? Math.min(50, Math.max(0, now - motion.lastFramePerfMs))
+      isRafTick && motion.lastRafNow > 0
+        ? Math.min(50, Math.max(0, now - motion.lastRafNow))
         : 16.67;
+    const prevPlayheadMs = motion.playheadMs;
+    const wasSteadyRecording =
+      activePhase === 'recording' &&
+      motion.lastPhase === 'recording' &&
+      motion.initialized &&
+      isRafTick &&
+      motion.lastRafNow > 0;
 
     if (activePhase === 'recording') {
       if (useLive) {
-        const targetPlayheadMs =
-          activeDurationMs + Math.min(45, Math.max(0, now - lastChunkPerfMs));
+        // Compute elapsed since last chunk strictly in the performance.now() domain
+        // (matching RecordingEngine.lastChunkPerfMs) so rAF VSync clock offsets never pull backwards.
+        const elapsedSinceChunkMs = Math.min(
+          220,
+          Math.max(0, perfNow - lastChunkPerfMs),
+        );
+        const targetPlayheadMs = activeDurationMs + elapsedSinceChunkMs;
         if (
-          motion.lastPhase !== 'recording' ||
+          enteringRecording ||
           !motion.initialized ||
-          targetPlayheadMs < motion.playheadMs - 150 ||
-          targetPlayheadMs > motion.playheadMs + 250
+          targetPlayheadMs < motion.playheadMs - 250 ||
+          targetPlayheadMs > motion.playheadMs + 400
         ) {
           motion.playheadMs = targetPlayheadMs;
           motion.initialized = true;
         } else {
+          // Bounded-slew phase-locked loop (0.75x..1.25x real time, tau=180ms, 250ms ceiling):
+          // stays rock-steady at 1.0x across 60/120Hz displays and bursty mobile audio callbacks.
           const predicted = motion.playheadMs + dt;
-          const alpha = 1 - Math.exp(-dt / 45);
-          const blended = predicted + (targetPlayheadMs - predicted) * alpha;
-          // Strictly monotonic forward glide during recording without running away past chunk cap
+          const err = targetPlayheadMs - predicted;
+          const alpha = 1 - Math.exp(-dt / 180);
+          const maxCorrection = dt * 0.25;
+          const correction = Math.max(
+            -maxCorrection,
+            Math.min(maxCorrection, err * alpha),
+          );
+          const nextPlayhead = predicted + correction;
           motion.playheadMs = Math.max(
             motion.playheadMs,
-            Math.min(blended, activeDurationMs + 45),
+            Math.min(nextPlayhead, activeDurationMs + 250),
           );
         }
 
@@ -301,16 +379,16 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
       motion.initialized = true;
     }
 
-    motion.lastFramePerfMs = now;
+    motion.lastRafNow = isRafTick ? now : 0;
     motion.lastPhase = activePhase;
 
     const displayPlayheadMs = motion.playheadMs;
     const displayLiveLevel = motion.liveLevel;
 
-    // Update lightweight non-DOM frame telemetry
-    const perf = perfRef.current;
+    // Update lightweight non-DOM frame & playhead smoothness telemetry
     perf.renderCount += 1;
     perf.phase = activePhase;
+    perf.lastPlayheadMs = displayPlayheadMs;
     if (isRafTick) {
       if (perf.lastFrameMs > 0) {
         const frameDt = now - perf.lastFrameMs;
@@ -319,10 +397,34 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
             perf.avgFrameMs === 0
               ? frameDt
               : perf.avgFrameMs * 0.9 + frameDt * 0.1;
+          if (activePhase === 'recording') {
+            frameRingRef.current[frameRingCountRef.current % FRAME_RING_SIZE] =
+              frameDt;
+            frameRingCountRef.current += 1;
+            if (frameDt > 50) {
+              perf.severeStallsOver50ms += 1;
+            }
+          }
+        }
+      }
+      if (wasSteadyRecording && useLive && dt >= 8) {
+        const step = displayPlayheadMs - prevPlayheadMs;
+        if (step > perf.maxPlayheadStepMs) {
+          perf.maxPlayheadStepMs = step;
+        }
+        if (step < 0.5) {
+          perf.playheadStallFrames += 1;
+        } else if (step > Math.max(45, dt * 2.5)) {
+          perf.playheadJumpFrames += 1;
         }
       }
       perf.rafFrames += 1;
+      if (activePhase === 'recording') {
+        perf.recordingRafFrames += 1;
+      }
       perf.lastFrameMs = now;
+    } else if (activePhase !== 'recording') {
+      perf.lastFrameMs = 0;
     }
     canvas.__renderCount = perf.renderCount;
     if (typeof window !== 'undefined') {
@@ -351,7 +453,6 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
     const lastTick = Math.ceil(visibleEndSec);
 
     ctx.lineWidth = 1;
-    ctx.lineCap = 'butt';
 
     // 1. Batched center baseline + vertical major grid lines (ONE stroke)
     ctx.strokeStyle = colors.grid;
@@ -385,7 +486,7 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
       ctx.stroke();
     }
 
-    // 3. Batched major ruler ticks (ONE stroke) + ruler labels
+    // 3. Batched major ruler ticks (ONE stroke) + ruler labels (using cached ctx.font)
     ctx.strokeStyle = colors.ruler;
     ctx.beginPath();
     let hasMajorTicks = false;
@@ -399,9 +500,6 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
     if (hasMajorTicks) {
       ctx.stroke();
 
-      ctx.font = '500 10px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
       ctx.fillStyle = colors.ruler;
       for (let sec = firstMajorTick; sec <= lastTick; sec += majorStep) {
         const x = centerX + (sec - playheadSec) * pps;
@@ -410,7 +508,8 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
       }
     }
 
-    // 4. Batched waveform bars (50 peaks/sec) — at most 2 lineCap='round' stroke() calls per frame!
+    // 4. Batched waveform bars (50 peaks/sec) — at most 2 rect()+fill() calls per frame
+    //    (zero round-cap semicircle tessellation on mobile GPUs!)
     const peakCount = activePeaks.length;
     if (peakCount > 0) {
       const barSpacing = pps / PEAKS_PER_SECOND;
@@ -459,9 +558,7 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
           color: string,
         ) => {
           if (fromIdx > toIdx) return;
-          ctx!.strokeStyle = color;
-          ctx!.lineWidth = barWidth;
-          ctx!.lineCap = 'round';
+          ctx!.fillStyle = color;
           ctx!.beginPath();
           let drawn = false;
           for (let i = fromIdx; i <= toIdx; i += stride) {
@@ -480,13 +577,11 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
             // Subtle perceptual curve so soft bedtime whispers remain clearly visible
             const shaped = Math.pow(Math.min(1, amp * 1.15), 0.72);
             const halfH = Math.max(2, shaped * maxHalfBar);
-            const stemHalf = Math.max(0.25, halfH - barRadius);
-            ctx!.moveTo(x, waveCenterY - stemHalf);
-            ctx!.lineTo(x, waveCenterY + stemHalf);
+            ctx!.rect(x - barRadius, waveCenterY - halfH, barWidth, halfH * 2);
             drawn = true;
           }
           if (drawn) {
-            ctx!.stroke();
+            ctx!.fill();
           }
         };
 
@@ -506,7 +601,6 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
             drawBarBucket(leftLast + stride, endIdx, rightColor);
           }
         }
-        ctx.lineCap = 'butt';
       }
     }
 
@@ -590,8 +684,10 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
         sizeRef.current = { width, height, dpr };
         if (canvas.width !== pixelW) canvas.width = pixelW;
         if (canvas.height !== pixelH) canvas.height = pixelH;
-        ctxRef.current =
+        const nextCtx =
           canvas.getContext('2d', { alpha: false }) ?? canvas.getContext('2d');
+        configureCanvasContext(nextCtx);
+        ctxRef.current = nextCtx;
         drawFrame(nowPerfMs(), false);
       }
     };

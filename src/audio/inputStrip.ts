@@ -343,7 +343,9 @@ export function buildStudioInputStrip(
     if (typeof ctx.createWaveShaper === 'function') {
       const shaper = ctx.createWaveShaper();
       shaper.curve = buildSoftClipCurve();
-      shaper.oversample = '2x';
+      // Exact 1:1 identity below -3 dBFS with DynamicsCompressor ahead and post-resample
+      // ceiling on export: avoid real-time 2x FIR oversampling CPU load on mobile audio threads.
+      shaper.oversample = 'none';
       tail.connect(shaper);
       tail = shaper;
       nodes.push(shaper);
@@ -357,6 +359,7 @@ export function buildStudioInputStrip(
     if (Math.abs(nextGain - lastAppliedGain) < 0.002) {
       return nextGain;
     }
+    const prevAppliedGain = lastAppliedGain;
     lastAppliedGain = nextGain;
     const param = autoGainNode.gain;
     if (
@@ -376,7 +379,8 @@ export function buildStudioInputStrip(
       } else if (typeof param.cancelScheduledValues === 'function') {
         param.cancelScheduledValues(now);
         if (typeof param.setValueAtTime === 'function') {
-          param.setValueAtTime(param.value, now);
+          // Hold the last tracked gain (not intrinsic param.value) to prevent gain snap clicks
+          param.setValueAtTime(prevAppliedGain, now);
         }
       }
       param.setTargetAtTime(nextGain, now, 0.03);

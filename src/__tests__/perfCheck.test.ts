@@ -61,7 +61,10 @@ describe('Headless Chrome performance gate budgets & regression detection', () =
       p95FrameMs: 66.7,
       severeStalls: 14,
       recalcStylePerSec: 58.0,
+      playbackLatencyHintCalls: 1,
       loopingAudioPlayCalls: 1,
+      playheadStallFrames: 12,
+      playheadJumpFrames: 4,
       canvasPixelWidth: 1068, // uncapped 3x DPR
       maxChunkIntervalMs: 212.9,
       zeroRuns: 2,
@@ -73,7 +76,10 @@ describe('Headless Chrome performance gate budgets & regression detection', () =
     expect(failures.some((f) => /p95 frame time/.test(f))).toBe(true);
     expect(failures.some((f) => /Severe frame stalls/.test(f))).toBe(true);
     expect(failures.some((f) => /RecalcStyle/.test(f))).toBe(true);
+    expect(failures.some((f) => /interactive/.test(f))).toBe(true);
     expect(failures.some((f) => /keepalive/.test(f))).toBe(true);
+    expect(failures.some((f) => /playhead froze/.test(f))).toBe(true);
+    expect(failures.some((f) => /playhead jumped/.test(f))).toBe(true);
     expect(failures.some((f) => /Canvas DPR/.test(f))).toBe(true);
     expect(failures.some((f) => /Max worklet chunk gap/.test(f))).toBe(true);
     expect(failures.some((f) => /silent PCM dropout/.test(f))).toBe(true);
@@ -102,11 +108,13 @@ describe('Headless Chrome performance gate budgets & regression detection', () =
       loopingAudioPlayCalls: 1,
     };
     const rows = buildScorecardRows(HEALTHY_FAST, HEALTHY_SLOW, canary);
-    expect(rows.length).toBe(12);
+    expect(rows.length).toBe(13);
     expect(rows.every((r) => r.ok)).toBe(true);
 
     const text = formatScorecardText(rows);
     expect(text).toContain('StoryTape Pre-Submit Performance & Audio-Integrity Scorecard');
+    expect(text).toContain('Freeze-Free & Jump-Free Playhead PLL');
+    expect(text).toContain('Low-Latency Interactive AudioWorklet');
     expect(text).toContain('Live Regression-Detection Canary');
     expect(text).toContain('caught 2/2 injected bugs');
 

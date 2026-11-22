@@ -206,7 +206,14 @@ describe('inputStrip DSP & true-peak ceiling', () => {
     const nextGain = withAgc.updateAutoGain(samples, 0.025);
     expect(nextGain).toBeGreaterThan(SOFTWARE_AGC_INITIAL_GAIN);
     expect(cancelScheduledValues).toHaveBeenCalledWith(1.25);
+    expect(setValueAtTime).toHaveBeenCalledWith(SOFTWARE_AGC_INITIAL_GAIN, 1.25);
     expect(setTargetAtTime).toHaveBeenCalledWith(nextGain, 1.25, 0.03);
+
+    // Subsequent update must anchor to the previously applied gain (nextGain), NOT intrinsic param.value (4.0)
+    const nextGain2 = withAgc.updateAutoGain(samples, 0.025);
+    expect(nextGain2).toBeGreaterThan(nextGain);
+    expect(setValueAtTime).toHaveBeenLastCalledWith(nextGain, 1.25);
+    expect(setTargetAtTime).toHaveBeenLastCalledWith(nextGain2, 1.25, 0.03);
   });
 });
 

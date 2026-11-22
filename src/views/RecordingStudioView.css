@@ -140,7 +140,7 @@
   line-height: 1.05;
   min-width: 7.5ch;
   text-align: center;
-  contain: layout style;
+  contain: layout style paint;
   color: var(--ink-primary);
 }
 
@@ -453,7 +453,7 @@
   letter-spacing: -0.02em;
   min-width: 5.5ch;
   text-align: center;
-  contain: layout style;
+  contain: layout style paint;
   color: rgba(255, 255, 255, 0.28);
 }
 

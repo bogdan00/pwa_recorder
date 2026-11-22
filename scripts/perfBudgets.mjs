@@ -19,6 +19,8 @@ export const PERF_PROFILES = [
       minWindowChunks: 140,
       maxChunkIntervalMs: 120,
       minRecordedSec: 4.5,
+      maxPlayheadStallFrames: 0,
+      maxPlayheadJumpFrames: 0,
     },
   },
   {
@@ -36,6 +38,8 @@ export const PERF_PROFILES = [
       minWindowChunks: 140,
       maxChunkIntervalMs: 180,
       minRecordedSec: 4.5,
+      maxPlayheadStallFrames: 2,
+      maxPlayheadJumpFrames: 0,
     },
   },
 ];
@@ -71,6 +75,10 @@ export function evaluateProfileResults(summary, budgets, meta = {}) {
     `Expected off-main-thread AudioWorklet (loaded=${summary.workletLoaded}, scriptProcessor=${summary.scriptProcessorCreated}, errors=${JSON.stringify(workletErrors)})`,
   );
   check(
+    (summary.playbackLatencyHintCalls ?? 0) === 0,
+    `Live capture AudioContext must use low-latency 'interactive' mode (got ${summary.playbackLatencyHintCalls} 'playback' latencyHint calls)`,
+  );
+  check(
     summary.loopingAudioPlayCalls === 0,
     `Opt-in iOS looping <audio> keepalive must stay OFF by default (got ${summary.loopingAudioPlayCalls} play calls)`,
   );
@@ -91,6 +99,20 @@ export function evaluateProfileResults(summary, budgets, meta = {}) {
     summary.severeStalls <= budgets.maxSevereStalls,
     `Severe frame stalls (>50ms): ${summary.severeStalls} exceeded budget <= ${budgets.maxSevereStalls}`,
   );
+  if (typeof budgets.maxPlayheadStallFrames === 'number') {
+    const stalls = summary.playheadStallFrames ?? 0;
+    check(
+      stalls <= budgets.maxPlayheadStallFrames,
+      `Waveform playhead froze for ${stalls} frame(s), exceeding budget <= ${budgets.maxPlayheadStallFrames}`,
+    );
+  }
+  if (typeof budgets.maxPlayheadJumpFrames === 'number') {
+    const jumps = summary.playheadJumpFrames ?? 0;
+    check(
+      jumps <= budgets.maxPlayheadJumpFrames,
+      `Waveform playhead jumped on ${jumps} frame(s), exceeding budget <= ${budgets.maxPlayheadJumpFrames}`,
+    );
+  }
   check(
     summary.scriptMsPerSec <= budgets.maxScriptMsPerSec,
     `Main-thread script CPU ${summary.scriptMsPerSec}ms/s exceeded budget <= ${budgets.maxScriptMsPerSec}ms/s`,
@@ -174,6 +196,16 @@ export function buildScorecardRows(fast, slow, canary) {
         slow.severeStalls <= slowBudgets.maxSevereStalls,
     },
     {
+      guard: 'Freeze-Free & Jump-Free Playhead PLL',
+      measured: `stalls ${fast.playheadStallFrames ?? 0}/${slow.playheadStallFrames ?? 0}, jumps ${(fast.playheadJumpFrames ?? 0) + (slow.playheadJumpFrames ?? 0)}`,
+      budget: `<= ${fastBudgets.maxPlayheadStallFrames}/${slowBudgets.maxPlayheadStallFrames} stalls, 0 jumps`,
+      ok:
+        (fast.playheadStallFrames ?? 0) <= fastBudgets.maxPlayheadStallFrames &&
+        (slow.playheadStallFrames ?? 0) <= slowBudgets.maxPlayheadStallFrames &&
+        (fast.playheadJumpFrames ?? 0) === 0 &&
+        (slow.playheadJumpFrames ?? 0) === 0,
+    },
+    {
       guard: 'Zero 60Hz CSS RecalcStyle Thrashing',
       measured: `${fast.recalcStylePerSec}/s (4x: ${slow.recalcStylePerSec}/s)`,
       budget: `<= ${fastBudgets.maxRecalcStylePerSec}/s`,
@@ -212,14 +244,16 @@ export function buildScorecardRows(fast, slow, canary) {
       ok: fast.loopingAudioPlayCalls === 0 && slow.loopingAudioPlayCalls === 0,
     },
     {
-      guard: 'Off-Main-Thread AudioWorklet Pipeline',
-      measured: `worklet=${fast.workletLoaded}, scriptProc=${fast.scriptProcessorCreated}`,
-      budget: 'worklet=1, scriptProc=0',
+      guard: 'Low-Latency Interactive AudioWorklet',
+      measured: `worklet=${fast.workletLoaded}, playbackHint=${(fast.playbackLatencyHintCalls ?? 0) + (slow.playbackLatencyHintCalls ?? 0)}`,
+      budget: 'worklet=1, playbackHint=0',
       ok:
         fast.workletLoaded === 1 &&
         fast.scriptProcessorCreated === 0 &&
         slow.workletLoaded === 1 &&
-        slow.scriptProcessorCreated === 0,
+        slow.scriptProcessorCreated === 0 &&
+        (fast.playbackLatencyHintCalls ?? 0) === 0 &&
+        (slow.playbackLatencyHintCalls ?? 0) === 0,
     },
     {
       guard: 'AudioWorklet Chunk Cadence & Max Gap',

@@ -41,6 +41,7 @@ describe('WaveformCanvas scrub momentum cancellation', () => {
       lineTo: vi.fn(),
       stroke: vi.fn(),
       fill: vi.fn(),
+      rect: vi.fn(),
       roundRect: vi.fn(),
       arc: vi.fn(),
       closePath: vi.fn(),
@@ -237,5 +238,128 @@ describe('WaveformCanvas scrub momentum cancellation', () => {
     );
 
     expect(rafQueue.size).toBeGreaterThan(0);
+  });
+
+  it('glides smoothly without freezing or jumping when audio chunks arrive in 100ms bursts', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 360,
+      height: 220,
+      top: 0,
+      left: 0,
+      right: 360,
+      bottom: 220,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    const onSeekMs = vi.fn();
+    let liveDurationMs = 1000;
+    let lastChunkPerfMs = nowMs;
+    const mockEngine = {
+      getLiveRenderState: () => ({
+        phase: 'recording' as const,
+        durationMs: liveDurationMs,
+        playheadMs: liveDurationMs,
+        liveLevel: 0.3,
+        peaks: [0.2, 0.4, 0.6, 0.5, 0.3],
+        lastChunkPerfMs,
+        isLiveClockActive: true,
+      }),
+    };
+
+    render(
+      <WaveformCanvas
+        engine={mockEngine as never}
+        peaks={[0.2, 0.4, 0.6]}
+        durationMs={1000}
+        playheadMs={1000}
+        phase="recording"
+        liveLevel={0.3}
+        onSeekMs={onSeekMs}
+      />,
+    );
+
+    // Simulate 1.2s at 60fps where chunks arrive in 100ms bursts (every 6 frames)
+    const steps: number[] = [];
+    let prevPlayhead: number | null = null;
+    for (let f = 1; f <= 72; f += 1) {
+      flushNextRaf(16.67);
+      if (f % 6 === 0) {
+        liveDurationMs += 100;
+        lastChunkPerfMs = nowMs;
+      }
+      const cur = window.__storytapeWaveformPerf?.lastPlayheadMs ?? 0;
+      if (prevPlayhead !== null) {
+        steps.push(cur - prevPlayhead);
+      }
+      prevPlayhead = cur;
+    }
+
+    expect(window.__storytapeWaveformPerf?.recordingRafFrames).toBeGreaterThanOrEqual(70);
+    expect(window.__storytapeWaveformPerf?.playheadStallFrames).toBe(0);
+    expect(window.__storytapeWaveformPerf?.playheadJumpFrames).toBe(0);
+    // Every frame step stays tightly bounded around 16.67ms (no freeze <10ms, no jump >25ms)
+    expect(Math.min(...steps)).toBeGreaterThan(10);
+    expect(Math.max(...steps)).toBeLessThan(25);
+  });
+
+  it('stays monotonic and freeze-free even when rAF VSync timestamp lags performance.now() by 20ms', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 360,
+      height: 220,
+      top: 0,
+      left: 0,
+      right: 360,
+      bottom: 220,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    const onSeekMs = vi.fn();
+    let liveDurationMs = 2000;
+    let lastChunkPerfMs = nowMs;
+    const mockEngine = {
+      getLiveRenderState: () => ({
+        phase: 'recording' as const,
+        durationMs: liveDurationMs,
+        playheadMs: liveDurationMs,
+        liveLevel: 0.4,
+        peaks: [0.3, 0.5, 0.4],
+        lastChunkPerfMs,
+        isLiveClockActive: true,
+      }),
+    };
+
+    render(
+      <WaveformCanvas
+        engine={mockEngine as never}
+        peaks={[0.3, 0.5, 0.4]}
+        durationMs={2000}
+        playheadMs={2000}
+        phase="recording"
+        liveLevel={0.4}
+        onSeekMs={onSeekMs}
+      />,
+    );
+
+    // Simulate Android/Safari VSync rAF timestamps running 20ms behind performance.now()
+    for (let f = 1; f <= 30; f += 1) {
+      nowMs += 16.67;
+      if (f % 2 === 0) {
+        liveDurationMs += 33.34;
+        lastChunkPerfMs = nowMs;
+      }
+      const entries = Array.from(rafQueue.entries());
+      rafQueue.clear();
+      for (const [, cb] of entries) {
+        cb(nowMs - 20);
+      }
+    }
+
+    expect(window.__storytapeWaveformPerf?.recordingRafFrames).toBeGreaterThanOrEqual(30);
+    expect(window.__storytapeWaveformPerf?.playheadStallFrames).toBe(0);
+    expect(window.__storytapeWaveformPerf?.playheadJumpFrames).toBe(0);
   });
 });

@@ -7,6 +7,10 @@ import {
   listProjectRecordings,
   listProjects,
 } from '../storage/db';
+import {
+  getLastRecordingPerfSnapshot,
+  type RecordingPerfSnapshot,
+} from '../audio/recordingPerfTelemetry';
 import { APP_VERSION } from '../utils/appVersion';
 import { downloadBlob } from '../utils/blob';
 import {
@@ -128,6 +132,7 @@ export interface SyncDiagnosticsReport {
     }>;
     error?: string;
   };
+  lastRecordingPerf: RecordingPerfSnapshot | null;
   recentEvents: SyncDebugEvent[];
 }
 
@@ -368,6 +373,7 @@ export async function buildSyncDiagnosticsReport(
       projects: projectSnapshots,
     },
     liveDriveProbe,
+    lastRecordingPerf: getLastRecordingPerfSnapshot(),
     recentEvents: getSyncDebugLog(),
   };
 }

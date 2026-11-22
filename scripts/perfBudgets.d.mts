@@ -8,6 +8,8 @@ export interface PerfBudgets {
   minWindowChunks: number;
   maxChunkIntervalMs: number;
   minRecordedSec: number;
+  maxPlayheadStallFrames?: number;
+  maxPlayheadJumpFrames?: number;
 }
 
 export interface PerfProfileConfig {
@@ -37,7 +39,11 @@ export interface PerfProfileSummary {
   layoutPerSec: number;
   workletLoaded: number;
   scriptProcessorCreated: number;
+  playbackLatencyHintCalls?: number;
   loopingAudioPlayCalls: number;
+  playheadStallFrames?: number;
+  playheadJumpFrames?: number;
+  maxPlayheadStepMs?: number;
   windowChunks: number;
   meanChunkIntervalMs: number;
   maxChunkIntervalMs: number;

@@ -53,7 +53,7 @@ describe('RecordingEngine.trimToPlayhead', () => {
     expect(afterUndo.canUndoTrim).toBe(false);
   });
 
-  it('configures playback latencyHint, aligns getUserMedia rate to AudioContext, attaches soft-clip ceiling, and routes unity keepalive gain', async () => {
+  it('configures interactive low-latency AudioContext, aligns getUserMedia rate, attaches lightweight soft-clip ceiling, and routes unity keepalive gain', async () => {
     const createdCtxOptions: AudioContextOptions[] = [];
     const createdGains: Array<{ gain: { value: number }; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = [];
     let createdWaveShaper: { curve: Float32Array | null; oversample: string; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> } | null = null;
@@ -95,7 +95,7 @@ describe('RecordingEngine.trimToPlayhead', () => {
       createWaveShaper = vi.fn(() => {
         createdWaveShaper = {
           curve: null,
-          oversample: 'none',
+          oversample: '2x',
           connect: vi.fn(),
           disconnect: vi.fn(),
         };
@@ -142,14 +142,14 @@ describe('RecordingEngine.trimToPlayhead', () => {
         false,
       );
 
-      expect(createdCtxOptions[0]).toEqual({ latencyHint: 'playback' });
+      expect(createdCtxOptions[0]).toEqual({ latencyHint: 'interactive' });
       expect(getUserMedia).toHaveBeenCalledWith({
         audio: expect.objectContaining({
           sampleRate: { ideal: 48000 },
         }),
       });
       expect(createdWaveShaper).not.toBeNull();
-      expect(createdWaveShaper!.oversample).toBe('2x');
+      expect(createdWaveShaper!.oversample).toBe('none');
       // Because mock mediaDevices omits autoGainControl support (like iOS Safari),
       // RecordingEngine engages software AGC (+12 dB initial = 4.0x) ahead of the limiter:
       // createdGains = [manualInputGain (1), softwareAgcGain (4), workletOutputGain (1)]

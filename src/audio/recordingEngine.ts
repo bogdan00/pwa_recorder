@@ -22,6 +22,10 @@ import {
   teardownPcmCapture,
 } from './pcmCapture';
 import { PcmTimeline } from './pcmTimeline';
+import {
+  type RecordingPerfSnapshot,
+  setLastRecordingPerfSnapshot,
+} from './recordingPerfTelemetry';
 import { encodeWav } from './wavEncoder';
 
 export type StudioPhase = 'idle' | 'recording' | 'paused' | 'playing';
@@ -63,7 +67,7 @@ export interface StartRecordingOptions {
   backgroundKeepalive?: boolean;
 }
 
-const DRAFT_FLUSH_SECONDS = 2;
+const DRAFT_FLUSH_SECONDS = 5;
 const LIVE_TIME_EMIT_INTERVAL_MS = 65; // ~15 Hz direct timer DOM updates (zero React re-renders)
 const CAPTURE_WATCHDOG_INTERVAL_MS = 2000;
 const EMPTY_PEAKS: readonly number[] = [];
@@ -95,6 +99,15 @@ export class RecordingEngine {
   private workletNode: AudioWorkletNode | null = null;
   private captureHandle: PcmCaptureHandle | null = null;
   private activeDeviceLabel = '';
+
+  // Lightweight zero-allocation session telemetry (surfaced in Diagnostics JSON)
+  private perfSessionChunks = 0;
+  private perfChunkGapSumMs = 0;
+  private perfChunkGapCount = 0;
+  private perfMaxChunkGapMs = 0;
+  private perfChunksOver60ms = 0;
+  private perfPrevChunkMs = 0;
+  private perfSoftwareAgcActive = false;
 
   // iOS background/lock-screen keepalive (opt-in, OFF by default) & interruption recovery
   private bgKeepalive: BackgroundCaptureKeepalive;
@@ -363,6 +376,7 @@ export class RecordingEngine {
     this.captureEpoch += 1;
     if (this.phase !== 'recording') return;
 
+    this.recordSessionPerfTelemetry();
     this.teardownMicCapture();
     // Apply 15ms raised-cosine tail fade-out and arm 15ms fade-in for click-free Resume
     this.timeline?.markPauseBoundary();
@@ -606,12 +620,13 @@ export class RecordingEngine {
       (window as unknown as { webkitAudioContext: typeof AudioContext })
         .webkitAudioContext;
 
-    // Prefer 'playback' latencyHint (larger OS audio buffer for glitch-free narration without
-    // live monitoring) and native hardware sample rate for fresh takes; nativeEncoder resamples
-    // cleanly offline on export when needed.
+    // Always use 'interactive' low-latency mode for live mic capture (never 'playback',
+    // which disables Android AAudio low-latency MMAP mode and causes 40-100ms AudioFlinger
+    // bursts that underrun MediaStreamAudioSourceNode's FIFO and make waveforms jump frames).
+    // Native hardware sample rate is used for fresh takes; nativeEncoder resamples cleanly on export.
     const options: AudioContextOptions = desiredRate
-      ? { sampleRate: desiredRate, latencyHint: 'playback' }
-      : { latencyHint: 'playback' };
+      ? { sampleRate: desiredRate, latencyHint: 'interactive' }
+      : { latencyHint: 'interactive' };
     try {
       this.audioCtx = new Ctor(options);
     } catch {
@@ -624,6 +639,82 @@ export class RecordingEngine {
       }
     }
     return this.audioCtx;
+  }
+
+  private recordSessionPerfTelemetry(): void {
+    if (!this.timeline || this.perfSessionChunks === 0) return;
+    const ctx = this.audioCtx;
+    const baseLatencyMs =
+      ctx && typeof ctx.baseLatency === 'number' && Number.isFinite(ctx.baseLatency)
+        ? Math.round(ctx.baseLatency * 10000) / 10
+        : null;
+    const outputLatencyMs =
+      ctx &&
+      typeof (ctx as AudioContext & { outputLatency?: number }).outputLatency ===
+        'number' &&
+      Number.isFinite(
+        (ctx as AudioContext & { outputLatency?: number }).outputLatency,
+      )
+        ? Math.round(
+            ((ctx as AudioContext & { outputLatency?: number }).outputLatency ?? 0) *
+              10000,
+          ) / 10
+        : null;
+    const wfPerf =
+      typeof window !== 'undefined'
+        ? (
+            window as Window & {
+              __storytapeWaveformPerf?: {
+                recordingRafFrames?: number;
+                rafFrames?: number;
+                avgFrameMs?: number;
+                p95FrameMs?: number;
+                severeStallsOver50ms?: number;
+                playheadStallFrames?: number;
+                playheadJumpFrames?: number;
+                maxPlayheadStepMs?: number;
+                computeP95FrameMs?: () => number;
+              };
+            }
+          ).__storytapeWaveformPerf
+        : undefined;
+
+    const avgFrameMs = wfPerf?.avgFrameMs ?? 0;
+    const p95FrameMs = wfPerf?.computeP95FrameMs
+      ? wfPerf.computeP95FrameMs()
+      : (wfPerf?.p95FrameMs ?? 0);
+    const captureMode: RecordingPerfSnapshot['captureMode'] = this.captureHandle
+      ?.workletNode
+      ? 'worklet'
+      : this.captureHandle?.scriptNode
+        ? 'scriptProcessor'
+        : 'none';
+
+    setLastRecordingPerfSnapshot({
+      capturedAt: new Date().toISOString(),
+      durationSec: Math.round(this.timeline.getDurationMs() / 100) / 10,
+      sampleRate: this.timeline.sampleRate,
+      channels: this.timeline.channels,
+      baseLatencyMs,
+      outputLatencyMs,
+      captureMode,
+      softwareAgcActive: this.perfSoftwareAgcActive,
+      backgroundKeepaliveEnabled: this.backgroundKeepaliveEnabled,
+      chunkCount: this.perfSessionChunks,
+      avgChunkGapMs:
+        this.perfChunkGapCount > 0
+          ? Math.round((this.perfChunkGapSumMs / this.perfChunkGapCount) * 10) / 10
+          : 0,
+      maxChunkGapMs: Math.round(this.perfMaxChunkGapMs * 10) / 10,
+      chunksOver60ms: this.perfChunksOver60ms,
+      rafFrames: wfPerf?.recordingRafFrames ?? wfPerf?.rafFrames ?? 0,
+      fps: avgFrameMs > 0 ? Math.round((1000 / avgFrameMs) * 10) / 10 : 0,
+      p95FrameMs: Math.round(p95FrameMs * 10) / 10,
+      severeStallsOver50ms: wfPerf?.severeStallsOver50ms ?? 0,
+      playheadStallFrames: wfPerf?.playheadStallFrames ?? 0,
+      playheadJumpFrames: wfPerf?.playheadJumpFrames ?? 0,
+      maxPlayheadStepMs: Math.round((wfPerf?.maxPlayheadStepMs ?? 0) * 10) / 10,
+    });
   }
 
   private async resumeContextSafely(ctx: AudioContext): Promise<void> {
@@ -851,6 +942,7 @@ export class RecordingEngine {
     });
     this.inputStripNodes = strip.nodes;
     this.updateAutoGain = enableSoftwareAgc ? strip.updateAutoGain : null;
+    this.perfSoftwareAgcActive = enableSoftwareAgc;
     const tail = strip.tail;
 
     // Attach AudioWorkletNode (preferred) or ScriptProcessorNode fallback
@@ -871,6 +963,13 @@ export class RecordingEngine {
     }
     this.captureHandle = handle;
     this.workletNode = handle.workletNode;
+
+    this.perfSessionChunks = 0;
+    this.perfChunkGapSumMs = 0;
+    this.perfChunkGapCount = 0;
+    this.perfMaxChunkGapMs = 0;
+    this.perfChunksOver60ms = 0;
+    this.perfPrevChunkMs = 0;
 
     this.phase = 'recording';
     this.playheadMs = this.timeline.getDurationMs();
@@ -904,6 +1003,18 @@ export class RecordingEngine {
   ): void {
     if (!this.timeline || this.phase !== 'recording') return;
     const now = nowPerfMs();
+    this.perfSessionChunks += 1;
+    if (this.perfPrevChunkMs > 0) {
+      const gap = now - this.perfPrevChunkMs;
+      if (gap >= 0 && gap < 5000) {
+        this.perfChunkGapSumMs += gap;
+        this.perfChunkGapCount += 1;
+        if (gap > this.perfMaxChunkGapMs) this.perfMaxChunkGapMs = gap;
+        if (gap > 60) this.perfChunksOver60ms += 1;
+      }
+    }
+    this.perfPrevChunkMs = now;
+
     if (this.updateAutoGain && interleaved.length > 0) {
       const frames = Math.floor(interleaved.length / this.timeline.channels);
       if (frames > 0) {
@@ -915,7 +1026,7 @@ export class RecordingEngine {
     this.liveLevel = Math.min(1, Math.max(0, liveLevel || 0));
     this.lastChunkPerfMs = now;
 
-    // Buffer for crash-safe 2-second IndexedDB flushes
+    // Buffer for crash-safe 5-second IndexedDB flushes
     this.pendingPersistBuffers.push(interleaved);
     this.pendingPersistSamples += interleaved.length;
     const flushThreshold =
