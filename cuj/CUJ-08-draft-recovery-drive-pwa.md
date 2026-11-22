@@ -18,32 +18,32 @@ A parent never loses an in-progress recording if the mobile OS suspends/reloads 
    - **Expected:** **Unfinished Recording Found** banner appears showing book name and duration; tapping **Resume** reopens Recording Studio in `PAUSED` state with the full recovered duration and waveform ready to continue or save, and tapping **Discard** requires explicit confirmation before deleting the draft.
 
 2. **Google Drive Sign-In, Persistent Session Across PWA Updates & Two-Way Sync**
-   - Open Settings → **Google Drive Folder** (no manual Client ID or GCP setup guide shown), tap **Connect Google Drive** (with mocked GIS callback & intercepted Drive v3 API routes), and verify automatic sync.
+   - Open **Studio Settings** → **Drive** tab (or tap the Library header **Drive** pill when disconnected to open directly to the **Drive** tab; no manual Client ID or GCP setup guide shown), tap **Connect Google Drive** (with mocked GIS callback & intercepted Drive v3 API routes), and verify automatic sync.
    - **Expected:**
      - Local book folder, `cover.jpg` (if present), `01 - <Chapter>.ext` (resumable upload), and `project.json` are pushed to Drive, flipping local book & chapter sync badges to `Synced`.
      - A remote book present in Drive is pulled into the Library with its chapter marked `cloud_only`.
      - Tapping Play on the `cloud_only` chapter downloads it on demand from Drive, caches it into IndexedDB, and opens playback.
-     - **Persistent Session Across PWA Updates/Restarts:** Reloading the app after a PWA update (even when ephemeral `sessionStorage` is wiped) preserves the active Google Drive session (`Synced` pill in Library header, `Connected` + user email in Settings) without requiring re-login.
+     - **Persistent Session Across PWA Updates/Restarts:** Reloading the app after a PWA update (even when ephemeral `sessionStorage` is wiped) preserves the active Google Drive session (`Synced` pill in Library header, `Connected` + user email in Settings → **Drive**) without requiring re-login.
      - **Silent Multi-Day Refresh (Cloud Run OAuth Broker):** When `VITE_GOOGLE_AUTH_BROKER_URL` is configured, initial sign-in exchanges a GIS Authorization Code via `POST /auth/exchange` for an encrypted long-lived refresh token; when the 1-hour access token expires across a PWA update/reload or triggers an HTTP `401`, StoryTape silently refreshes via `POST /auth/refresh` in the background with **zero popups and zero user taps** and stays `Synced`. Explicit **Sign Out** calls `POST /auth/revoke` and clears local storage.
-     - **1-Tap Expired-Token Reconnect (Zero-Infra Fallback):** When running without a broker (or if a refresh token is revoked) and the 1-hour access token expires between sessions, StoryTape remembers the linked Google account (`Reconnect` pill in Library header, `Reconnect Needed` + remembered email and **Sign Out** in Settings). Tapping the Library header `Reconnect` pill, Book **Sync**, a `cloud_only` chapter to play, or the **Reconnect & Sync** toast action after saving a chapter triggers GIS `requestAccessToken({ prompt: '', login_hint })` directly without opening Settings or forcing account selection, then immediately completes the action. Explicit **Sign Out** clears the persisted session and remembered account across reloads.
+     - **1-Tap Expired-Token Reconnect (Zero-Infra Fallback):** When running without a broker (or if a refresh token is revoked) and the 1-hour access token expires between sessions, StoryTape remembers the linked Google account (`Reconnect` pill in Library header, `Reconnect Needed` + remembered email and **Sign Out** in Settings → **Drive**). Tapping the Library header `Reconnect` pill, Book **Sync**, a `cloud_only` chapter to play, or the **Reconnect & Sync** toast action after saving a chapter triggers GIS `requestAccessToken({ prompt: '', login_hint })` directly without opening Settings or forcing account selection, then immediately completes the action. Explicit **Sign Out** clears the persisted session and remembered account across reloads.
      - *See also [CUJ-09](./CUJ-09-multi-user-sharing.md) for multi-user family sharing, Google Drive collaborator permissions, conflict-safe co-narration merge, and read-only Listener mode.*
 
 3. **Free Synced Local Audio Cache (with Confirmation)**
-   - In Settings → **Free Cached Audio for Synced Chapters**, tap the button and confirm in the dialog.
+   - In **Studio Settings → App → Storage & App**, tap **Free Cached Audio for Synced Chapters** and confirm in the dialog.
    - **Expected:** Prompts for confirmation first; on confirm, removes local audio blobs for already-synced chapters (flipping them to `cloud_only`) while preserving unsynced local recordings untouched.
 
 4. **GitHub Pages Subpath PWA, OAuth Branding Pages & In-App Deploy Version**
    - Verify `/pwa_recorder/manifest.webmanifest` (`start_url`, `scope`, `id` = `/pwa_recorder/`, `display` = `standalone`, icons `192`/`512`/`maskable`).
    - Verify `/pwa_recorder/audio/pcm-capture-worklet.js`, `/pwa_recorder/icons/apple-touch-icon.png`, `/pwa_recorder/privacy.html`, and `/pwa_recorder/terms.html` all return HTTP `200`.
-   - Open **Studio Settings** and verify the bottom version row displays a valid UTC deploy version formatted as `YYYY_MM_DD_HH_MM` (automatically incremented on every deploy).
+   - Open **Studio Settings → App → Storage & App** and verify the version row displays a valid UTC deploy version formatted as `YYYY_MM_DD_HH_MM` (automatically incremented on every deploy).
 
 5. **In-App PWA Install Prompt (Chromium & iOS Safari)**
    - **Android / Desktop Chromium (`beforeinstallprompt`)**:
      - When the browser fires `beforeinstallprompt` outside standalone mode, the Library displays a warm **Install StoryTape** banner with **Install** and a dismiss (`×`) button.
-     - Dismissing the banner hides it and persists dismissal across page reloads (`localStorage`), while **Install StoryTape** remains available anytime inside **Settings → Appearance & Defaults**.
-     - Tapping **Install** triggers the native browser prompt (`event.prompt()`); accepting (or receiving `appinstalled`) hides the install banner, displays a confirmation toast, and updates Settings to show **Installed on this device**.
+     - Dismissing the banner hides it and persists dismissal across page reloads (`localStorage`), while **Install StoryTape** remains available anytime inside **Studio Settings → App → Storage & App**.
+     - Tapping **Install** triggers the native browser prompt (`event.prompt()`); accepting (or receiving `appinstalled`) hides the install banner, displays a confirmation toast, and updates Settings to show **Installed**.
    - **iOS / iPadOS Safari**:
      - When opened on iPhone/iPad outside standalone mode (`navigator.standalone !== true`), the Library shows the **Install StoryTape** banner with **How to Install**.
-     - Tapping **How to Install** (from the banner or Settings) opens a 2-step **Install on iPhone / iPad** guide explaining **Share** → **Add to Home Screen**.
+     - Tapping **How to Install** (from the banner or Settings → **App**) opens a 2-step **Install on iPhone / iPad** guide explaining **Share** → **Add to Home Screen**.
    - **Already Installed (`standalone` mode)**:
      - Neither banner appears when running in standalone mode.

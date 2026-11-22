@@ -180,10 +180,12 @@ describe('StoryTape end-to-end UI workflows', () => {
     await user.click(usbRadio);
     expect(usbRadio).toHaveAttribute('aria-checked', 'true');
 
+    await user.click(screen.getByTestId('advanced-audio-toggle'));
     await user.click(await screen.findByRole('button', { name: '510k' }));
     await user.click(screen.getByRole('button', { name: 'Stereo (2 ch · External Mic)' }));
     expect(screen.getByTestId('quality-preset-badge')).toHaveTextContent('Custom');
 
+    await user.click(screen.getByTestId('settings-tab-app'));
     await user.type(screen.getByLabelText(/default narrator name/i), 'Dad');
 
     await user.click(screen.getByLabelText('Close settings'));

@@ -323,9 +323,13 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     });
     await recordAndSaveChapter(page, { name: 'Chapter One', minDurationSec: 0.6 });
 
-    // Open Settings -> verify GCP Client ID & setup guide are not shown -> Connect Drive directly
+    // Tapping the disconnected Drive pill opens Settings directly to the Drive tab (no Client ID or setup guide shown)
     await page.getByLabel('Back to library').click();
-    await page.locator('#open-settings-btn').click();
+    await page.getByLabel('Google Drive sync status').click();
+    await expect(page.getByTestId('settings-tab-drive')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     await expect(page.locator('#drive-client-id-input')).toHaveCount(0);
     await expect(page.getByText(/Google Cloud Console/i)).toHaveCount(0);
     await page.getByRole('button', { name: 'Connect Google Drive' }).click();
@@ -337,7 +341,8 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     expect(uploadedNames).toContain('project.json');
     expect(uploadedNames.some((n) => n.startsWith('01 - Chapter One.'))).toBe(true);
 
-    // Free local cached audio for synced chapters (requires confirmation)
+    // Free local cached audio for synced chapters on App tab (requires confirmation)
+    await page.getByTestId('settings-tab-app').click();
     await page
       .getByRole('button', { name: 'Free Cached Audio for Synced Chapters' })
       .click();
@@ -428,6 +433,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
 
     await page.goto('./');
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-drive').click();
     await page.getByRole('button', { name: 'Connect Google Drive' }).click();
     await expect(page.getByText('parent@example.com')).toBeVisible();
     await expect(page.getByText('Google Drive is up to date.')).toBeVisible();
@@ -455,6 +461,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     expect(callsAfterUpdateReload).toBe(0);
 
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-drive').click();
     await expect(page.getByText('Connected', { exact: true })).toBeVisible();
     await expect(page.getByText('parent@example.com')).toBeVisible();
     await page.getByLabel('Close settings').click();
@@ -475,6 +482,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
 
     // Settings remembers the linked email and offers Sign Out even while expired
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-drive').click();
     await expect(page.getByText('Reconnect Needed')).toBeVisible();
     await expect(page.getByText(/Linked to.*parent@example\.com/i)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Sign Out' })).toBeVisible();
@@ -499,6 +507,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
 
     // 3. Explicit Sign Out clears persisted session across reloads
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-drive').click();
     await page.getByRole('button', { name: 'Sign Out' }).click();
     await expect(page.getByTestId('confirm-dialog')).toBeVisible();
     await page.getByTestId('confirm-dialog-confirm').click();
@@ -645,6 +654,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     // 1. Initial Connect via GIS Authorization Code -> Cloud Run /auth/exchange
     await page.goto('./');
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-drive').click();
     await page.getByRole('button', { name: 'Connect Google Drive' }).click();
     await expect(page.getByText(/Stays signed in automatically/i)).toBeVisible();
     await expect(page.getByText('Google Drive is up to date.')).toBeVisible();
@@ -682,6 +692,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
 
     // 4. Explicit Sign Out revokes encrypted refresh token at broker and clears persistence
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-drive').click();
     await page.getByRole('button', { name: 'Sign Out' }).click();
     await page.getByTestId('confirm-dialog-confirm').click();
     await expect(page.getByText('Disconnected')).toBeVisible();
@@ -722,10 +733,11 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     const termsRes = await request.get('terms.html');
     expect(termsRes.status()).toBe(200);
 
-    // Verify in-app deploy version (YYYY_MM_DD_HH_MM) is displayed in Studio Settings
+    // Verify in-app deploy version (YYYY_MM_DD_HH_MM) is displayed in Studio Settings -> App
     await page.goto('./');
     await page.locator('#open-settings-btn').click();
     await expect(page.getByTestId('settings-sheet')).toBeVisible();
+    await page.getByTestId('settings-tab-app').click();
     const versionEl = page.getByTestId('app-version-value');
     await expect(versionEl).toBeVisible();
     await expect(versionEl).toHaveText(/^\d{4}_\d{2}_\d{2}_\d{2}_\d{2}$/);
@@ -784,6 +796,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     await expect(page.getByTestId('install-app-banner')).toHaveCount(0);
 
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-app').click();
     const settingsCard = page.getByTestId('settings-install-card');
     await expect(settingsCard).toBeVisible();
     await expect(page.locator('#settings-install-app-btn')).toHaveText(/Install App/);
@@ -838,7 +851,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     await guideModal.getByRole('button', { name: 'Got It' }).click();
     await expect(guideModal).toHaveCount(0);
 
-    // When launched in standalone mode, banner stays hidden and Settings shows Installed
+    // When launched in standalone mode, banner stays hidden and Settings -> App shows Installed
     await page.evaluate(() => {
       window.sessionStorage.setItem('__e2e_standalone', '1');
     });
@@ -847,6 +860,7 @@ test.describe('CUJ-08: Draft Recovery, Google Drive Two-Way Sync & Subpath PWA I
     await expect(page.getByTestId('install-app-banner')).toHaveCount(0);
 
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-app').click();
     await expect(page.getByTestId('settings-install-card')).toContainText('Installed');
   });
 });

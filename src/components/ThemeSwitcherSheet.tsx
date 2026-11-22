@@ -104,7 +104,7 @@ export const ThemeSwitcherSheet: React.FC<ThemeSwitcherSheetProps> = ({
 
   return (
     <div
-      className="sheet-backdrop"
+      className="sheet-backdrop theme-switcher-backdrop"
       role="dialog"
       aria-modal="true"
       aria-labelledby="theme-switcher-title"

@@ -221,9 +221,10 @@ test.describe('CUJ-10: Local Lossless Master Archival, Multi-Bitrate Export & Qu
     await recordAndSaveChapter(page, { name: 'Take A', minDurationSec: 0.5 });
     await expect(page.getByTestId('recording-master-badge')).toBeVisible();
 
-    // Go back to Library -> Settings -> Delete Local Masters (requires confirmation)
+    // Go back to Library -> Settings -> App -> Delete Local Masters (requires confirmation)
     await page.getByLabel('Back to library').click();
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-app').click();
     const clearBtn = page.getByTestId('clear-local-masters-btn');
     await expect(clearBtn).toBeVisible();
     await clearBtn.click();

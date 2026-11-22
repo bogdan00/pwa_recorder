@@ -26,6 +26,7 @@ import type {
 import type { GoogleAuthState } from '../drive/googleAuth';
 import { formatDurationMs, formatHumanDuration } from '../utils/format';
 import { BookCover } from '../components/BookCover';
+import type { SettingsTab } from './SettingsSheet';
 import './LibraryView.css';
 
 interface LibraryViewProps {
@@ -46,7 +47,7 @@ interface LibraryViewProps {
   onOpenBook: (projectId: string) => void;
   onNewBook: () => void;
   onOpenThemeSwitcher: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
   onOpenShareLibrary: () => void;
   onSyncNow: () => void;
   onReconnectDrive?: () => void;
@@ -193,7 +194,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                   ? onSyncNow
                   : authState.status === 'expired' && onReconnectDrive
                     ? onReconnectDrive
-                    : onOpenSettings
+                    : () => onOpenSettings('drive')
               }
               aria-label="Google Drive sync status"
             >
@@ -252,7 +253,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             <button
               type="button"
               className="icon-btn"
-              onClick={onOpenSettings}
+              onClick={() => onOpenSettings('recording')}
               aria-label="Open settings"
               id="open-settings-btn"
             >
@@ -284,7 +285,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={onOpenSettings}
+              onClick={() => onOpenSettings('drive')}
             >
               Manage
             </button>

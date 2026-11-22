@@ -82,14 +82,22 @@ test.describe('CUJ-06: Audiobook Library Browsing (Search & Sort) & Themes', () 
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'braun-light');
 
-    // Switch via Settings to Nord Polar
+    // Switch via Settings -> App tab -> compact Color Theme row -> Theme Switcher to Nord Polar
     await page.locator('#open-settings-btn').click();
-    await page.locator('[data-theme-option="nord"]').click();
+    await page.getByTestId('settings-tab-app').click();
+    const themeRow = page.getByTestId('settings-theme-row');
+    await expect(themeRow).toContainText('Braun / Rams');
+    await themeRow.click();
+    await expect(switcher).toBeVisible();
+    await switcher.locator('[data-theme-option="nord"]').click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'nord');
     await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
       'content',
       '#242933',
     );
+    await switcher.getByRole('button', { name: 'Done' }).click();
+    await expect(switcher).toHaveCount(0);
+    await expect(themeRow).toContainText('Nord Polar');
   });
 
   test('fits cleanly within mobile phone viewports (360px & 390px) with zero horizontal overflow and no studio/player viewport scroll', async ({
@@ -227,10 +235,18 @@ test.describe('CUJ-06: Audiobook Library Browsing (Search & Sort) & Themes', () 
       );
       await page.getByRole('button', { name: 'Done' }).click();
 
-      // 3. Settings sheet: zero horizontal scroll
+      // 3. Settings sheet: zero horizontal scroll across all tabs (including expanded Advanced Audio)
       await page.locator('#open-settings-btn').click();
       await expect(page.getByRole('heading', { name: 'Studio Settings' })).toBeVisible();
-      await assertNoHorizontalOverflow(`SettingsSheet (${vp.label})`, ['.theme-grid']);
+      await assertNoHorizontalOverflow(`SettingsSheet Recording (${vp.label})`, ['.settings-tabs']);
+      await assertElementsFitViewport(`SettingsSheet Tabs (${vp.label})`, '.settings-tab');
+      await page.getByTestId('advanced-audio-toggle').click();
+      await expect(page.getByTestId('advanced-audio-panel')).toBeVisible();
+      await assertNoHorizontalOverflow(`SettingsSheet Advanced Audio (${vp.label})`, ['.gain-scale-ticks']);
+      await page.getByTestId('settings-tab-drive').click();
+      await assertNoHorizontalOverflow(`SettingsSheet Drive (${vp.label})`);
+      await page.getByTestId('settings-tab-app').click();
+      await assertNoHorizontalOverflow(`SettingsSheet App (${vp.label})`);
       await page.getByLabel('Close settings').click();
 
       // 4. Book Detail + Full-Screen Audio Player: zero overflow

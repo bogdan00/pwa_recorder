@@ -13,7 +13,7 @@ A parent can opt in to saving an uncompressed, full-detail local lossless master
 ## User Steps & Acceptance Criteria
 
 1. **Opt-In Local Lossless Master Recording (Settings + Save Sheet)**
-   - Open **Studio Settings → Recording Quality** and enable **Save Local Lossless Master**.
+   - Open **Studio Settings → Recording → Recording Quality** and enable **Save Local Lossless Master**.
    - Close settings, open Recording Studio, record a chapter, tap **Stop**, and verify the Save sheet shows the **Keep local lossless master (32-bit Float WAV)** option enabled.
    - Save the chapter.
    - **Expected:** The chapter card displays its normal compressed spec (for playback & Drive sync) PLUS a `Master` badge, and IndexedDB stores both the regular chapter blob (`recordingBlobs`) and the uncompressed 32-bit IEEE Float WAV (`formatTag === 3`, `bitDepth === 32`) in `recordingMasters`.
@@ -31,9 +31,9 @@ A parent can opt in to saving an uncompressed, full-detail local lossless master
    - **Expected:** Every selected tier encodes from the lossless master, reports exact bytes and `% smaller`, and provides labeled file downloads (e.g. `01_Chapter_1_64kbps_48kHz.m4a` / `.webm` / `.wav`).
 
 4. **Local Master Storage Reclamation (with Confirmation)**
-   - Tap **Free Master** in Quality Lab, **Delete Local Master** in the chapter menu, or **Delete Local Masters** in Studio Settings, and confirm in the dialog.
+   - Tap **Free Master** in Quality Lab, **Delete Local Master** in the chapter menu, or **Delete Local Masters** in **Studio Settings → App → Storage & App**, and confirm in the dialog.
    - **Expected:** Prompts for confirmation first (Cancel keeps the master intact); on confirm, deletes the `recordingMasters` entry and removes the `Master` badge while the regular chapter recording remains intact and playable.
 
 5. **Settings Test Mic → Quality Lab (Standalone Mic Benchmark)**
-   - Open **Studio Settings → Recording Device**, select a microphone, tap **Test Mic** to capture a brief test sample, tap **Stop Test**, and tap **Open in Quality Lab** (navigates to `#/quality-lab/mic-test`).
+   - Open **Studio Settings → Recording → Recording Device**, select a microphone, tap **Test Mic** to capture a brief test sample, tap **Stop Test**, and tap **Open in A/B Lab** (navigates to `#/quality-lab/mic-test`).
    - **Expected:** Quality Lab opens directly with the uncompressed 32-bit IEEE Float WAV mic test clip pre-loaded (without creating any book or chapter), supports recording new test clips directly inside Quality Lab using the selected Settings microphone, and runs the full **Threshold** blind A/B finder, **A/B Listen**, and **Export** flows with 1-tap **Apply to Recording Settings**.

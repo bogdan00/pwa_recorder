@@ -73,7 +73,7 @@ import {
   RecordingStudioView,
   type SavedStudioRecording,
 } from './views/RecordingStudioView';
-import { SettingsSheet } from './views/SettingsSheet';
+import { SettingsSheet, type SettingsTab } from './views/SettingsSheet';
 import type { CapturedMicTestAudio } from './audio/audioDevices';
 import type { RecordingEngine } from './audio/recordingEngine';
 
@@ -123,6 +123,8 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
 
   // Modals & transient status
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] =
+    useState<SettingsTab>('recording');
   const [themeSwitcherOpen, setThemeSwitcherOpen] = useState(false);
   const [iosInstallGuideOpen, setIosInstallGuideOpen] = useState(false);
   const [pwaInstallState, setPwaInstallState] = useState<PwaInstallState>(() =>
@@ -133,6 +135,11 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
   const [micTestCapture, setMicTestCapture] =
     useState<CapturedMicTestAudio | null>(null);
+
+  const openSettings = useCallback((tab: SettingsTab = 'recording') => {
+    setSettingsInitialTab(tab);
+    setSettingsOpen(true);
+  }, []);
 
   useEffect(() => {
     registerProgressHandler(upsertProgress);
@@ -180,7 +187,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
     onUpdateSettings: handleUpdateSettings,
     reloadData,
     showToast,
-    onOpenSettings: () => setSettingsOpen(true),
+    onOpenSettings: () => openSettings('drive'),
     onCloseSettings: () => setSettingsOpen(false),
     onSetPendingJoinInvite: setPendingJoinInvite,
     onClearJoinHash: clearJoinHash,
@@ -595,7 +602,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           existingRecordingCount={(recordingsByProject.get(activeBook.id) ?? []).length}
           settings={settings}
           resumeDraftId={route.draftId}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={() => openSettings('recording')}
           onExit={() => {
             void reloadData();
             navigate({ view: 'book', projectId: activeBook.id });
@@ -610,7 +617,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           audioDevice={settings.audioDevice}
           initialMicCapture={micTestCapture}
           onMicCaptureChange={setMicTestCapture}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={() => openSettings('recording')}
           audioQuality={settings.audioQuality}
           hasMiniPlayer={hasMiniPlayer}
           onBack={() => navigate({ view: 'library' })}
@@ -738,7 +745,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
             setBookEditorOpen(true);
           }}
           onOpenThemeSwitcher={() => setThemeSwitcherOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={openSettings}
           onOpenShareLibrary={() => setShareTarget({ scope: 'library' })}
           onSyncNow={drive.handleSyncOrReconnectAll}
           onReconnectDrive={() => drive.handleConnectDrive()}
@@ -882,6 +889,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
       {/* Audio Quality, Microphone & Drive Settings Sheet */}
       <SettingsSheet
         open={settingsOpen}
+        initialTab={settingsInitialTab}
         settings={settings}
         authState={drive.authState}
         pwaInstallState={pwaInstallState}
@@ -895,6 +903,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           setSettingsOpen(false);
           navigate({ view: 'mic-compare' });
         }}
+        onOpenThemeSwitcher={() => setThemeSwitcherOpen(true)}
         onClose={() => setSettingsOpen(false)}
         onUpdateSettings={handleUpdateSettings}
         onInstallApp={handleInstallApp}

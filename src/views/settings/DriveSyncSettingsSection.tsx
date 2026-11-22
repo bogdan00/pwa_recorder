@@ -64,139 +64,119 @@ export const DriveSyncSettingsSection: React.FC<
     });
 
   return (
-    <section className="settings-section" aria-label="Google Drive Sync">
-      <div className="settings-section__head">
-        <h3 className="settings-section__title">
-          <Cloud size={17} />
-          Google Drive Folder
-        </h3>
-        <span
-          className={`badge ${
-            authState.status === 'connected'
-              ? 'badge-sage'
-              : authState.isRefreshing || authState.status === 'expired'
-                ? 'badge-amber'
-                : ''
-          }`}
-        >
-          {authState.isRefreshing
-            ? 'Refreshing…'
-            : authState.status === 'connected'
-              ? 'Connected'
-              : authState.status === 'expired'
-                ? 'Reconnect Needed'
-                : authState.status === 'disconnected'
-                  ? 'Disconnected'
-                  : 'Not Configured'}
-        </span>
-      </div>
+    <>
+      <section className="settings-section" aria-label="Google Drive Sync">
+        <div className="settings-section__head">
+          <h3 className="settings-section__title">
+            <Cloud size={17} />
+            Google Drive Folder
+          </h3>
+          <span
+            className={`badge ${
+              authState.status === 'connected'
+                ? 'badge-sage'
+                : authState.isRefreshing || authState.status === 'expired'
+                  ? 'badge-amber'
+                  : ''
+            }`}
+          >
+            {authState.isRefreshing
+              ? 'Refreshing…'
+              : authState.status === 'connected'
+                ? 'Connected'
+                : authState.status === 'expired'
+                  ? 'Reconnect Needed'
+                  : authState.status === 'disconnected'
+                    ? 'Disconnected'
+                    : 'Not Configured'}
+          </span>
+        </div>
 
-      {authState.userEmail && (
-        <span className="field-hint">
-          {authState.status === 'expired' ? (
-            <>
-              Linked to <strong>{authState.userEmail}</strong> · Tap Reconnect
-              to refresh sync
-            </>
-          ) : authState.hasPersistentRefresh ? (
-            <>
-              Signed in as <strong>{authState.userEmail}</strong> · Stays signed
-              in automatically
-            </>
-          ) : (
-            <>
-              Signed in as <strong>{authState.userEmail}</strong>
-            </>
-          )}
-        </span>
-      )}
-
-      {authState.lastError && (
-        <span className="badge badge-danger">{authState.lastError}</span>
-      )}
-
-      <div className="field">
-        <label htmlFor="drive-root-folder-input" className="field-label">
-          Drive Root Folder Name
-        </label>
-        <input
-          id="drive-root-folder-input"
-          type="text"
-          className="input"
-          value={settings.driveRootFolderName}
-          onChange={(e) =>
-            onUpdateSettings({
-              ...settings,
-              driveRootFolderName: e.target.value,
-              driveRootFolderId: undefined,
-            })
-          }
-          placeholder="StoryTape Audiobooks"
-        />
-        <span className="field-hint">
-          Each book gets its own subfolder containing <code>project.json</code>,{' '}
-          <code>cover.jpg</code>, and all chapter audio files.
-        </span>
-      </div>
-
-      <div className="drive-actions-row">
-        {authState.status === 'connected' ? (
-          <>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={onSyncAll}
-              disabled={isSyncing}
-            >
-              {isSyncing ? (
-                <Loader2 size={14} className="spin" />
-              ) : (
-                <RefreshCw size={14} />
-              )}
-              {isSyncing ? 'Syncing…' : 'Sync All Now'}
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={onOpenShareLibrary}
-              id="settings-share-library-btn"
-            >
-              <Share2 size={14} />
-              Share Library
-            </button>
-            {settings.driveRootFolderId && (
-              <a
-                href={getDriveFolderWebUrl(settings.driveRootFolderId)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost btn-sm"
-              >
-                <ExternalLink size={14} />
-                Open Folder
-              </a>
+        {authState.userEmail && (
+          <span className="field-hint">
+            {authState.status === 'expired' ? (
+              <>
+                Linked to <strong>{authState.userEmail}</strong> · Tap Reconnect
+                to refresh sync
+              </>
+            ) : authState.hasPersistentRefresh ? (
+              <>
+                Signed in as <strong>{authState.userEmail}</strong> · Stays
+                signed in automatically
+              </>
+            ) : (
+              <>
+                Signed in as <strong>{authState.userEmail}</strong>
+              </>
             )}
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={requestSignOut}
-              disabled={isSyncing}
-            >
-              Sign Out
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={onConnectDrive}
-            >
-              <Cloud size={15} />
-              {authState.status === 'expired'
-                ? 'Reconnect Google Drive'
-                : 'Connect Google Drive'}
-            </button>
-            {authState.status === 'expired' && (
+          </span>
+        )}
+
+        {authState.lastError && (
+          <span className="badge badge-danger">{authState.lastError}</span>
+        )}
+
+        <div className="field">
+          <label htmlFor="drive-root-folder-input" className="field-label">
+            Drive Root Folder Name
+          </label>
+          <input
+            id="drive-root-folder-input"
+            type="text"
+            className="input"
+            value={settings.driveRootFolderName}
+            onChange={(e) =>
+              onUpdateSettings({
+                ...settings,
+                driveRootFolderName: e.target.value,
+                driveRootFolderId: undefined,
+              })
+            }
+            placeholder="StoryTape Audiobooks"
+          />
+          <span className="field-hint">
+            Each book gets its own subfolder containing{' '}
+            <code>project.json</code>, <code>cover.jpg</code>, and all chapter
+            audio files.
+          </span>
+        </div>
+
+        <div className="drive-actions-row">
+          {authState.status === 'connected' ? (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={onSyncAll}
+                disabled={isSyncing}
+              >
+                {isSyncing ? (
+                  <Loader2 size={14} className="spin" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+                {isSyncing ? 'Syncing…' : 'Sync All Now'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={onOpenShareLibrary}
+                id="settings-share-library-btn"
+              >
+                <Share2 size={14} />
+                Share Library
+              </button>
+              {settings.driveRootFolderId && (
+                <a
+                  href={getDriveFolderWebUrl(settings.driveRootFolderId)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-ghost btn-sm"
+                >
+                  <ExternalLink size={14} />
+                  Open Folder
+                </a>
+              )}
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
@@ -205,22 +185,49 @@ export const DriveSyncSettingsSection: React.FC<
               >
                 Sign Out
               </button>
-            )}
-          </>
-        )}
-      </div>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={onConnectDrive}
+              >
+                <Cloud size={15} />
+                {authState.status === 'expired'
+                  ? 'Reconnect Google Drive'
+                  : 'Connect Google Drive'}
+              </button>
+              {authState.status === 'expired' && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={requestSignOut}
+                  disabled={isSyncing}
+                >
+                  Sign Out
+                </button>
+              )}
+            </>
+          )}
+        </div>
 
-      {syncStatusMessage && (
-        <span className="field-hint">{syncStatusMessage}</span>
-      )}
+        {syncStatusMessage && (
+          <span className="field-hint">{syncStatusMessage}</span>
+        )}
+      </section>
 
       {/* Family Sharing & Collaboration Controls */}
-      <div className="collab-box" data-testid="settings-collab-box">
-        <div className="collab-box__head">
-          <span className="collab-box__title">
-            <Users size={15} />
+      <section
+        className="settings-section"
+        aria-label="Family and Collaborator Sharing"
+        data-testid="settings-collab-box"
+      >
+        <div className="settings-section__head">
+          <h3 className="settings-section__title">
+            <Users size={17} />
             Family &amp; Collaborator Sharing
-          </span>
+          </h3>
           <span
             className={`badge ${settings.driveLibraryMode === 'shared' ? 'badge-sage' : ''}`}
           >
@@ -360,7 +367,7 @@ export const DriveSyncSettingsSection: React.FC<
             </div>
           </div>
         )}
-      </div>
-    </section>
+      </section>
+    </>
   );
 };

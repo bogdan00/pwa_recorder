@@ -10,8 +10,9 @@ test.describe('CUJ-01: Book Project Creation, Metadata, Cover Art, Editing & Del
   }) => {
     await page.goto('./');
 
-    // Configure narrator name in Settings so recorded chapters auto-credit the book
+    // Configure narrator name in Settings -> App tab so recorded chapters auto-credit the book
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-app').click();
     await page.locator('#default-narrator-input').fill('Dad');
     await page.getByLabel('Close settings').click();
 

@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Cloud, Mic, SlidersHorizontal, X } from 'lucide-react';
 import type { AppSettings } from '../types/models';
 import {
   type AudioInputDeviceInfo,
@@ -16,14 +16,18 @@ import type { GoogleAuthState } from '../drive/googleAuth';
 import { useMicTest } from '../hooks/useMicTest';
 import type { PwaInstallState } from '../pwa/installPrompt';
 import { getLocalMastersSummary } from '../storage/db';
-import { AppearanceStorageSection } from './settings/AppearanceStorageSection';
+import { AppearanceDefaultsSection } from './settings/AppearanceDefaultsSection';
 import { DeviceSettingsSection } from './settings/DeviceSettingsSection';
 import { DriveSyncSettingsSection } from './settings/DriveSyncSettingsSection';
 import { QualitySettingsSection } from './settings/QualitySettingsSection';
+import { StorageAppSection } from './settings/StorageAppSection';
 import './SettingsSheet.css';
+
+export type SettingsTab = 'recording' | 'drive' | 'app';
 
 interface SettingsSheetProps {
   open: boolean;
+  initialTab?: SettingsTab;
   settings: AppSettings;
   authState: GoogleAuthState;
   pwaInstallState?: PwaInstallState;
@@ -32,6 +36,7 @@ interface SettingsSheetProps {
   lastMicCapture?: CapturedMicTestAudio | null;
   onMicTestCaptured?: (capture: CapturedMicTestAudio) => void;
   onOpenMicQualityLab?: (capture?: CapturedMicTestAudio | null) => void;
+  onOpenThemeSwitcher: () => void;
   onClose: () => void;
   onUpdateSettings: (next: AppSettings) => void;
   onInstallApp?: () => void;
@@ -48,8 +53,19 @@ interface SettingsSheetProps {
   onToast: (message: string) => void;
 }
 
+const SETTINGS_TABS: Array<{
+  id: SettingsTab;
+  label: string;
+  icon: React.ReactNode;
+}> = [
+  { id: 'recording', label: 'Recording', icon: <Mic size={15} /> },
+  { id: 'drive', label: 'Drive', icon: <Cloud size={15} /> },
+  { id: 'app', label: 'App', icon: <SlidersHorizontal size={15} /> },
+];
+
 export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   open,
+  initialTab = 'recording',
   settings,
   authState,
   pwaInstallState,
@@ -58,6 +74,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   lastMicCapture = null,
   onMicTestCaptured,
   onOpenMicQualityLab,
+  onOpenThemeSwitcher,
   onClose,
   onUpdateSettings,
   onInstallApp,
@@ -73,6 +90,8 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   onClearLocalMasters,
   onToast,
 }) => {
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const [devices, setDevices] = useState<AudioInputDeviceInfo[]>([]);
   const [micPermGranted, setMicPermGranted] = useState(false);
   const [deviceLoading, setDeviceLoading] = useState(false);
@@ -115,6 +134,15 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   });
 
   useEffect(() => {
+    if (open) {
+      setActiveTab(initialTab);
+      if (bodyRef.current) {
+        bodyRef.current.scrollTop = 0;
+      }
+    }
+  }, [open, initialTab]);
+
+  useEffect(() => {
     if (!open) {
       micTest.stop();
       return;
@@ -153,6 +181,16 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
 
   if (!open) return null;
 
+  const handleSelectTab = (tab: SettingsTab) => {
+    if (tab !== 'recording' && micTest.isTesting) {
+      micTest.stop();
+    }
+    setActiveTab(tab);
+    if (bodyRef.current) {
+      bodyRef.current.scrollTop = 0;
+    }
+  };
+
   const handleUnlockDevices = async () => {
     setDeviceLoading(true);
     setDeviceError(null);
@@ -181,6 +219,13 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
     await micTest.start();
   };
 
+  const driveDotTone =
+    authState.status === 'connected'
+      ? 'connected'
+      : authState.isRefreshing || authState.status === 'expired'
+        ? 'attention'
+        : null;
+
   return (
     <div
       className="sheet-backdrop"
@@ -192,7 +237,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="sheet-panel">
+      <div className="sheet-panel settings-sheet-panel">
         <div className="sheet-header">
           <h2 id="settings-title" className="sheet-title">
             Studio Settings
@@ -207,71 +252,125 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
           </button>
         </div>
 
-        <div className="sheet-body">
-          <DeviceSettingsSection
-            settings={settings}
-            devices={devices}
-            micPermGranted={micPermGranted}
-            deviceLoading={deviceLoading}
-            deviceError={deviceError || micTest.error}
-            testingMic={micTest.isTesting}
-            telemetry={micTest.telemetry}
-            lastMicCapture={lastMicCapture}
-            onRefreshDevices={() => void refreshDevices()}
-            onUnlockDevices={() => void handleUnlockDevices()}
-            onToggleMicTest={() => void handleToggleMicTest()}
-            onSelectDevice={(deviceId, deviceLabel) =>
-              onUpdateSettings({
-                ...settings,
-                audioDevice: { deviceId, deviceLabel },
-              })
-            }
-            onOpenMicQualityLab={
-              onOpenMicQualityLab
-                ? () => {
-                    const fresh = micTest.isTesting ? micTest.stop() : null;
-                    onOpenMicQualityLab(fresh ?? lastMicCapture ?? null);
-                  }
-                : undefined
-            }
-          />
+        <div className="settings-tabs-bar">
+          <div
+            className="settings-tabs"
+            role="tablist"
+            aria-label="Studio Settings sections"
+          >
+            {SETTINGS_TABS.map((tab) => {
+              const selected = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  id={`settings-tab-${tab.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  aria-controls={`settings-panel-${tab.id}`}
+                  data-testid={`settings-tab-${tab.id}`}
+                  className={`settings-tab ${selected ? 'settings-tab--active' : ''}`}
+                  onClick={() => handleSelectTab(tab.id)}
+                >
+                  {tab.icon}
+                  <span>{tab.label}</span>
+                  {tab.id === 'drive' && driveDotTone && (
+                    <span
+                      className={`settings-tab__dot settings-tab__dot--${driveDotTone}`}
+                      aria-hidden="true"
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-          <QualitySettingsSection
-            settings={settings}
-            caps={caps}
-            onUpdateSettings={onUpdateSettings}
-          />
+        <div
+          ref={bodyRef}
+          id={`settings-panel-${activeTab}`}
+          role="tabpanel"
+          aria-labelledby={`settings-tab-${activeTab}`}
+          className="sheet-body"
+        >
+          {activeTab === 'recording' && (
+            <>
+              <DeviceSettingsSection
+                settings={settings}
+                devices={devices}
+                micPermGranted={micPermGranted}
+                deviceLoading={deviceLoading}
+                deviceError={deviceError || micTest.error}
+                testingMic={micTest.isTesting}
+                telemetry={micTest.telemetry}
+                lastMicCapture={lastMicCapture}
+                onRefreshDevices={() => void refreshDevices()}
+                onUnlockDevices={() => void handleUnlockDevices()}
+                onToggleMicTest={() => void handleToggleMicTest()}
+                onSelectDevice={(deviceId, deviceLabel) =>
+                  onUpdateSettings({
+                    ...settings,
+                    audioDevice: { deviceId, deviceLabel },
+                  })
+                }
+                onOpenMicQualityLab={
+                  onOpenMicQualityLab
+                    ? () => {
+                        const fresh = micTest.isTesting ? micTest.stop() : null;
+                        onOpenMicQualityLab(fresh ?? lastMicCapture ?? null);
+                      }
+                    : undefined
+                }
+              />
 
-          <DriveSyncSettingsSection
-            settings={settings}
-            authState={authState}
-            isSyncing={isSyncing}
-            syncStatusMessage={syncStatusMessage}
-            onUpdateSettings={onUpdateSettings}
-            onConnectDrive={onConnectDrive}
-            onSignOutDrive={onSignOutDrive}
-            onSyncAll={onSyncAll}
-            onOpenShareLibrary={onOpenShareLibrary}
-            onJoinSharedFolder={onJoinSharedFolder}
-            onPickSharedFolder={onPickSharedFolder}
-            onSwitchToPersonalLibrary={onSwitchToPersonalLibrary}
-            onUnlinkSharedBook={onUnlinkSharedBook}
-          />
+              <QualitySettingsSection
+                settings={settings}
+                caps={caps}
+                onUpdateSettings={onUpdateSettings}
+              />
+            </>
+          )}
 
-          <AppearanceStorageSection
-            settings={settings}
-            pwaInstallState={pwaInstallState}
-            storageUsage={storageUsage}
-            localMastersSummary={localMastersSummary}
-            onUpdateSettings={onUpdateSettings}
-            onInstallApp={onInstallApp}
-            onClearSyncedCache={onClearSyncedCache}
-            onClearLocalMasters={onClearLocalMasters}
-            onLocalMastersCleared={() =>
-              setLocalMastersSummary({ count: 0, totalBytes: 0 })
-            }
-            onToast={onToast}
-          />
+          {activeTab === 'drive' && (
+            <DriveSyncSettingsSection
+              settings={settings}
+              authState={authState}
+              isSyncing={isSyncing}
+              syncStatusMessage={syncStatusMessage}
+              onUpdateSettings={onUpdateSettings}
+              onConnectDrive={onConnectDrive}
+              onSignOutDrive={onSignOutDrive}
+              onSyncAll={onSyncAll}
+              onOpenShareLibrary={onOpenShareLibrary}
+              onJoinSharedFolder={onJoinSharedFolder}
+              onPickSharedFolder={onPickSharedFolder}
+              onSwitchToPersonalLibrary={onSwitchToPersonalLibrary}
+              onUnlinkSharedBook={onUnlinkSharedBook}
+            />
+          )}
+
+          {activeTab === 'app' && (
+            <>
+              <AppearanceDefaultsSection
+                settings={settings}
+                onUpdateSettings={onUpdateSettings}
+                onOpenThemeSwitcher={onOpenThemeSwitcher}
+              />
+
+              <StorageAppSection
+                pwaInstallState={pwaInstallState}
+                storageUsage={storageUsage}
+                localMastersSummary={localMastersSummary}
+                onInstallApp={onInstallApp}
+                onClearSyncedCache={onClearSyncedCache}
+                onClearLocalMasters={onClearLocalMasters}
+                onLocalMastersCleared={() =>
+                  setLocalMastersSummary({ count: 0, totalBytes: 0 })
+                }
+                onToast={onToast}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>

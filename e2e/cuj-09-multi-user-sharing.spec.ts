@@ -655,8 +655,10 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
 
     // Connect Google Drive directly & set default narrator in Settings (no Client ID input)
     await page.locator('#open-settings-btn').click();
-    await expect(page.locator('#drive-client-id-input')).toHaveCount(0);
+    await page.getByTestId('settings-tab-app').click();
     await page.locator('#default-narrator-input').fill('Dad');
+    await page.getByTestId('settings-tab-drive').click();
+    await expect(page.locator('#drive-client-id-input')).toHaveCount(0);
     await page.getByRole('button', { name: 'Connect Google Drive' }).click();
     await expect(page.getByText('dad@example.com')).toBeVisible();
     await page.getByLabel('Close settings').click();
@@ -1026,9 +1028,16 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
       })
       .toEqual(['Goodnight Stars:Dad', 'Moonbeam Express:Mom']);
 
-    // Switch back to Personal Library in Settings (requires confirmation)
+    // Switch back to Personal Library via Shared Library banner Manage button (deep-links to Drive tab, requires confirmation)
     await page.getByLabel('Back to library').click();
-    await page.locator('#open-settings-btn').click();
+    await page
+      .getByTestId('shared-library-banner')
+      .getByRole('button', { name: 'Manage' })
+      .click();
+    await expect(page.getByTestId('settings-tab-drive')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     await page.locator('#switch-personal-library-btn').click();
     await expect(page.getByTestId('confirm-dialog')).toBeVisible();
     await page.getByTestId('confirm-dialog-confirm').click();
@@ -1138,8 +1147,9 @@ test.describe('CUJ-09: Multi-User Family Sharing, Invite Links, Picker Unlock, C
 
     await page.goto('./');
 
-    // Connect Drive directly in Settings & paste a single-book invite link
+    // Connect Drive directly in Settings -> Drive & paste a single-book invite link
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-drive').click();
     await page.getByRole('button', { name: 'Connect Google Drive' }).click();
     await expect(page.getByText('grandma@example.com')).toBeVisible();
 

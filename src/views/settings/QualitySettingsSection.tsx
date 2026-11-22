@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { Sliders, Volume1, Volume2 } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { ChevronDown, Sliders, Volume1, Volume2 } from 'lucide-react';
 import type {
   AppSettings,
   AudioQualitySettings,
@@ -126,6 +126,7 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
   caps,
   onUpdateSettings,
 }) => {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const quality = settings.audioQuality;
   const effectiveFormat = resolveEffectiveFormat(quality.format, caps);
   const isWav = effectiveFormat === 'wav';
@@ -151,6 +152,22 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
     merged.preset = detectMatchingPreset(merged);
     onUpdateSettings({ ...settings, audioQuality: merged });
   };
+
+  const gainDb = gainMultiplierToDb(quality.inputGain);
+  const gainRatio = Math.max(
+    0,
+    Math.min(
+      1,
+      (gainDb - MIN_INPUT_GAIN_DB) / (MAX_INPUT_GAIN_DB - MIN_INPUT_GAIN_DB),
+    ),
+  );
+  const gainGuide = describeGainLevel(
+    gainDb,
+    quality.inputGain,
+    quality.softLimiter,
+  );
+  const pulseSec = (1.85 - gainRatio * 0.9).toFixed(2);
+  const advancedSummary = `${formatQualitySummaryPill(quality, caps)} · ${formatGainDb(quality.inputGain)}`;
 
   return (
     <section className="settings-section" aria-label="Recording Quality">
@@ -217,221 +234,272 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
         }
       />
 
-      <AudioFormatControls
-        value={quality}
-        caps={caps}
-        formatLabel="Format / Codec"
-        wavLabel="WAV (Lossless)"
-        autoFallbackLabel="Auto (Native)"
-        showCodecFallbackLabels
-        showBitrateReadout
-        verboseBitrateModeLabels
-        sampleRateHint={
-          quality.sampleRate === 96000 && !isWav ? (
-            <span className="field-hint">
-              96 kHz shines best in Lossless WAV with an external USB-C/Lightning
-              mic (compressed codecs clamp to 48 kHz).
+      {/* Collapsible Advanced Audio, Input Gain & DSP section */}
+      <div
+        className={`settings-disclosure ${advancedOpen ? 'settings-disclosure--open' : ''}`}
+        data-testid="advanced-audio-disclosure"
+      >
+        <button
+          type="button"
+          className="settings-disclosure__trigger"
+          aria-expanded={advancedOpen}
+          aria-controls="advanced-audio-panel"
+          data-testid="advanced-audio-toggle"
+          onClick={() => setAdvancedOpen((prev) => !prev)}
+        >
+          <div className="settings-disclosure__text">
+            <span className="settings-disclosure__title">
+              Advanced Audio &amp; Input Gain
             </span>
-          ) : null
-        }
-        bitrateHint={
-          selectedMaxBitrate > 0 && quality.bitrateKbps > selectedMaxBitrate ? (
-            <span className="field-hint">
-              This browser&apos;s {effectiveFormat.toUpperCase()} encoder caps{' '}
-              {quality.channels === 2 ? 'stereo' : 'mono'} at{' '}
-              {selectedMaxBitrate} kbps and will automatically use{' '}
-              {selectedMaxBitrate} kbps (or switch to WAV for lossless).
-            </span>
-          ) : null
-        }
-        onChange={updateQuality}
-      />
-
-      {/* Channels */}
-      <div className="field">
-        <span className="field-label">Channels</span>
-        <div className="pill-grid">
-          {(
-            [
-              { id: 1, label: 'Mono (1 ch · Voice)' },
-              { id: 2, label: 'Stereo (2 ch · External Mic)' },
-            ] as Array<{ id: ChannelCountOption; label: string }>
-          ).map((ch) => (
-            <button
-              key={ch.id}
-              type="button"
-              className={`opt-pill ${quality.channels === ch.id ? 'opt-pill--active' : ''}`}
-              onClick={() => updateQuality({ channels: ch.id })}
+            <span
+              className="settings-disclosure__summary font-mono"
+              data-testid="advanced-audio-summary"
             >
-              {ch.label}
-            </button>
-          ))}
-        </div>
-      </div>
+              {advancedSummary}
+            </span>
+          </div>
+          <ChevronDown
+            size={18}
+            className="settings-disclosure__chevron"
+            aria-hidden="true"
+          />
+        </button>
 
-      {/* Input Gain slider with animated loudness preview & beginner logarithmic guide */}
-      {(() => {
-        const gainDb = gainMultiplierToDb(quality.inputGain);
-        const gainRatio = Math.max(
-          0,
-          Math.min(
-            1,
-            (gainDb - MIN_INPUT_GAIN_DB) /
-              (MAX_INPUT_GAIN_DB - MIN_INPUT_GAIN_DB),
-          ),
-        );
-        const gainGuide = describeGainLevel(
-          gainDb,
-          quality.inputGain,
-          quality.softLimiter,
-        );
-        const pulseSec = (1.85 - gainRatio * 0.9).toFixed(2);
+        {advancedOpen && (
+          <div
+            id="advanced-audio-panel"
+            className="settings-disclosure__body"
+            data-testid="advanced-audio-panel"
+          >
+            <div className="settings-subgroup">
+              <span className="settings-subgroup__label">
+                Format &amp; Encoding
+              </span>
 
-        return (
-          <div className="field">
-            <div className="gain-header">
-              <label htmlFor="input-gain-slider" className="field-label">
-                Input Gain Boost
-              </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span
-                  className="font-mono"
-                  data-testid="input-gain-readout"
-                  style={{ fontSize: 12.5, color: 'var(--accent-amber)' }}
-                >
-                  {quality.inputGain.toFixed(2)}× ({formatGainDb(quality.inputGain)})
-                </span>
-                {Math.abs(quality.inputGain - 1) > 0.01 && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    style={{ minHeight: 26, padding: '2px 8px', fontSize: 11.5 }}
-                    onClick={() => updateQuality({ inputGain: 1.0 })}
-                  >
-                    Reset
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="gain-guide-card" data-testid="gain-guide-card">
-              {/* Animated visual cue: left = quieter, right = louder */}
-              <div
-                className={`gain-viz gain-viz--${gainGuide.tone}`}
-                aria-hidden="true"
-                style={{ '--gain-pulse-dur': `${pulseSec}s` } as React.CSSProperties}
-              >
-                <span
-                  className={`gain-viz__side ${gainDb < -0.25 ? 'gain-viz__side--active' : ''}`}
-                >
-                  <Volume1 size={14} />
-                  <span>Quieter</span>
-                </span>
-
-                <div className="gain-viz__bars">
-                  {GAIN_PREVIEW_BAR_WEIGHTS.map((weight, idx) => {
-                    // Perceptual bar height grows clearly from ~18% at -6 dB to 100% at +24 dB
-                    const scale = Math.max(
-                      0.14,
-                      Math.min(1, (0.18 + gainRatio * 0.82) * weight),
-                    );
-                    return (
-                      <span
-                        key={idx}
-                        className="gain-viz__bar"
-                        style={
-                          {
-                            '--bar-scale': scale.toFixed(3),
-                            '--bar-delay': `${idx * 95}ms`,
-                          } as React.CSSProperties
-                        }
-                      />
-                    );
-                  })}
-                </div>
-
-                <span
-                  className={`gain-viz__side gain-viz__side--right ${gainDb > 0.25 ? 'gain-viz__side--active' : ''}`}
-                >
-                  <span>Louder</span>
-                  <Volume2 size={14} />
-                </span>
-              </div>
-
-              <input
-                id="input-gain-slider"
-                type="range"
-                className="range-slider"
-                min={MIN_INPUT_GAIN_DB}
-                max={MAX_INPUT_GAIN_DB}
-                step={0.5}
-                value={gainDb}
-                aria-valuetext={formatGainDb(quality.inputGain)}
-                onChange={(e) =>
-                  updateQuality({
-                    inputGain: gainDbToMultiplier(Number(e.target.value)),
-                  })
+              <AudioFormatControls
+                value={quality}
+                caps={caps}
+                formatLabel="Format / Codec"
+                wavLabel="WAV (Lossless)"
+                autoFallbackLabel="Auto (Native)"
+                showCodecFallbackLabels
+                showBitrateReadout
+                verboseBitrateModeLabels
+                sampleRateHint={
+                  quality.sampleRate === 96000 && !isWav ? (
+                    <span className="field-hint">
+                      96 kHz shines best in Lossless WAV with an external
+                      USB-C/Lightning mic (compressed codecs clamp to 48 kHz).
+                    </span>
+                  ) : null
                 }
+                bitrateHint={
+                  selectedMaxBitrate > 0 &&
+                  quality.bitrateKbps > selectedMaxBitrate ? (
+                    <span className="field-hint">
+                      This browser&apos;s {effectiveFormat.toUpperCase()}{' '}
+                      encoder caps {quality.channels === 2 ? 'stereo' : 'mono'}{' '}
+                      at {selectedMaxBitrate} kbps and will automatically use{' '}
+                      {selectedMaxBitrate} kbps (or switch to WAV for lossless).
+                    </span>
+                  ) : null
+                }
+                onChange={updateQuality}
               />
 
-              {/* Clickable logarithmic doubling ticks (-6 dB = 0.5x ... +24 dB = 16x) */}
-              <div
-                className="gain-scale-ticks"
-                role="group"
-                aria-label="Quick input gain stops"
-              >
-                {GAIN_SCALE_TICKS.map((tick) => {
-                  const isActive = Math.abs(gainDb - tick.db) < 0.75;
-                  return (
+              {/* Channels */}
+              <div className="field">
+                <span className="field-label">Channels</span>
+                <div className="pill-grid">
+                  {(
+                    [
+                      { id: 1, label: 'Mono (1 ch · Voice)' },
+                      { id: 2, label: 'Stereo (2 ch · External Mic)' },
+                    ] as Array<{ id: ChannelCountOption; label: string }>
+                  ).map((ch) => (
                     <button
-                      key={tick.db}
+                      key={ch.id}
                       type="button"
-                      className={`gain-tick ${isActive ? 'gain-tick--active' : ''}`}
-                      onClick={() =>
-                        updateQuality({ inputGain: gainDbToMultiplier(tick.db) })
-                      }
-                      aria-label={`Set input gain to ${tick.dbLabel} dB (${tick.multLabel})`}
+                      className={`opt-pill ${quality.channels === ch.id ? 'opt-pill--active' : ''}`}
+                      onClick={() => updateQuality({ channels: ch.id })}
                     >
-                      <span className="gain-tick__db">{tick.dbLabel}</span>
-                      <span className="gain-tick__mult">{tick.multLabel}</span>
+                      {ch.label}
                     </button>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
+            </div>
 
-              <p
-                className="gain-guide-status"
-                data-testid="gain-guidance-text"
-              >
-                {gainGuide.summary}
-              </p>
+            <div className="settings-subgroup">
+              <span className="settings-subgroup__label">Input Gain</span>
 
-              <p
-                className="gain-log-explainer"
-                data-testid="gain-log-explainer"
-              >
-                <strong>Slide left</strong> for quieter, <strong>right</strong>{' '}
-                for louder. Decibels (dB) use a <strong>logarithmic scale</strong>
-                : every <strong>+6 dB doubles</strong> signal strength (+6 dB =
-                2×, +12 dB = 4×, +18 dB = 8×, +24 dB = 16×) — small tweaks like
-                +4 dB are subtle, while +12 to +18 dB gives a big boost.
-              </p>
+              {/* Input Gain slider with animated loudness preview & beginner logarithmic guide */}
+              <div className="field">
+                <div className="gain-header">
+                  <label htmlFor="input-gain-slider" className="field-label">
+                    Input Gain Boost
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span
+                      className="font-mono"
+                      data-testid="input-gain-readout"
+                      style={{ fontSize: 12.5, color: 'var(--accent-amber)' }}
+                    >
+                      {quality.inputGain.toFixed(2)}× (
+                      {formatGainDb(quality.inputGain)})
+                    </span>
+                    {Math.abs(quality.inputGain - 1) > 0.01 && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={{
+                          minHeight: 26,
+                          padding: '2px 8px',
+                          fontSize: 11.5,
+                        }}
+                        onClick={() => updateQuality({ inputGain: 1.0 })}
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="gain-guide-card" data-testid="gain-guide-card">
+                  {/* Animated visual cue: left = quieter, right = louder */}
+                  <div
+                    className={`gain-viz gain-viz--${gainGuide.tone}`}
+                    aria-hidden="true"
+                    style={
+                      { '--gain-pulse-dur': `${pulseSec}s` } as React.CSSProperties
+                    }
+                  >
+                    <span
+                      className={`gain-viz__side ${gainDb < -0.25 ? 'gain-viz__side--active' : ''}`}
+                    >
+                      <Volume1 size={14} />
+                      <span>Quieter</span>
+                    </span>
+
+                    <div className="gain-viz__bars">
+                      {GAIN_PREVIEW_BAR_WEIGHTS.map((weight, idx) => {
+                        // Perceptual bar height grows clearly from ~18% at -6 dB to 100% at +24 dB
+                        const scale = Math.max(
+                          0.14,
+                          Math.min(1, (0.18 + gainRatio * 0.82) * weight),
+                        );
+                        return (
+                          <span
+                            key={idx}
+                            className="gain-viz__bar"
+                            style={
+                              {
+                                '--bar-scale': scale.toFixed(3),
+                                '--bar-delay': `${idx * 95}ms`,
+                              } as React.CSSProperties
+                            }
+                          />
+                        );
+                      })}
+                    </div>
+
+                    <span
+                      className={`gain-viz__side gain-viz__side--right ${gainDb > 0.25 ? 'gain-viz__side--active' : ''}`}
+                    >
+                      <span>Louder</span>
+                      <Volume2 size={14} />
+                    </span>
+                  </div>
+
+                  <input
+                    id="input-gain-slider"
+                    type="range"
+                    className="range-slider"
+                    min={MIN_INPUT_GAIN_DB}
+                    max={MAX_INPUT_GAIN_DB}
+                    step={0.5}
+                    value={gainDb}
+                    aria-valuetext={formatGainDb(quality.inputGain)}
+                    onChange={(e) =>
+                      updateQuality({
+                        inputGain: gainDbToMultiplier(Number(e.target.value)),
+                      })
+                    }
+                  />
+
+                  {/* Clickable logarithmic doubling ticks (-6 dB = 0.5x ... +24 dB = 16x) */}
+                  <div
+                    className="gain-scale-ticks"
+                    role="group"
+                    aria-label="Quick input gain stops"
+                  >
+                    {GAIN_SCALE_TICKS.map((tick) => {
+                      const isActive = Math.abs(gainDb - tick.db) < 0.75;
+                      return (
+                        <button
+                          key={tick.db}
+                          type="button"
+                          className={`gain-tick ${isActive ? 'gain-tick--active' : ''}`}
+                          onClick={() =>
+                            updateQuality({
+                              inputGain: gainDbToMultiplier(tick.db),
+                            })
+                          }
+                          aria-label={`Set input gain to ${tick.dbLabel} dB (${tick.multLabel})`}
+                        >
+                          <span className="gain-tick__db">{tick.dbLabel}</span>
+                          <span className="gain-tick__mult">
+                            {tick.multLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <p
+                    className="gain-guide-status"
+                    data-testid="gain-guidance-text"
+                  >
+                    {gainGuide.summary}
+                  </p>
+
+                  <p
+                    className="gain-log-explainer"
+                    data-testid="gain-log-explainer"
+                  >
+                    <strong>Slide left</strong> for quieter,{' '}
+                    <strong>right</strong> for louder. Decibels (dB) use a{' '}
+                    <strong>logarithmic scale</strong>: every{' '}
+                    <strong>+6 dB doubles</strong> signal strength (+6 dB = 2×,
+                    +12 dB = 4×, +18 dB = 8×, +24 dB = 16×) — small tweaks like
+                    +4 dB are subtle, while +12 to +18 dB gives a big boost.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="settings-subgroup">
+              <span className="settings-subgroup__label">
+                Mic Processing (DSP)
+              </span>
+
+              {/* Studio Voice Chain & Raw Mic DSP Toggles */}
+              <div>
+                {DSP_TOGGLES.map((item) => (
+                  <ToggleRow
+                    key={item.key}
+                    title={item.title}
+                    description={item.description}
+                    checked={quality[item.key]}
+                    onToggle={() =>
+                      updateQuality({ [item.key]: !quality[item.key] })
+                    }
+                  />
+                ))}
+              </div>
             </div>
           </div>
-        );
-      })()}
-
-      {/* Studio Voice Chain & Raw Mic DSP Toggles */}
-      <div>
-        {DSP_TOGGLES.map((item) => (
-          <ToggleRow
-            key={item.key}
-            title={item.title}
-            description={item.description}
-            checked={quality[item.key]}
-            onToggle={() => updateQuality({ [item.key]: !quality[item.key] })}
-          />
-        ))}
+        )}
       </div>
     </section>
   );

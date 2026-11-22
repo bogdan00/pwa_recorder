@@ -53,9 +53,14 @@ test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV 
     await page.getByRole('button', { name: 'Stop Test' }).click();
     await expect(page.getByRole('button', { name: 'Test Mic' })).toBeVisible();
 
-    // 2. Test Studio Raw (320k) preset -> verifies raw mic DSP toggles flip OFF!
+    // 2. Test Studio Raw (320k) preset -> verifies live summary + collapsed Advanced Audio summary, then expands Advanced Audio to verify raw mic DSP toggles flip OFF!
+    await expect(page.getByTestId('advanced-audio-panel')).toHaveCount(0);
     await page.getByRole('button', { name: /Studio Raw \(320k\)/i }).click();
     await expect(page.getByTestId('quality-preset-badge')).toHaveText('Studio Raw (320k)');
+    await expect(page.getByTestId('advanced-audio-summary')).toContainText('320k');
+
+    await page.getByTestId('advanced-audio-toggle').click();
+    await expect(page.getByTestId('advanced-audio-panel')).toBeVisible();
     await expect(page.getByRole('switch', { name: 'Browser Noise Suppression' })).toHaveAttribute('aria-checked', 'false');
     await expect(page.getByRole('switch', { name: 'Browser Auto Gain Control' })).toHaveAttribute('aria-checked', 'false');
     await expect(page.getByRole('switch', { name: '80 Hz Rumble Filter' })).toHaveAttribute('aria-checked', 'true');
@@ -170,6 +175,7 @@ test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV 
     await expect(page.getByRole('button', { name: 'Test Mic' })).toBeVisible();
 
     // 2. Manual Input Gain Boost slider, animated guide, logarithmic explainer & clickable quick-stop ticks
+    await page.getByTestId('advanced-audio-toggle').click();
     await expect(page.getByTestId('gain-guide-card')).toBeVisible();
     await expect(page.getByTestId('gain-log-explainer')).toContainText(/logarithmic scale/i);
     await expect(page.getByTestId('gain-log-explainer')).toContainText(/\+6 dB doubles/i);
@@ -193,6 +199,8 @@ test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV 
 
     await page.locator('#open-settings-btn').click();
     await expect(page.getByTestId('settings-sheet')).toBeVisible();
+    await expect(page.getByTestId('advanced-audio-summary')).toContainText(/\+18\.0 dB/);
+    await page.getByTestId('advanced-audio-toggle').click();
     await expect(page.getByTestId('input-gain-readout')).toContainText(/\+18\.0 dB/);
     await page.getByRole('button', { name: 'Reset' }).click();
     await expect(page.getByTestId('input-gain-readout')).toHaveText('1.00× (0.0 dB)');

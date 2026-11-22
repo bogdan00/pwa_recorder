@@ -37,6 +37,7 @@ test.describe('CUJ-05: Minimalistic Audiobook Player, Mini-Player, Speed, Sleep 
   }) => {
     await page.goto('./');
     await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-app').click();
     await page.locator('#default-narrator-input').fill('Dad');
     await page.getByLabel('Close settings').click();
 
