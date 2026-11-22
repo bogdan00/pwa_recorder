@@ -194,6 +194,46 @@ export const test = base.extend<StoryTapeTestOptions>({
             }
           }
         }
+
+        // iOS Safari / standalone PWA focus-zoom fence: any visible text input,
+        // textarea, or select with computed font-size < 16px triggers iOS auto-zoom
+        // on focus and leaves the viewport stuck zoomed in after blur.
+        const NON_ZOOM_INPUT_TYPES = new Set([
+          'hidden',
+          'file',
+          'range',
+          'checkbox',
+          'radio',
+          'button',
+          'submit',
+          'reset',
+          'color',
+          'image',
+        ]);
+        const formControls = document.querySelectorAll<HTMLElement>(
+          'input, textarea, select',
+        );
+        for (const el of Array.from(formControls)) {
+          if (el.tagName === 'INPUT') {
+            const type = ((el as HTMLInputElement).type || 'text').toLowerCase();
+            if (NON_ZOOM_INPUT_TYPES.has(type)) continue;
+          }
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 2 || rect.height <= 2) continue;
+          const style = window.getComputedStyle(el);
+          if (style.visibility === 'hidden' || style.display === 'none') continue;
+          const fontSize = parseFloat(style.fontSize);
+          if (Number.isFinite(fontSize) && fontSize < 15.99) {
+            const label =
+              el.id ||
+              el.getAttribute('aria-label') ||
+              el.getAttribute('placeholder') ||
+              el.tagName.toLowerCase();
+            report(
+              `[${route} @ ${vw}px] iOS zoom risk: "${label}" has font-size ${fontSize}px (< 16px)`,
+            );
+          }
+        }
       };
 
       const scheduleCheck = () => {
@@ -252,7 +292,7 @@ export const test = base.extend<StoryTapeTestOptions>({
 
     expect(
       Array.from(viewportOverflowViolations),
-      'Mobile horizontal viewport overflow detected during E2E execution.',
+      'Mobile viewport overflow or iOS focus-zoom (< 16px input) violation detected during E2E execution.',
     ).toEqual([]);
 
     expect(

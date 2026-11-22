@@ -43,7 +43,7 @@ Family members can share either their entire StoryTape Family Library or an indi
        - Imported books display an **Imported** badge and Listen-only controls until the user confirms **Make Editable (Detach)** (clearing `importedFrom` and unlocking recording/editing) or **Remove Copy** (removing the copy locally and trashing the copied Drive folder without touching the original creator's book).
        - When linking live (`Link Live`, default for **Co-Narrator (`writer`)** single-book invites), adds the shared book alongside the user's existing personal books without replacing or disturbing their personal library (unlinking prompts for confirmation).
    - Also test **Manual Join** in **Studio Settings → Drive** by pasting a StoryTape invite link, a Google Drive folder URL, or a raw Drive folder ID.
-   - **Expected:** Parses all three input formats accurately and links or imports the shared library or book through the same verification flow.
+   - **Expected:** Parses all three input formats accurately, links or imports the shared library or book through the same verification flow, and renders the input at `>= 16px` (with `touch-action: manipulation`) so tapping or pasting on iPhone never triggers iOS Safari auto-zoom.
 
 3. **Conflict-Safe Multi-Narrator Sync & Attribution**
    - Two family members (e.g., Mom and Dad) record different chapters into the same shared book concurrently and sync to Google Drive.
