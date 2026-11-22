@@ -14,7 +14,8 @@
     "test:formal": "vitest run --config vitest.formal.config.ts",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "precheck": "npm run typecheck && npm test && npm run test:formal && npm run build && PRECHECK=1 npm run test:e2e",
+    "test:perf": "node scripts/perfCheck.mjs",
+    "precheck": "npm run typecheck && npm test && npm run test:formal && npm run build && PRECHECK=1 npm run test:e2e && npm run test:perf",
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {

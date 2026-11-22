@@ -77,12 +77,12 @@ fi
 echo ""
 echo "================================================================="
 echo "  StoryTape pre-push verification"
-echo "  Running: typecheck -> unit & Tier 1 formal -> Tier 2 Z3 proofs -> build -> parallel CUJ E2E"
+echo "  Running: typecheck -> unit & Tier 1 formal -> Tier 2 Z3 proofs -> build -> parallel CUJ E2E -> Chrome perf gate"
 echo "================================================================="
 echo ""
 
 npm run precheck
 
 echo ""
-echo "All StoryTape checks and CUJ E2E tests passed. Proceeding with push."
+echo "All StoryTape checks, CUJ E2E tests, and Chrome perf budgets passed. Proceeding with push."
 echo ""

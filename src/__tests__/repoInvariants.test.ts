@@ -277,4 +277,23 @@ describe('Repository E2E, CUJ & ADR systemic invariants', () => {
       'googleAuth.ts must check window.__STORYTAPE_AUTH_BROKER_URL__ BEFORE import.meta.env.VITE_GOOGLE_AUTH_BROKER_URL',
     ).toBeLessThan(envIdx);
   });
+
+  it('enforces ADR-09 headless Chrome recording performance gate parity across precheck, CI, and scripts/perfCheck.mjs', () => {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'),
+    ) as { scripts?: Record<string, string> };
+    const deployYml = fs.readFileSync(
+      path.join(REPO_ROOT, '.github/workflows/deploy.yml'),
+      'utf8',
+    );
+    const perfScriptPath = path.join(REPO_ROOT, 'scripts/perfCheck.mjs');
+
+    expect(
+      fs.existsSync(perfScriptPath),
+      'scripts/perfCheck.mjs must exist for headless Chrome recording performance verification',
+    ).toBe(true);
+    expect(pkg.scripts?.['test:perf']).toContain('scripts/perfCheck.mjs');
+    expect(pkg.scripts?.precheck).toContain('npm run test:perf');
+    expect(deployYml).toContain('npm run test:perf');
+  });
 });
