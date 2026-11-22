@@ -244,14 +244,12 @@ export interface StudioTransitionIr {
  * Both Tier 1 (`stepStudioState`) and Tier 2 (`studioStateMachine.z3.formal.test.ts`)
  * execute/compile these exact AST definitions — zero drift is possible.
  */
-const REWIND_WINDOW = E.intVar('rewindWindow');
 const CHUNK_DELTA = E.intVar('chunkDelta');
 const SEEK_TARGET = E.intVar('seekTarget');
 const PREVIEW_ELAPSED = E.intVar('previewElapsed');
 
-function rewoundPlayhead(target: IntExpr, dur: IntExpr, rewindWindow: IntExpr): IntExpr {
-  const rewound = E.max(E.int(0), E.sub(dur, rewindWindow));
-  return E.iteInt(E.ge(target, dur), rewound, target);
+function previewStartPlayhead(target: IntExpr, dur: IntExpr): IntExpr {
+  return E.iteInt(E.ge(target, dur), E.int(0), target);
 }
 
 export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>> = {
@@ -288,25 +286,24 @@ export const STUDIO_TRANSITIONS_IR: Readonly<Record<string, StudioTransitionIr>>
   },
   seek: {
     name: 'seek',
-    intParams: ['seekTarget', 'rewindWindow'],
-    guard: E.and(E.neq(S.phase, REC), E.ge(REWIND_WINDOW, E.int(0))),
+    intParams: ['seekTarget'],
+    guard: E.neq(S.phase, REC),
     next: {
       // Mirrors RecordingEngine.seekToMs: clamps to [0, duration]; if currently playing
-      // and sought to the end, playPreviewFromPlayhead rewinds by rewindWindow.
+      // and sought to the end, playPreviewFromPlayhead restarts from 0.
       playhead: E.iteInt(
         E.eq(S.phase, PLAYING),
-        rewoundPlayhead(E.clamp(SEEK_TARGET, E.int(0), S.duration), S.duration, REWIND_WINDOW),
+        previewStartPlayhead(E.clamp(SEEK_TARGET, E.int(0), S.duration), S.duration),
         E.clamp(SEEK_TARGET, E.int(0), S.duration),
       ),
     },
   },
   play_preview: {
     name: 'play_preview',
-    intParams: ['rewindWindow'],
-    guard: E.and(E.gt(S.duration, E.int(0)), E.ge(REWIND_WINDOW, E.int(0))),
+    guard: E.gt(S.duration, E.int(0)),
     next: {
       phase: PLAYING,
-      playhead: rewoundPlayhead(S.playhead, S.duration, REWIND_WINDOW),
+      playhead: previewStartPlayhead(S.playhead, S.duration),
       micActive: E.bool(false),
       previewActive: E.bool(true),
     },
@@ -475,13 +472,11 @@ export const STUDIO_REACHABILITY_GOALS: readonly ReachabilityGoal<StudioFormalSt
 
 /**
  * Tier 1 step relation executed directly from `STUDIO_TRANSITIONS_IR`.
- * `rewindWindow` defaults to 5 (matching RecordingEngine's 5s rewind at 1 unit = 1s).
  */
 export function stepStudioState(
   s: StudioFormalState,
   action: StudioAction,
   maxDuration = 3,
-  rewindWindow = 5,
 ): StudioFormalState | null {
   switch (action) {
     case 'capture_chunk':
@@ -490,21 +485,18 @@ export function stepStudioState(
     case 'seek_start':
       return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.seek, {
         seekTarget: 0,
-        rewindWindow,
       });
     case 'seek_mid':
       if (s.duration < 2) return null;
       return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.seek, {
         seekTarget: Math.floor(s.duration / 2),
-        rewindWindow,
       });
     case 'seek_end':
       return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.seek, {
         seekTarget: s.duration,
-        rewindWindow,
       });
     case 'play_preview':
-      return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.play_preview, { rewindWindow });
+      return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.play_preview);
     case 'preview_tick':
       return evalTransitionIr(s, STUDIO_TRANSITIONS_IR.preview_tick, { previewElapsed: 1 });
     default:
@@ -527,13 +519,12 @@ export function serializeStudioState(s: StudioFormalState): string {
 
 export function createStudioLts(
   maxDuration = 3,
-  rewindWindow = 5,
 ): LabeledTransitionSystem<StudioFormalState, StudioAction> {
   return {
     name: 'RecordingStudio',
     initialStates: [STUDIO_INITIAL_STATE],
     actions: STUDIO_ACTIONS,
-    step: (state, action) => stepStudioState(state, action, maxDuration, rewindWindow),
+    step: (state, action) => stepStudioState(state, action, maxDuration),
     serialize: serializeStudioState,
     invariants: STUDIO_INVARIANTS,
     reachabilityGoals: STUDIO_REACHABILITY_GOALS,

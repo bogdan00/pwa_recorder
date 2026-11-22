@@ -419,8 +419,8 @@ export class RecordingEngine {
 
     const durationMs = this.timeline.getDurationMs();
     if (this.playheadMs >= durationMs - 40) {
-      // If playhead is already at the very end, jump back 5s so tapping Play previews the last bit!
-      this.playheadMs = Math.max(0, durationMs - 5000);
+      // If playhead is already at the very end, restart preview from the beginning (00:00.0)
+      this.playheadMs = 0;
     }
 
     const ctx = await this.ensureAudioContext(this.timeline.sampleRate);

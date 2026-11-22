@@ -18,7 +18,9 @@ While reading aloud, the parent pauses, drags the waveform directly with touch/p
    - Tap **End** to jump back to full duration, and `-5s` / `+5s` buttons to step cleanly within `[0, duration]`.
 
 2. **Preview Playback While Paused**
-   - Scrub back earlier than the end and tap **Play** in the paused review bar.
+   - While paused at the end of a take (without scrubbing), tap **Play** in the paused review bar.
+   - **Expected:** Status switches to `PLAYING` and preview playback starts from the beginning (`00:00.0`); tapping **Pause** stops preview cleanly back to `PAUSED`.
+   - Scrub back earlier than the end and tap **Play** again.
    - **Expected:** Status switches to `PLAYING`, Web Audio preview plays from the scrubbed playhead and advances the timer; tapping **Pause** stops preview cleanly back to `PAUSED`.
 
 3. **Safe Default Continue vs Contextual Punch-In ("Re-record from MM:SS")**

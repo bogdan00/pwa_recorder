@@ -26,6 +26,24 @@ test.describe('CUJ-03: Paused Waveform Drag-to-Scrub, Preview Playback, Punch-In
     );
     expect(totalBeforeScrub).toBeGreaterThanOrEqual(1.8);
 
+    // 0. Tapping Play while paused at the end restarts preview from the beginning (00:00.0)
+    await page.locator('#studio-preview-play-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('PLAYING');
+    await waitForStudioTimer(
+      page,
+      (sec) => sec < totalBeforeScrub - 0.8,
+      'paused-at-end preview playback should restart from 00:00.0',
+    );
+    await page.locator('#studio-preview-play-btn').click();
+    await expect(page.locator('.studio-status-pill')).toHaveText('PAUSED');
+    // Return playhead to the end before testing waveform drag-scrub
+    await page.getByLabel('Jump to end of recording').click();
+    await waitForStudioTimer(
+      page,
+      (sec) => sec >= totalBeforeScrub - 0.1,
+      'End button should return playhead to full duration',
+    );
+
     // 1. Toggle waveform zoom 1× -> 2×
     const zoomBtn = page.getByRole('button', { name: /Waveform zoom/i });
     await expect(zoomBtn).toHaveText('1×');

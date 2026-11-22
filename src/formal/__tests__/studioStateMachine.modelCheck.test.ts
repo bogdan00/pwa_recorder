@@ -234,7 +234,7 @@ describe('Tier 1 Formal Proofs: Recording Studio State Machine & Automated Confo
   });
 
   it('exhaustively BFS model-checks 100% of reachable Studio states against all shared safety invariants and reachability goals', () => {
-    const lts = createStudioLts(3, 5);
+    const lts = createStudioLts(3);
     const cert = modelCheck(lts);
 
     expect(cert.statesExplored).toBeGreaterThan(25);
@@ -243,9 +243,9 @@ describe('Tier 1 Formal Proofs: Recording Studio State Machine & Automated Confo
   });
 
   it('automatically verifies positive + negative conformance of real RecordingEngine across 100% of BFS-reachable states', async () => {
-    // Use maxDuration = 2 and rewindWindow = 5 (matching RecordingEngine's 5s rewind at 1 unit = 1s)
-    // so every single reachable state in the BFS graph is replayed in <300ms with 100% state coverage!
-    const lts = createStudioLts(2, 5);
+    // Use maxDuration = 2 so every single reachable state in the BFS graph is replayed
+    // in <300ms with 100% state coverage against real RecordingEngine!
+    const lts = createStudioLts(2);
     const cert = modelCheck(lts);
 
     const harness = installDeterministicAudioHarness();

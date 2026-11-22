@@ -249,8 +249,8 @@ describe('RecordingEngine.trimToPlayhead', () => {
     internals.timeline = timeline;
     internals.phase = 'recording';
 
-    // Exceed 2-second flush threshold to kick off an async IndexedDB draft write
-    internals.ingestCapturedChunk(new Float32Array(2000).fill(0.3), [0.3], 0.3);
+    // Exceed 5-second flush threshold to kick off an async IndexedDB draft write
+    internals.ingestCapturedChunk(new Float32Array(5000).fill(0.3), [0.3], 0.3);
 
     // Immediately discard before the background flush resolves
     await engine.discard();
@@ -258,5 +258,72 @@ describe('RecordingEngine.trimToPlayhead', () => {
     // Draft must remain deleted after the serialized queue drains
     const persisted = await getDraft('draft-discard-race');
     expect(persisted).toBeUndefined();
+  });
+
+  it('starts preview playback from 00:00.0 when paused at the end of a recording, and from the scrubbed position when scrubbed back', async () => {
+    const createdBuffers: Array<{ length: number; sampleRate: number }> = [];
+
+    class MockAudioContext {
+      sampleRate = 1000;
+      state: AudioContextState = 'running';
+      currentTime = 0;
+      destination = { kind: 'destination' };
+      resume = vi.fn().mockResolvedValue(undefined);
+      close = vi.fn().mockResolvedValue(undefined);
+      createBuffer = vi.fn((channels: number, length: number, sampleRate: number) => {
+        createdBuffers.push({ length, sampleRate });
+        return {
+          numberOfChannels: channels,
+          length,
+          sampleRate,
+          copyToChannel: vi.fn(),
+        };
+      });
+      createBufferSource = vi.fn(() => ({
+        buffer: null as unknown,
+        onended: null as (() => void) | null,
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn(),
+      }));
+    }
+
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    try {
+      const engine = new RecordingEngine('book-preview-from-start');
+      // 6.5 seconds of recorded audio (> 5s so any 5s rewind heuristic would land at 1.5s, NOT 0s)
+      const timeline = new PcmTimeline(1000, 1);
+      timeline.appendFrames(new Float32Array(6500).fill(0.25), []);
+
+      const internals = engine as unknown as {
+        draftId: string;
+        timeline: PcmTimeline;
+        phase: string;
+        playheadMs: number;
+      };
+      internals.draftId = 'draft-preview-from-start';
+      internals.timeline = timeline;
+      internals.phase = 'paused';
+      internals.playheadMs = 6500;
+
+      // 1. Tapping Play while paused at the end must restart at 0 ms (full 6500 frames)
+      await engine.playPreviewFromPlayhead();
+      expect(engine.getSnapshot().phase).toBe('playing');
+      expect(engine.getSnapshot().playheadMs).toBe(0);
+      expect(createdBuffers[0]).toEqual({ length: 6500, sampleRate: 1000 });
+
+      // 2. Scrubbing back to 2500 ms and tapping Play must play from 2500 ms (4000 remaining frames)
+      engine.pausePreview();
+      engine.seekToMs(2500);
+      await engine.playPreviewFromPlayhead();
+      expect(engine.getSnapshot().phase).toBe('playing');
+      expect(engine.getSnapshot().playheadMs).toBe(2500);
+      expect(createdBuffers[1]).toEqual({ length: 4000, sampleRate: 1000 });
+
+      await engine.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
