@@ -89,13 +89,13 @@ describe('trackProcessorCapture', () => {
     let closedCount = 0;
 
     // 4 frames of 480 samples (10 ms each @ 48 kHz) -> 2 batched 20ms chunks
-    // Frame 2 intentionally jumps by +15 ms (15000 us gap) to verify OS HAL gap detection.
+    // Frames 2 & 3 stay shifted forward by +40 ms (60,000 us & 70,000 us vs expected 20,000 & 30,000) to verify sustained OS HAL drop detection.
     // All frames carry (L=0.3, R=0.0) to prove mono plane-0 discrete extraction preserves full unity gain!
     const framesQueue: AudioDataLike[] = [
       makeFakeAudioData({ timestampUs: 0, plane0Value: 0.3, plane1Value: 0, onClose: () => { closedCount += 1; } }),
       makeFakeAudioData({ timestampUs: 10_000, plane0Value: 0.3, plane1Value: 0, onClose: () => { closedCount += 1; } }),
-      makeFakeAudioData({ timestampUs: 35_000, plane0Value: 0.3, plane1Value: 0, onClose: () => { closedCount += 1; } }),
-      makeFakeAudioData({ timestampUs: 45_000, plane0Value: 0.3, plane1Value: 0, onClose: () => { closedCount += 1; } }),
+      makeFakeAudioData({ timestampUs: 60_000, plane0Value: 0.3, plane1Value: 0, onClose: () => { closedCount += 1; } }),
+      makeFakeAudioData({ timestampUs: 70_000, plane0Value: 0.3, plane1Value: 0, onClose: () => { closedCount += 1; } }),
     ];
 
     class MockMSTP {
@@ -159,8 +159,51 @@ describe('trackProcessorCapture', () => {
     expect(stats.sampleRate).toBe(48000);
     expect(stats.framesReceived).toBe(1920);
     expect(stats.timestampGapCount).toBe(1);
-    expect(stats.maxTimestampGapMs).toBeCloseTo(15, 1);
+    expect(stats.maxTimestampGapMs).toBeCloseTo(40, 1);
 
     teardownTrackProcessorCapture(handle);
+  });
+
+  it('TimestampContinuityTracker ignores Android 20 ms DMA bursts, transient 80 ms callback spikes, and 30-min crystal skew while catching genuine sustained >= 40 ms drops without cascading', async () => {
+    const { TimestampContinuityTracker } = await import('../trackProcessorCapture');
+
+    // 1. Android Chrome 20 ms DMA bursts split into back-to-back 10 ms AudioData frames
+    const burstTracker = new TimestampContinuityTracker();
+    let burstGaps = 0;
+    for (let i = 0; i < 1000; i += 1) {
+      const pairBaseUs = Math.floor(i / 2) * 20_000;
+      const burstJitterUs = i % 2 === 1 ? 200 : (i % 6 === 0 ? 2200 : 0);
+      const res = burstTracker.observe(pairBaseUs + burstJitterUs, 10_000);
+      if (res.isGap) burstGaps += 1;
+    }
+    expect(burstGaps).toBe(0);
+
+    // 2. Single-frame 80 ms OS scheduling hiccup (no audio lost) -> 0 false gaps
+    const spikeTracker = new TimestampContinuityTracker();
+    let spikeGaps = 0;
+    for (let i = 0; i < 30; i += 1) {
+      const spikeUs = i === 15 ? 80_000 : 0;
+      if (spikeTracker.observe(i * 10_000 + spikeUs, 10_000).isGap) spikeGaps += 1;
+    }
+    expect(spikeGaps).toBe(0);
+
+    // 3. 30-minute take (180,000 frames) with +200 ppm ADC-vs-CPU crystal oscillator skew
+    const skewTracker = new TimestampContinuityTracker();
+    let skewGaps = 0;
+    for (let i = 0; i < 180_000; i += 1) {
+      const tsUs = i * 10_002;
+      if (skewTracker.observe(tsUs, 10_000).isGap) skewGaps += 1;
+    }
+    expect(skewGaps).toBe(0);
+
+    // 4. Genuine sustained +40 ms OS HAL drop -> exact 1 gap, immediately re-locked (0 cascading duplicates)
+    const dropTracker = new TimestampContinuityTracker();
+    const detected: number[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      const dropOffsetUs = i >= 10 ? 40_000 : 0;
+      const res = dropTracker.observe(i * 10_000 + dropOffsetUs, 10_000);
+      if (res.isGap) detected.push(res.gapMs);
+    }
+    expect(detected).toEqual([40]);
   });
 });

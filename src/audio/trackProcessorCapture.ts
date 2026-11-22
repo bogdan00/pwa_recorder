@@ -29,7 +29,82 @@ type MediaStreamTrackProcessorCtor = new (init: {
 }) => MediaStreamTrackProcessorLike;
 
 export const TRACK_PROCESSOR_MAX_BUFFER_SIZE = 100; // 100 x 10ms = 1,000 ms lossless jitter queue
-const TIMESTAMP_GAP_THRESHOLD_US = 2000; // > 2 ms OS HAL timestamp discontinuity
+/**
+ * Positive cumulative clock-drift threshold (35 ms) beyond EMA-tracked wall-clock offset,
+ * requiring 2 consecutive frames to confirm a permanent timeline shift.
+ *
+ * Why 2 consecutive frames + 35 ms?
+ * - A transient OS callback scheduling hiccup (1 late frame followed by on-time frames)
+ *   loses ZERO audio and resets on the next frame -> 0 false positives.
+ * - Android Chrome 20 ms hardware DMA bursts split into back-to-back 10 ms AudioData frames
+ *   with ±12 ms wall-clock jitter stay strictly inside the band -> 0 false positives.
+ * - A genuine OS HAL audio drop permanently shifts ALL subsequent frames forward by +Δt,
+ *   so frame k+1 immediately confirms the drop, emits 1 exact gap, and re-locks the offset.
+ */
+export const TIMESTAMP_DRIFT_GAP_THRESHOLD_US = 35_000;
+export const TIMESTAMP_OFFSET_EMA_ALPHA = 0.02; // ~0.5 s time constant @ 10 ms frames
+
+export class TimestampContinuityTracker {
+  private initialized = false;
+  private emittedDurationUs = 0;
+  private clockOffsetUs = 0;
+  private consecutivePositiveDrifts = 0;
+  private consecutiveNegativeDrifts = 0;
+
+  observe(
+    timestampUs: number,
+    durationUs: number,
+  ): { isGap: boolean; gapMs: number } {
+    if (
+      !Number.isFinite(timestampUs) ||
+      !Number.isFinite(durationUs) ||
+      durationUs <= 0
+    ) {
+      return { isGap: false, gapMs: 0 };
+    }
+
+    const instantOffsetUs = timestampUs - this.emittedDurationUs;
+    this.emittedDurationUs += durationUs;
+
+    if (!this.initialized) {
+      this.initialized = true;
+      this.clockOffsetUs = instantOffsetUs;
+      return { isGap: false, gapMs: 0 };
+    }
+
+    const driftUs = instantOffsetUs - this.clockOffsetUs;
+
+    if (driftUs > TIMESTAMP_DRIFT_GAP_THRESHOLD_US) {
+      this.consecutiveNegativeDrifts = 0;
+      this.consecutivePositiveDrifts += 1;
+      if (this.consecutivePositiveDrifts >= 2) {
+        // Confirmed permanent positive timeline shift (genuine dropped audio):
+        // re-lock immediately so subsequent normal frames never cascade into duplicate alerts.
+        this.clockOffsetUs = instantOffsetUs;
+        this.consecutivePositiveDrifts = 0;
+        return { isGap: true, gapMs: Math.round((driftUs / 1000) * 10) / 10 };
+      }
+      return { isGap: false, gapMs: 0 };
+    }
+
+    if (driftUs < -TIMESTAMP_DRIFT_GAP_THRESHOLD_US) {
+      this.consecutivePositiveDrifts = 0;
+      this.consecutiveNegativeDrifts += 1;
+      if (this.consecutiveNegativeDrifts >= 2) {
+        // Sustained backward clock adjustment: re-lock cleanly without false drop.
+        this.clockOffsetUs = instantOffsetUs;
+        this.consecutiveNegativeDrifts = 0;
+      }
+      return { isGap: false, gapMs: 0 };
+    }
+
+    // Normal DMA burst jitter or smooth ADC-vs-CPU crystal skew: gently slew baseline.
+    this.consecutivePositiveDrifts = 0;
+    this.consecutiveNegativeDrifts = 0;
+    this.clockOffsetUs += driftUs * TIMESTAMP_OFFSET_EMA_ALPHA;
+    return { isGap: false, gapMs: 0 };
+  }
+}
 
 export interface TrackProcessorCaptureStats {
   sampleRate: number;
@@ -253,7 +328,12 @@ export function attachTrackProcessorCapture(
 
   // Continuity & health stats
   let framesReceived = 0;
-  let expectedNextTimestampUs = -1;
+  const continuityTracker = new TimestampContinuityTracker();
+  let lastDiscardedFrames =
+    typeof processor.discardedFrames === 'number' &&
+    Number.isFinite(processor.discardedFrames)
+      ? processor.discardedFrames
+      : 0;
   let timestampGapCount = 0;
   let pendingTimestampGaps = 0;
   let maxTimestampGapMs = 0;
@@ -345,26 +425,34 @@ export function attachTrackProcessorCapture(
 
           framesReceived += nFrames;
 
-          // Check monotonic OS mic HAL timestamp continuity
+          // 1. Authoritative ring-buffer overflow check (MediaStreamTrackProcessor.discardedFrames)
           if (
-            Number.isFinite(audioData.timestamp) &&
-            Number.isFinite(audioData.duration) &&
-            audioData.duration > 0
+            typeof processor.discardedFrames === 'number' &&
+            Number.isFinite(processor.discardedFrames) &&
+            processor.discardedFrames > lastDiscardedFrames
           ) {
-            if (expectedNextTimestampUs >= 0) {
-              const deltaUs = Math.abs(
-                audioData.timestamp - expectedNextTimestampUs,
-              );
-              if (deltaUs > TIMESTAMP_GAP_THRESHOLD_US) {
-                timestampGapCount += 1;
-                pendingTimestampGaps += 1;
-                const gapMs = Math.round((deltaUs / 1000) * 10) / 10;
-                if (gapMs > maxTimestampGapMs) {
-                  maxTimestampGapMs = gapMs;
-                }
-              }
+            const deltaDiscarded = Math.floor(
+              processor.discardedFrames - lastDiscardedFrames,
+            );
+            lastDiscardedFrames = processor.discardedFrames;
+            if (deltaDiscarded > 0) {
+              timestampGapCount += deltaDiscarded;
+              pendingTimestampGaps += deltaDiscarded;
             }
-            expectedNextTimestampUs = audioData.timestamp + audioData.duration;
+          }
+
+          // 2. Cumulative EMA-tracked timestamp continuity (immune to Android 20 ms DMA bursts,
+          //    ±12 ms callback jitter, and long-take crystal skew; catches real > 25 ms drops)
+          const gapCheck = continuityTracker.observe(
+            audioData.timestamp,
+            audioData.duration,
+          );
+          if (gapCheck.isGap) {
+            timestampGapCount += 1;
+            pendingTimestampGaps += 1;
+            if (gapCheck.gapMs > maxTimestampGapMs) {
+              maxTimestampGapMs = gapCheck.gapMs;
+            }
           }
 
           if (stopped || isAborted() || !isActive()) {

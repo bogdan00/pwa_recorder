@@ -27,6 +27,10 @@ import {
   MAX_GLITCH_LOG_ENTRIES,
   type QualitySeverity,
 } from '../../audio/recordingQualityAnalyzer';
+import {
+  TIMESTAMP_DRIFT_GAP_THRESHOLD_US,
+  TIMESTAMP_OFFSET_EMA_ALPHA,
+} from '../../audio/trackProcessorCapture';
 
 export const AUDIO_DSP_CONTRACT = {
   softClipThreshold: SOFT_CLIP_THRESHOLD,
@@ -38,6 +42,8 @@ export const AUDIO_DSP_CONTRACT = {
   agcPeakCeiling: SOFTWARE_AGC_PEAK_CEILING,
   agcCompReductionTriggerDb: SOFTWARE_AGC_COMP_REDUCTION_TRIGGER_DB,
   maxGlitchLogEntries: MAX_GLITCH_LOG_ENTRIES,
+  timestampDriftGapThresholdUs: TIMESTAMP_DRIFT_GAP_THRESHOLD_US,
+  timestampOffsetEmaAlpha: TIMESTAMP_OFFSET_EMA_ALPHA,
 } as const;
 
 export const QUALITY_SEVERITY_DOMAIN: readonly QualitySeverity[] = [

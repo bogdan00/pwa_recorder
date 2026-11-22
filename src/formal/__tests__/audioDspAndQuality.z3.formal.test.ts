@@ -214,4 +214,65 @@ describe('Tier 2 Z3 SMT Proofs: Software AGC, Soft-Limiter & Quality Monitor Lat
     );
     expect(res.status).toBe('proved');
   });
+
+  it('proves ∀ offset, instant1, instant2 ∈ ℝ: TimestampContinuityTracker is immune to ±35ms jitter and 1-frame spikes, contracts EMA offset, and confirms + re-locks sustained >35ms drops with zero cascades', async () => {
+    const res = await proveTheorem(
+      'TimestampContinuityTracker 2-Frame Sustained Drop & Jitter Immunity ∀ offset, instant1, instant2 ∈ ℝ',
+      z3,
+      (ctx) => {
+        const THRESH = ctx.Real.val(AUDIO_DSP_CONTRACT.timestampDriftGapThresholdUs);
+        const ALPHA = ctx.Real.val(AUDIO_DSP_CONTRACT.timestampOffsetEmaAlpha);
+        const offset = ctx.Real.const('offset');
+        const instant1 = ctx.Real.const('instant1');
+        const instant2 = ctx.Real.const('instant2');
+
+        // Step 1 starting from steady state (consecutivePos = 0, consecutiveNeg = 0)
+        const d1 = instant1.sub(offset);
+        const pos1 = d1.gt(THRESH);
+        const neg1 = d1.lt(THRESH.neg());
+        const gap1 = ctx.Bool.val(false); // Requires 2 consecutive frames -> 1-frame spike NEVER fires!
+        const offset1 = ctx.If(ctx.Or(pos1, neg1), offset, offset.add(d1.mul(ALPHA)));
+
+        // Step 2
+        const d2 = instant2.sub(offset1);
+        const pos2 = d2.gt(THRESH);
+        const gap2 = ctx.And(pos1, pos2);
+        const offset2 = ctx.If(
+          gap2,
+          instant2,
+          ctx.If(
+            ctx.And(neg1, d2.lt(THRESH.neg())),
+            instant2,
+            ctx.If(ctx.Or(pos2, d2.lt(THRESH.neg())), offset1, offset1.add(d2.mul(ALPHA))),
+          ),
+        );
+
+        // Step 3 nominal continuation after a confirmed drop (instant3 === instant2)
+        const d3AfterDrop = instant2.sub(offset2);
+
+        return {
+          premises: [],
+          conclusion: ctx.And(
+            // 1. Single-frame spike (even +1000ms) followed by nominal frame NEVER fires a gap
+            ctx.Not(gap1),
+            ctx.Implies(
+              ctx.And(d1.gt(THRESH), instant2.sub(offset).le(THRESH)),
+              ctx.Not(gap2),
+            ),
+            // 2. Bounded jitter within [-THRESH, +THRESH] NEVER fires a gap and contracts EMA
+            ctx.Implies(
+              ctx.And(d1.ge(0), d1.le(THRESH)),
+              ctx.And(offset1.ge(offset), offset1.le(instant1)),
+            ),
+            // 3. Sustained > +35ms drop across 2 consecutive frames ALWAYS confirms and re-locks cleanly (d3 === 0)
+            ctx.Implies(
+              ctx.And(d1.gt(THRESH), instant2.sub(offset).gt(THRESH)),
+              ctx.And(gap2, offset2.eq(instant2), d3AfterDrop.eq(0)),
+            ),
+          ),
+        };
+      },
+    );
+    expect(res.status).toBe('proved');
+  });
 });
