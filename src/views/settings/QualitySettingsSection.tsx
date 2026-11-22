@@ -385,37 +385,28 @@ export const QualitySettingsSection: React.FC<QualitySettingsSectionProps> = ({
                   label="Input Gain Boost"
                   htmlFor="input-gain-slider"
                   help={SETTINGS_HELP['input-gain']}
-                  right={
-                    <div
-                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                    >
-                      <span
-                        className="font-mono"
-                        data-testid="input-gain-readout"
-                        style={{ fontSize: 12.5, color: 'var(--accent-amber)' }}
-                      >
-                        {quality.inputGain.toFixed(2)}× (
-                        {formatGainDb(quality.inputGain)})
-                      </span>
-                      {Math.abs(quality.inputGain - 1) > 0.01 && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          style={{
-                            minHeight: 26,
-                            padding: '2px 8px',
-                            fontSize: 11.5,
-                          }}
-                          onClick={() => updateQuality({ inputGain: 1.0 })}
-                        >
-                          Reset
-                        </button>
-                      )}
-                    </div>
-                  }
                 />
 
                 <div className="gain-guide-card" data-testid="gain-guide-card">
+                  <div className="gain-readout-row">
+                    <span
+                      className="gain-readout font-mono"
+                      data-testid="input-gain-readout"
+                    >
+                      {quality.inputGain.toFixed(2)}× (
+                      {formatGainDb(quality.inputGain)})
+                    </span>
+                    {Math.abs(quality.inputGain - 1) > 0.01 && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm gain-reset-btn"
+                        onClick={() => updateQuality({ inputGain: 1.0 })}
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+
                   {/* Animated visual cue: left = quieter, right = louder */}
                   <div
                     className={`gain-viz gain-viz--${gainGuide.tone}`}

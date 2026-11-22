@@ -206,6 +206,63 @@ test.describe('CUJ-07: Studio Audio Quality (Presets, Bitrate, Sample Rate, WAV 
     await expect(page.getByTestId('gain-guidance-text')).toContainText(/Heavy boost/i);
     await expect(page.getByTestId('quality-preset-badge')).toHaveText('Custom');
 
+    // Verify neither "Input Gain Boost" + (?) nor "7.94× (+18.0 dB)" / "15.85× (+24.0 dB)" + Reset wraps onto 2 rows
+    const assertSingleLineGainLayout = async () => {
+      const metrics = await page.evaluate(() => {
+        const countLines = (el: Element): number => {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const rects = Array.from(range.getClientRects()).filter(
+            (r) => r.width > 0.5 && r.height > 0.5,
+          );
+          const ys: number[] = [];
+          for (const r of rects) {
+            if (!ys.some((y) => Math.abs(y - r.top) < 3)) ys.push(r.top);
+          }
+          return ys.length;
+        };
+
+        const label = document.querySelector('label[for="input-gain-slider"]');
+        const helpBtn = document.querySelector('[data-testid="help-btn-input-gain"]');
+        const readout = document.querySelector('[data-testid="input-gain-readout"]');
+        const resetBtn = document.querySelector('.gain-reset-btn');
+        if (!label || !helpBtn || !readout || !resetBtn) return null;
+
+        const labelRect = label.getBoundingClientRect();
+        const helpRect = helpBtn.getBoundingClientRect();
+        const readoutRect = readout.getBoundingClientRect();
+        const resetRect = resetBtn.getBoundingClientRect();
+
+        return {
+          labelLines: countLines(label),
+          readoutLines: countLines(readout),
+          labelHelpMidDiff: Math.abs(
+            labelRect.top + labelRect.height / 2 - (helpRect.top + helpRect.height / 2),
+          ),
+          readoutResetMidDiff: Math.abs(
+            readoutRect.top + readoutRect.height / 2 - (resetRect.top + resetRect.height / 2),
+          ),
+          readoutResetGap: resetRect.left - readoutRect.right,
+        };
+      });
+
+      expect(metrics).not.toBeNull();
+      expect(metrics!.labelLines).toBe(1);
+      expect(metrics!.readoutLines).toBe(1);
+      expect(metrics!.labelHelpMidDiff).toBeLessThanOrEqual(4);
+      expect(metrics!.readoutResetMidDiff).toBeLessThanOrEqual(4);
+      expect(metrics!.readoutResetGap).toBeGreaterThanOrEqual(4);
+    };
+
+    await assertSingleLineGainLayout();
+
+    // Also verify widest possible readout (+24.0 dB -> 15.85× (+24.0 dB)) stays single-line, then restore +18 dB
+    await page.getByRole('button', { name: /Set input gain to \+24 dB/i }).click();
+    await expect(page.getByTestId('input-gain-readout')).toContainText(/\+24\.0 dB/);
+    await assertSingleLineGainLayout();
+    await page.getByRole('button', { name: /Set input gain to \+18 dB/i }).click();
+    await expect(page.getByTestId('input-gain-readout')).toContainText(/\+18\.0 dB/);
+
     await page.getByLabel('Close settings').click();
     await page.reload();
 

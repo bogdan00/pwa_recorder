@@ -143,7 +143,7 @@ export const FieldHeaderWithHelp: React.FC<FieldHeaderWithHelpProps> = ({
             />
           )}
         </div>
-        {right}
+        {right && <div className="field-header-right">{right}</div>}
       </div>
       {help && tip.open && (
         <InfoTipPanel
