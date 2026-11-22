@@ -4,9 +4,14 @@
  *
  * Launches an isolated headless Chromium instance against the production `dist/` bundle
  * served via `vite preview` at `/pwa_recorder/` (390x844 @ 3x mobile DPR, fed a real
- * 440 Hz sine PCM stream via `--use-file-for-fake-audio-capture`) and enforces strict
- * frame-pacing, CPU, DOM-churn, DPR-cap, opt-in keepalive, AudioWorklet, blackout-pause,
- * and zero-dropout PCM integrity budgets across both 1x CPU and 4x CPU-throttled profiles.
+ * 440 Hz sine PCM stream via `--use-file-for-fake-audio-capture`) and:
+ *   1. Verifies strict frame-pacing, CPU, DOM-churn, DPR-cap, opt-in keepalive,
+ *      AudioWorklet, OLED Blackout rAF-pause, and zero-dropout PCM integrity budgets
+ *      across both 1x CPU and 4x single-vCPU throttled profiles.
+ *   2. Runs a fast live Regression-Detection Canary that injects the exact pre-fix bugs
+ *      (60Hz CSS `pulse-ring` RecalcStyle animation + unconditional looping `<audio>`
+ *      keepalive) into a throwaway page and proves this gate catches and fails on them.
+ *   3. Prints a clear Pre-Submit Scorecard (and writes it to `$GITHUB_STEP_SUMMARY` in CI).
  */
 
 import { chromium } from '@playwright/test';
@@ -16,6 +21,13 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  buildScorecardRows,
+  evaluateProfileResults,
+  formatScorecardMarkdown,
+  formatScorecardText,
+  PERF_PROFILES,
+} from './perfBudgets.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -136,44 +148,48 @@ function isAllowedLocalUrl(rawUrl) {
   }
 }
 
-function startPreviewServer(port) {
-  return new Promise((resolve, reject) => {
-    const viteBin = path.join(REPO_ROOT, 'node_modules', '.bin', 'vite');
-    const child = spawn(
-      viteBin,
-      ['preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
-      {
-        cwd: REPO_ROOT,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
+/**
+ * Starts `vite preview` and waits reactively by polling HTTP 200 on `baseUrl`
+ * (immune to non-TTY stdout buffering on GitHub Actions CI runners).
+ */
+async function startPreviewServer(port, baseUrl) {
+  const viteBin = path.join(REPO_ROOT, 'node_modules', '.bin', 'vite');
+  const child = spawn(
+    viteBin,
+    ['preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
+    {
+      cwd: REPO_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
 
-    let stderrBuf = '';
-    const deadline = setTimeout(() => {
-      child.kill('SIGTERM');
-      reject(new Error(`Timed out starting vite preview on port ${port}.\n${stderrBuf}`));
-    }, 20_000);
-
-    const onReady = (chunk) => {
-      const text = chunk.toString();
-      if (text.includes(`:${port}`) || text.includes('Local:')) {
-        clearTimeout(deadline);
-        child.stdout.off('data', onReady);
-        resolve(child);
-      }
-    };
-
-    child.stdout.on('data', onReady);
-    child.stderr.on('data', (d) => {
-      stderrBuf += d.toString();
-    });
-    child.on('exit', (code) => {
-      if (code !== null && code !== 0) {
-        clearTimeout(deadline);
-        reject(new Error(`vite preview exited early with code ${code}.\n${stderrBuf}`));
-      }
-    });
+  let stderrBuf = '';
+  let exitCode = null;
+  child.stderr.on('data', (d) => {
+    stderrBuf += d.toString();
   });
+  child.on('exit', (code) => {
+    exitCode = code;
+  });
+
+  const deadline = Date.now() + 25_000;
+  while (Date.now() < deadline) {
+    if (exitCode !== null) {
+      throw new Error(`vite preview exited early with code ${exitCode}.\n${stderrBuf}`);
+    }
+    try {
+      const resp = await fetch(baseUrl);
+      if (resp.ok) {
+        return child;
+      }
+    } catch {
+      // Server still binding; retry shortly
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  child.kill('SIGTERM');
+  throw new Error(`Timed out waiting for vite preview HTTP 200 at ${baseUrl}.\n${stderrBuf}`);
 }
 
 function percentile(sortedArr, p) {
@@ -193,24 +209,7 @@ function round1(n) {
   return Math.round(n * 10) / 10;
 }
 
-async function runProfile({ baseUrl, wavPath, profile }) {
-  const {
-    name,
-    cpuThrottle,
-    measureSeconds,
-    checkBlackoutPause,
-    budgets,
-  } = profile;
-
-  const browser = await chromium.launch(resolveLaunchOptions(wavPath, cpuThrottle));
-  const context = await browser.newContext({
-    viewport: { width: 390, height: 844 },
-    deviceScaleFactor: 3, // High-DPI phone viewport to enforce DPR <= 2 cap
-    isMobile: true,
-    hasTouch: true,
-    permissions: ['microphone'],
-  });
-
+async function attachNetworkFence(context) {
   const unexpectedExternalUrls = [];
   await context.route('**/*', async (route) => {
     const url = route.request().url();
@@ -249,15 +248,10 @@ async function runProfile({ baseUrl, wavPath, profile }) {
     unexpectedExternalUrls.push(`${route.request().method()} ${url}`);
     await route.abort('blockedbyclient');
   });
+  return unexpectedExternalUrls;
+}
 
-  const page = await context.newPage();
-  const pageErrors = [];
-  const consoleErrors = [];
-  page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') consoleErrors.push(msg.text());
-  });
-
+async function attachProbeInitScript(page) {
   await page.addInitScript(() => {
     window.__STORYTAPE_AUTH_BROKER_URL__ = '';
     window.__perfProbe = {
@@ -345,6 +339,30 @@ async function runProfile({ baseUrl, wavPath, profile }) {
       window.AudioWorkletNode.prototype = OrigAWN.prototype;
     }
   });
+}
+
+async function runProfile({ baseUrl, wavPath, profile }) {
+  const { name, cpuThrottle, measureSeconds, checkBlackoutPause, budgets } = profile;
+
+  const browser = await chromium.launch(resolveLaunchOptions(wavPath, cpuThrottle));
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 3, // High-DPI phone viewport to enforce DPR <= 2 cap
+    isMobile: true,
+    hasTouch: true,
+    permissions: ['microphone'],
+  });
+
+  const unexpectedExternalUrls = await attachNetworkFence(context);
+  const page = await context.newPage();
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+
+  await attachProbeInitScript(page);
 
   const cdp = await context.newCDPSession(page);
   await cdp.send('Performance.enable');
@@ -399,8 +417,6 @@ async function runProfile({ baseUrl, wavPath, profile }) {
               windowChunks: window.__perfProbe.chunkCount - startChunkCount,
               canvasPixelWidth: canvas ? canvas.width : 0,
               canvasClientWidth: canvas ? canvas.clientWidth : 0,
-              timerText:
-                document.querySelector('[data-testid="studio-timer"]')?.textContent?.trim() || '',
             });
             return;
           }
@@ -445,7 +461,7 @@ async function runProfile({ baseUrl, wavPath, profile }) {
     await page.locator('#big-record-pause-btn').click();
     await page.locator('.studio-status-pill', { hasText: 'PAUSED' }).waitFor({ state: 'visible' });
 
-    // Wait for draft metadata & chunks to settle in IndexedDB and verify PCM continuity
+    // Read persisted PCM draft from IndexedDB and verify zero silent dropout runs
     const probeAndAudio = await page.evaluate(async () => {
       const readDraft = async () => {
         const db = await new Promise((resolve, reject) => {
@@ -471,7 +487,6 @@ async function runProfile({ baseUrl, wavPath, profile }) {
         }
       };
 
-      // Poll via rAF until paused draft flush finishes writing chunks
       let snapshot = await readDraft();
       const pollStart = performance.now();
       while (snapshot.chunks.length === 0 && performance.now() - pollStart < 3000) {
@@ -493,7 +508,6 @@ async function runProfile({ baseUrl, wavPath, profile }) {
       const sampleRate = drafts[0]?.sampleRate || 48000;
       const recordedDurationSec = merged.length / sampleRate;
 
-      // Inspect steady interior PCM (excluding initial startup & final 15ms pause fade-out)
       const trimStart = Math.min(Math.floor(sampleRate * 0.15), merged.length);
       const trimEnd = Math.max(trimStart, merged.length - Math.floor(sampleRate * 0.05));
 
@@ -519,7 +533,6 @@ async function runProfile({ baseUrl, wavPath, profile }) {
         probe: window.__perfProbe,
         sampleRate,
         recordedDurationSec,
-        chunkRecords: chunks.length,
         zeroRuns,
         maxZeroRun,
         maxAbs,
@@ -531,39 +544,26 @@ async function runProfile({ baseUrl, wavPath, profile }) {
     const elapsedSec = windowResult.elapsedMs / 1000;
 
     const sortedRaf = [...windowResult.rafDeltas].sort((a, b) => a - b);
-    const fps = windowResult.rafDeltas.length / elapsedSec;
-    const p50FrameMs = percentile(sortedRaf, 0.5);
-    const p95FrameMs = percentile(sortedRaf, 0.95);
-    const maxFrameMs = percentile(sortedRaf, 1);
-    const severeStalls = windowResult.rafDeltas.filter((d) => d > 50).length;
-
     const sortedChunks = [...probeAndAudio.probe.chunkIntervals].sort((a, b) => a - b);
-    const meanChunkIntervalMs = mean(sortedChunks);
-    const maxChunkIntervalMs = percentile(sortedChunks, 1);
-
-    const scriptMsPerSec = ((m2.ScriptDuration - m1.ScriptDuration) * 1000) / elapsedSec;
-    const taskMsPerSec = ((m2.TaskDuration - m1.TaskDuration) * 1000) / elapsedSec;
-    const recalcStylePerSec = (m2.RecalcStyleCount - m1.RecalcStyleCount) / elapsedSec;
-    const layoutPerSec = (m2.LayoutCount - m1.LayoutCount) / elapsedSec;
 
     const summary = {
       name,
       cpuThrottle,
-      fps: round1(fps),
-      p50FrameMs: round1(p50FrameMs),
-      p95FrameMs: round1(p95FrameMs),
-      maxFrameMs: round1(maxFrameMs),
-      severeStalls,
-      scriptMsPerSec: round1(scriptMsPerSec),
-      taskMsPerSec: round1(taskMsPerSec),
-      recalcStylePerSec: round1(recalcStylePerSec),
-      layoutPerSec: round1(layoutPerSec),
+      fps: round1(windowResult.rafDeltas.length / elapsedSec),
+      p50FrameMs: round1(percentile(sortedRaf, 0.5)),
+      p95FrameMs: round1(percentile(sortedRaf, 0.95)),
+      maxFrameMs: round1(percentile(sortedRaf, 1)),
+      severeStalls: windowResult.rafDeltas.filter((d) => d > 50).length,
+      scriptMsPerSec: round1(((m2.ScriptDuration - m1.ScriptDuration) * 1000) / elapsedSec),
+      taskMsPerSec: round1(((m2.TaskDuration - m1.TaskDuration) * 1000) / elapsedSec),
+      recalcStylePerSec: round1((m2.RecalcStyleCount - m1.RecalcStyleCount) / elapsedSec),
+      layoutPerSec: round1((m2.LayoutCount - m1.LayoutCount) / elapsedSec),
       workletLoaded: probeAndAudio.probe.workletLoaded,
       scriptProcessorCreated: probeAndAudio.probe.scriptProcessorCreated,
       loopingAudioPlayCalls: probeAndAudio.probe.loopingAudioPlayCalls,
       windowChunks: windowResult.windowChunks,
-      meanChunkIntervalMs: round1(meanChunkIntervalMs),
-      maxChunkIntervalMs: round1(maxChunkIntervalMs),
+      meanChunkIntervalMs: round1(mean(sortedChunks)),
+      maxChunkIntervalMs: round1(percentile(sortedChunks, 1)),
       canvasPixelWidth: windowResult.canvasPixelWidth,
       canvasClientWidth: windowResult.canvasClientWidth,
       recordedDurationSec: round1(probeAndAudio.recordedDurationSec),
@@ -572,97 +572,138 @@ async function runProfile({ baseUrl, wavPath, profile }) {
       blackoutResult,
     };
 
-    const failures = [];
-    const check = (cond, msg) => {
-      if (!cond) failures.push(msg);
-    };
-
-    check(pageErrors.length === 0, `Uncaught pageerror(s): ${pageErrors.join(' | ')}`);
-    check(consoleErrors.length === 0, `console.error(s): ${consoleErrors.join(' | ')}`);
-    check(
-      unexpectedExternalUrls.length === 0,
-      `Unexpected external requests: ${unexpectedExternalUrls.join(', ')}`,
-    );
-    check(
-      summary.workletLoaded === 1 &&
-        summary.scriptProcessorCreated === 0 &&
-        probeAndAudio.probe.workletErrors.length === 0,
-      `Expected off-main-thread AudioWorklet (loaded=${summary.workletLoaded}, scriptProcessor=${summary.scriptProcessorCreated}, errors=${JSON.stringify(probeAndAudio.probe.workletErrors)})`,
-    );
-    check(
-      summary.loopingAudioPlayCalls === 0,
-      `Opt-in iOS looping <audio> keepalive must stay OFF by default (got ${summary.loopingAudioPlayCalls} play calls)`,
-    );
-    check(
-      summary.canvasClientWidth > 0 &&
-        summary.canvasPixelWidth <= Math.ceil(summary.canvasClientWidth * 2) + 2,
-      `Canvas DPR must stay capped <= 2 on 3x devices (pixelWidth=${summary.canvasPixelWidth}, clientWidth=${summary.canvasClientWidth})`,
-    );
-    check(
-      summary.fps >= budgets.minFps,
-      `FPS ${summary.fps} fell below budget >= ${budgets.minFps}`,
-    );
-    check(
-      summary.p95FrameMs <= budgets.maxP95FrameMs,
-      `p95 frame time ${summary.p95FrameMs}ms exceeded budget <= ${budgets.maxP95FrameMs}ms`,
-    );
-    check(
-      summary.severeStalls <= budgets.maxSevereStalls,
-      `Severe frame stalls (>50ms): ${summary.severeStalls} exceeded budget <= ${budgets.maxSevereStalls}`,
-    );
-    check(
-      summary.scriptMsPerSec <= budgets.maxScriptMsPerSec,
-      `Main-thread script CPU ${summary.scriptMsPerSec}ms/s exceeded budget <= ${budgets.maxScriptMsPerSec}ms/s`,
-    );
-    check(
-      summary.recalcStylePerSec <= budgets.maxRecalcStylePerSec,
-      `RecalcStyle rate ${summary.recalcStylePerSec}/s exceeded budget <= ${budgets.maxRecalcStylePerSec}/s (60Hz CSS animation regression?)`,
-    );
-    check(
-      summary.layoutPerSec <= budgets.maxLayoutPerSec,
-      `Layout rate ${summary.layoutPerSec}/s exceeded budget <= ${budgets.maxLayoutPerSec}/s`,
-    );
-    check(
-      summary.windowChunks >= budgets.minWindowChunks,
-      `Worklet chunks captured (${summary.windowChunks}) fell below >= ${budgets.minWindowChunks}`,
-    );
-    check(
-      summary.meanChunkIntervalMs >= 18 && summary.meanChunkIntervalMs <= 35,
-      `Mean worklet chunk interval ${summary.meanChunkIntervalMs}ms outside healthy [18, 35]ms range`,
-    );
-    check(
-      summary.maxChunkIntervalMs <= budgets.maxChunkIntervalMs,
-      `Max worklet chunk gap ${summary.maxChunkIntervalMs}ms exceeded budget <= ${budgets.maxChunkIntervalMs}ms`,
-    );
-    check(
-      summary.recordedDurationSec >= budgets.minRecordedSec,
-      `Persisted PCM duration ${summary.recordedDurationSec}s fell below >= ${budgets.minRecordedSec}s`,
-    );
-    check(
-      summary.zeroRuns === 0,
-      `Detected ${summary.zeroRuns} silent PCM dropout run(s) >= 32 samples (maxZeroRun=${probeAndAudio.maxZeroRun})`,
-    );
-    check(
-      summary.maxAbs >= 0.05,
-      `Captured PCM amplitude too low (maxAbs=${summary.maxAbs}); expected live sine audio`,
-    );
-
-    if (blackoutResult) {
-      check(
-        blackoutResult.chunkDelta >= 15,
-        `Blackout Mode interrupted audio capture (only ${blackoutResult.chunkDelta} chunks in 0.8s)`,
-      );
-      check(
-        blackoutResult.canvasRenderDelta <= 2,
-        `Blackout Mode failed to pause live waveform canvas rAF (${blackoutResult.canvasRenderDelta} frames rendered while blacked out)`,
-      );
-    }
+    const failures = evaluateProfileResults(summary, budgets, {
+      pageErrors,
+      consoleErrors,
+      unexpectedExternalUrls,
+      workletErrors: probeAndAudio.probe.workletErrors,
+      maxZeroRun: probeAndAudio.maxZeroRun,
+    });
 
     return { summary, failures };
   } finally {
     if (cpuThrottle > 1) {
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 }).catch(() => {});
     }
+    await cdp.detach().catch(() => {});
+    await browser.close();
+  }
+}
+
+/**
+ * Live Regression-Detection Canary (~2s):
+ * Injects the two exact pre-fix regressions into a throwaway headless Chrome page:
+ *   1) The 60Hz `.record-btn-halo { animation: pulse-ring ... }` CSS animation, and
+ *   2) Enabling `backgroundRecordingKeepalive: true` (unconditional looping `<audio>`).
+ * Proves that `evaluateProfileResults` catches and FAILS on BOTH regressions live.
+ */
+async function runRegressionCanary({ baseUrl, wavPath }) {
+  const browser = await chromium.launch(resolveLaunchOptions(wavPath, 1));
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 3,
+    isMobile: true,
+    hasTouch: true,
+    permissions: ['microphone'],
+  });
+  await attachNetworkFence(context);
+  const page = await context.newPage();
+  await attachProbeInitScript(page);
+
+  // Inject Bug #1 (unconditional looping keepalive enabled by default) via persisted settings
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      'storytape.settings.v1',
+      JSON.stringify({ backgroundRecordingKeepalive: true }),
+    );
+  });
+
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('Performance.enable');
+
+  try {
+    await page.goto(baseUrl, { waitUntil: 'networkidle' });
+    await page.locator('#empty-new-book-btn, #new-book-fab').first().click();
+    await page.locator('#book-title-input').fill('Regression Canary');
+    await page.locator('#save-book-btn').click();
+    await page.locator('#record-chapter-btn').click();
+    await page.getByTestId('recording-studio-view').waitFor({ state: 'visible' });
+
+    // Inject Bug #2 (60Hz main-thread RecalcStyle infinite pulse-ring animation)
+    await page.addStyleTag({
+      content: '.record-btn-halo { animation: pulse-ring 1.8s var(--ease-out) infinite !important; }',
+    });
+
+    await page.locator('#big-record-pause-btn').click();
+    await page.locator('.studio-status-pill', { hasText: 'REC' }).waitFor({ state: 'visible' });
+    await page.waitForFunction(() => window.__perfProbe.chunkCount >= 10, { timeout: 10_000 });
+
+    const mBefore = await cdp.send('Performance.getMetrics');
+    const elapsedMs = await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const start = performance.now();
+          const tick = (now) => {
+            if (now - start >= 1500) {
+              resolve(now - start);
+              return;
+            }
+            requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        }),
+    );
+    const mAfter = await cdp.send('Performance.getMetrics');
+    const probe = await page.evaluate(() => window.__perfProbe);
+
+    const m1 = Object.fromEntries(mBefore.metrics.map((m) => [m.name, m.value]));
+    const m2 = Object.fromEntries(mAfter.metrics.map((m) => [m.name, m.value]));
+    const recalcStylePerSec = round1(
+      (m2.RecalcStyleCount - m1.RecalcStyleCount) / (elapsedMs / 1000),
+    );
+
+    const syntheticSummary = {
+      fps: 60,
+      p95FrameMs: 16.7,
+      severeStalls: 0,
+      scriptMsPerSec: 30,
+      recalcStylePerSec,
+      layoutPerSec: 10,
+      workletLoaded: probe.workletLoaded,
+      scriptProcessorCreated: probe.scriptProcessorCreated,
+      loopingAudioPlayCalls: probe.loopingAudioPlayCalls,
+      windowChunks: 200,
+      meanChunkIntervalMs: 25,
+      maxChunkIntervalMs: 50,
+      canvasPixelWidth: 712,
+      canvasClientWidth: 356,
+      recordedDurationSec: 5,
+      zeroRuns: 0,
+      maxAbs: 0.2,
+    };
+
+    const caught = evaluateProfileResults(syntheticSummary, PERF_PROFILES[0].budgets);
+    const caughtRecalc = caught.some((f) => /RecalcStyle/i.test(f));
+    const caughtKeepalive = caught.some((f) => /keepalive/i.test(f));
+    const caughtCount = (caughtRecalc ? 1 : 0) + (caughtKeepalive ? 1 : 0);
+
+    return {
+      passed: caughtRecalc && caughtKeepalive,
+      caughtCount,
+      caughtRecalc,
+      caughtKeepalive,
+      recalcStylePerSec,
+      loopingAudioPlayCalls: probe.loopingAudioPlayCalls,
+      failures: [
+        ...(!caughtRecalc
+          ? [`Canary failed to catch injected 60Hz RecalcStyle animation (measured ${recalcStylePerSec}/s)`]
+          : []),
+        ...(!caughtKeepalive
+          ? [`Canary failed to catch injected looping keepalive <audio> (measured ${probe.loopingAudioPlayCalls} plays)`]
+          : []),
+      ],
+    };
+  } finally {
     await cdp.detach().catch(() => {});
     await browser.close();
   }
@@ -682,68 +723,31 @@ async function main() {
 
   const port = process.env.PERF_PORT ? Number(process.env.PERF_PORT) : await getFreePort();
   const baseUrl = `http://127.0.0.1:${port}/pwa_recorder/`;
-  const server = await startPreviewServer(port);
-
-  const profiles = [
-    {
-      name: 'mobile-3x-dpr-1x-cpu',
-      cpuThrottle: 1,
-      measureSeconds: 5,
-      checkBlackoutPause: true,
-      budgets: {
-        minFps: 52,
-        maxP95FrameMs: 25,
-        maxSevereStalls: 2,
-        maxScriptMsPerSec: 120,
-        maxRecalcStylePerSec: 25,
-        maxLayoutPerSec: 20,
-        minWindowChunks: 140,
-        maxChunkIntervalMs: 120,
-        minRecordedSec: 4.5,
-      },
-    },
-    {
-      name: 'mobile-3x-dpr-4x-slow-cpu',
-      cpuThrottle: 4,
-      measureSeconds: 5,
-      checkBlackoutPause: false,
-      budgets: {
-        minFps: 38,
-        maxP95FrameMs: 52,
-        maxSevereStalls: 5,
-        maxScriptMsPerSec: 260,
-        maxRecalcStylePerSec: 25,
-        maxLayoutPerSec: 20,
-        minWindowChunks: 140,
-        maxChunkIntervalMs: 180,
-        minRecordedSec: 4.5,
-      },
-    },
-  ];
+  const server = await startPreviewServer(port, baseUrl);
 
   let allPassed = true;
-  console.log('\nStoryTape Headless Chrome Recording Performance Gate');
-  console.log('====================================================');
+  const summaries = [];
+  let canary = null;
 
   try {
-    for (const profile of profiles) {
+    for (const profile of PERF_PROFILES) {
       const { summary, failures } = await runProfile({ baseUrl, wavPath, profile });
-      const status = failures.length === 0 ? 'PASS' : 'FAIL';
-      console.log(
-        `\n[${status}] ${summary.name} (${summary.cpuThrottle}x CPU, 3x DPR)` +
-          `\n  FPS: ${summary.fps} | p50=${summary.p50FrameMs}ms p95=${summary.p95FrameMs}ms max=${summary.maxFrameMs}ms | stalls(>50ms)=${summary.severeStalls}` +
-          `\n  Main thread: script=${summary.scriptMsPerSec}ms/s task=${summary.taskMsPerSec}ms/s | recalcStyle=${summary.recalcStylePerSec}/s layout=${summary.layoutPerSec}/s` +
-          `\n  Audio: worklet=${summary.workletLoaded} scriptProc=${summary.scriptProcessorCreated} keepalivePlays=${summary.loopingAudioPlayCalls} chunks=${summary.windowChunks} (mean=${summary.meanChunkIntervalMs}ms max=${summary.maxChunkIntervalMs}ms)` +
-          `\n  Canvas & PCM: canvas=${summary.canvasPixelWidth}px/${summary.canvasClientWidth}css | recorded=${summary.recordedDurationSec}s zeroRuns=${summary.zeroRuns} maxAbs=${summary.maxAbs}` +
-          (summary.blackoutResult
-            ? `\n  Blackout pause: canvasRenders=${summary.blackoutResult.canvasRenderDelta} audioChunks=${summary.blackoutResult.chunkDelta}`
-            : ''),
-      );
+      summaries.push(summary);
       if (failures.length > 0) {
         allPassed = false;
+        console.error(`\n[FAIL] ${summary.name}:`);
         for (const f of failures) {
           console.error(`  ✗ ${f}`);
         }
+      }
+    }
+
+    canary = await runRegressionCanary({ baseUrl, wavPath });
+    if (!canary.passed) {
+      allPassed = false;
+      console.error('\n[FAIL] Live Regression-Detection Canary:');
+      for (const f of canary.failures) {
+        console.error(`  ✗ ${f}`);
       }
     }
   } finally {
@@ -751,12 +755,28 @@ async function main() {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 
+  if (summaries.length >= 2) {
+    const rows = buildScorecardRows(summaries[0], summaries[1], canary);
+    console.log(formatScorecardText(rows));
+
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      try {
+        fs.appendFileSync(
+          process.env.GITHUB_STEP_SUMMARY,
+          `\n${formatScorecardMarkdown(rows)}\n`,
+        );
+      } catch {
+        // Non-fatal if summary path is unwritable
+      }
+    }
+  }
+
   console.log('');
   if (!allPassed) {
     console.error('Headless Chrome performance gate FAILED.');
     process.exit(1);
   }
-  console.log('Headless Chrome performance gate PASSED.');
+  console.log('Headless Chrome performance gate PASSED (all budgets + live regression canary verified).');
 }
 
 main().catch((err) => {
