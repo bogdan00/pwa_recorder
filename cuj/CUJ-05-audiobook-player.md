@@ -27,10 +27,12 @@ A parent (or child at bedtime) listens to recorded audiobooks through a calm, mi
    - Tap the **Speed** pill (`1×` → `1.15×` → `1.25×`).
    - Tap **Sleep** → choose `15 minutes` (or `End of current chapter`) → verify active timer indicator/countdown.
 
-4. **Continue Listening Persistence & Close Player**
+4. **Continue Listening Persistence, Dismiss & Auto-Clear**
    - Minimize the player, reload the app, and return to the Library.
-   - **Expected:** **Continue Listening** card appears at the top of the Library for the active book with remaining time and one-tap Play button.
-   - Tapping **Close player** (`×`) on the mini-player cleanly dismisses playback.
+   - **Expected:** **Continue Listening** card appears at the top of the Library for the active book with remaining time, one-tap Play button, and a dismiss (`×`) button.
+   - Tapping **Close player** (`×`) on the mini-player cleanly dismisses active playback while preserving resume progress.
+   - Tapping **Dismiss** (`×`) on the **Continue Listening** card clears that book's saved resume progress permanently (persisting across reloads) and closes active playback if the same book is currently loaded in the player.
+   - Playing the final chapter of a book to completion automatically clears that book's saved resume progress so no stale `"0s left"` Continue Listening card remains.
 
 5. **iOS / Cross-Browser Playback Resilience & Self-Healing**
    - Tap Play on a chapter whose stored/downloaded blob has a missing or generic `application/octet-stream` MIME type, a legacy double-wrapped AAC `esds` box (from iOS 26 WebKit Bug #302253), or a 32-bit IEEE Float WAV header rejected by `<audio>`.

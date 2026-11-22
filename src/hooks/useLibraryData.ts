@@ -42,6 +42,10 @@ export function useLibraryData() {
     });
   }, []);
 
+  const removeProgress = useCallback((projectId: string) => {
+    setProgressList((prev) => prev.filter((p) => p.projectId !== projectId));
+  }, []);
+
   const recordingsByProject = useMemo(() => {
     const map = new Map<string, Recording[]>();
     for (const r of allRecordings) {
@@ -70,5 +74,6 @@ export function useLibraryData() {
     progressByProject,
     reloadData,
     upsertProgress,
+    removeProgress,
   };
 }

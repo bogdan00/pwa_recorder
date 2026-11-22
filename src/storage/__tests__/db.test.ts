@@ -4,6 +4,7 @@ import {
   clearAllLocalMasters,
   clearSyncedAudioCache,
   deleteDraft,
+  deletePlaybackProgress,
   deleteProject,
   deleteRecording,
   deleteRecordingMaster,
@@ -113,6 +114,10 @@ describe('IndexedDB offline repository', () => {
     const prog = await getPlaybackProgress('b1');
     expect(prog?.positionSec).toBe(42.5);
     expect(prog?.completedRecordingIds).toEqual(['r1']);
+
+    await deletePlaybackProgress('b1');
+    expect(await getPlaybackProgress('b1')).toBeUndefined();
+    expect(await getProject('b1')).toBeDefined();
 
     await deleteProject('b1');
     expect(await getProject('b1')).toBeUndefined();

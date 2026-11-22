@@ -407,6 +407,11 @@ export async function putPlaybackProgress(
   await db.put('playbackProgress', progress);
 }
 
+export async function deletePlaybackProgress(projectId: string): Promise<void> {
+  const db = await getDb();
+  await db.delete('playbackProgress', projectId);
+}
+
 // ============================================================================
 // Crash-Safe Recording Drafts (Float32 PCM Chunks)
 // ============================================================================

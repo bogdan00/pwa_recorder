@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 import type { BookProject, Recording } from '../types/models';
 import {
+  deletePlaybackProgress,
   getPlaybackProgress,
   getProjectCover,
   getRecordingBlob,
@@ -72,6 +73,7 @@ export interface PlayerContextValue {
   expandPlayer: () => void;
   collapsePlayer: () => void;
   closePlayer: () => void;
+  clearSavedProgress: (projectId: string) => Promise<void>;
   pauseForRecording: () => void;
   refreshChaptersForProject: (projectId: string) => Promise<void>;
 }
@@ -89,11 +91,13 @@ export function usePlayer(): PlayerContextValue {
 interface PlayerProviderProps {
   children: React.ReactNode;
   onProgressUpdated?: (progress: import('../types/models').PlaybackProgress) => void;
+  onProgressCleared?: (projectId: string) => void;
 }
 
 export const PlayerProvider: React.FC<PlayerProviderProps> = ({
   children,
   onProgressUpdated,
+  onProgressCleared,
 }) => {
   const nav = useOptionalAppNavigation();
   const navRef = useRef(nav);
@@ -105,8 +109,11 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
   const sleepIntervalRef = useRef<number | null>(null);
   const lastSavedSecRef = useRef<number>(-10);
   const loadTokenRef = useRef<number>(0);
+  const progressOpSeqRef = useRef<Map<string, number>>(new Map());
   const onProgressUpdatedRef = useRef(onProgressUpdated);
   onProgressUpdatedRef.current = onProgressUpdated;
+  const onProgressClearedRef = useRef(onProgressCleared);
+  onProgressClearedRef.current = onProgressCleared;
 
   const [project, setProject] = useState<BookProject | null>(null);
   const [chapters, setChapters] = useState<Recording[]>([]);
@@ -171,6 +178,12 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
     return audioRef.current;
   }, []);
 
+  const nextProgressOpSeq = useCallback((projId: string): number => {
+    const seq = (progressOpSeqRef.current.get(projId) ?? 0) + 1;
+    progressOpSeqRef.current.set(projId, seq);
+    return seq;
+  }, []);
+
   const persistProgress = useCallback(
     async (
       projId: string,
@@ -179,8 +192,11 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       durSec: number,
       markCompleted = false,
     ) => {
+      const seq = nextProgressOpSeq(projId);
       try {
         const existing = await getPlaybackProgress(projId);
+        if (progressOpSeqRef.current.get(projId) !== seq) return;
+
         const completedSet = new Set(existing?.completedRecordingIds ?? []);
         if (markCompleted) completedSet.add(rec.id);
 
@@ -193,12 +209,27 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
           updatedAt: Date.now(),
         };
         await putPlaybackProgress(nextProgress);
+        if (progressOpSeqRef.current.get(projId) !== seq) return;
         onProgressUpdatedRef.current?.(nextProgress);
       } catch {
         // Non-fatal
       }
     },
-    [],
+    [nextProgressOpSeq],
+  );
+
+  const clearProgress = useCallback(
+    async (projId: string) => {
+      const seq = nextProgressOpSeq(projId);
+      try {
+        await deletePlaybackProgress(projId);
+        if (progressOpSeqRef.current.get(projId) !== seq) return;
+        onProgressClearedRef.current?.(projId);
+      } catch {
+        // Non-fatal
+      }
+    },
+    [nextProgressOpSeq],
   );
 
   const updateMediaSession = useCallback(
@@ -643,6 +674,16 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
     }
   }, [clearSleepInterval, updateMediaSession]);
 
+  const clearSavedProgress = useCallback(
+    async (projId: string) => {
+      if (projectRef.current?.id === projId) {
+        closePlayer();
+      }
+      await clearProgress(projId);
+    },
+    [clearProgress, closePlayer],
+  );
+
   const refreshChaptersForProject = useCallback(async (projId: string) => {
     if (projectRef.current?.id !== projId) return;
     const currentRecId = chaptersRef.current[currentIndexRef.current]?.id;
@@ -664,6 +705,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
 
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
+      if (audio.ended) return;
       const proj = projectRef.current;
       const rec = chaptersRef.current[currentIndexRef.current];
       if (proj && rec && Math.abs(audio.currentTime - lastSavedSecRef.current) >= 3) {
@@ -691,15 +733,20 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       const list = chaptersRef.current;
       const idx = currentIndexRef.current;
       const finishedRec = list[idx];
+      const isLastChapter = idx < 0 || idx + 1 >= list.length;
 
       if (proj && finishedRec) {
-        void persistProgress(
-          proj.id,
-          finishedRec,
-          finishedRec.durationMs / 1000,
-          finishedRec.durationMs / 1000,
-          true,
-        );
+        if (isLastChapter) {
+          void clearProgress(proj.id);
+        } else {
+          void persistProgress(
+            proj.id,
+            finishedRec,
+            finishedRec.durationMs / 1000,
+            finishedRec.durationMs / 1000,
+            true,
+          );
+        }
       }
 
       if (sleepModeRef.current === 'end_of_chapter') {
@@ -710,7 +757,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
         return;
       }
 
-      if (proj && idx >= 0 && idx + 1 < list.length) {
+      if (proj && !isLastChapter) {
         void loadAndPlayIndex(proj, list, idx + 1, 0, true);
       } else {
         loadTokenRef.current += 1;
@@ -731,7 +778,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       audio.removeEventListener('pause', onPause);
       audio.removeEventListener('ended', onEnded);
     };
-  }, [ensureAudioElement, loadAndPlayIndex, persistProgress]);
+  }, [clearProgress, ensureAudioElement, loadAndPlayIndex, persistProgress]);
 
   // Wire OS Lock Screen / Headphone Media Session controls
   useEffect(() => {
@@ -804,6 +851,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       },
       collapsePlayer: requestCollapsePlayer,
       closePlayer,
+      clearSavedProgress,
       pauseForRecording,
       refreshChaptersForProject,
     }),
@@ -835,6 +883,7 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
       requestExpandPlayer,
       requestCollapsePlayer,
       closePlayer,
+      clearSavedProgress,
       pauseForRecording,
       refreshChaptersForProject,
     ],

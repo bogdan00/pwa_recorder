@@ -54,6 +54,7 @@ interface LibraryViewProps {
   onResumeDraft: (draft: ActiveDraft) => void;
   onDiscardDraft: (draftId: string) => void;
   onContinueListening: (project: BookProject) => void;
+  onDismissContinueListening?: (projectId: string) => void;
 }
 
 type SortKey = 'updated' | 'title' | 'newest';
@@ -83,6 +84,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onResumeDraft,
   onDiscardDraft,
   onContinueListening,
+  onDismissContinueListening,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortKey>('updated');
@@ -406,14 +408,29 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 left
               </span>
             </button>
-            <button
-              type="button"
-              className="continue-card__play"
-              onClick={() => onContinueListening(continueTarget.project)}
-              aria-label={`Continue listening to ${continueTarget.project.title}`}
-            >
-              <Play size={20} style={{ marginLeft: 2 }} />
-            </button>
+            <div className="continue-card__actions">
+              <button
+                type="button"
+                className="continue-card__play"
+                onClick={() => onContinueListening(continueTarget.project)}
+                aria-label={`Continue listening to ${continueTarget.project.title}`}
+              >
+                <Play size={20} style={{ marginLeft: 2 }} />
+              </button>
+              {onDismissContinueListening && (
+                <button
+                  type="button"
+                  className="icon-btn continue-card__dismiss"
+                  onClick={() =>
+                    onDismissContinueListening(continueTarget.project.id)
+                  }
+                  aria-label={`Dismiss continue listening for ${continueTarget.project.title}`}
+                  data-testid="dismiss-continue-listening-btn"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
           </section>
         )}
 

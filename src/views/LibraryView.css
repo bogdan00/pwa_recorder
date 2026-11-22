@@ -268,8 +268,8 @@
 .continue-card {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
+  gap: 12px;
+  padding: 12px 12px 12px 14px;
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
@@ -310,9 +310,16 @@
   text-overflow: ellipsis;
 }
 
+.continue-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .continue-card__play {
-  width: 46px;
-  height: 46px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   background: var(--ink-primary);
   color: var(--ink-inverse);
@@ -325,6 +332,12 @@
 
 .continue-card__play:active {
   transform: scale(0.93);
+}
+
+.continue-card__dismiss {
+  width: 32px;
+  height: 32px;
+  color: var(--ink-muted);
 }
 
 /* Browse controls */

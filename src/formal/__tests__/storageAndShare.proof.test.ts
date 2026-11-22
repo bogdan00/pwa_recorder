@@ -309,13 +309,23 @@ describe('Tier 1 Formal Proofs: Storage, Player Queue Conformance & Share-Link C
     expect(conf.enabledStepsVerified).toBeGreaterThan(60);
     expect(conf.disabledGuardsVerified).toBeGreaterThan(30);
 
-    // Also prove seek(NaN / ±Infinity / negative) stays strictly clamped in real PlayerProvider
+    // Also prove seek(NaN / ±Infinity / negative) stays strictly clamped in real PlayerProvider,
+    // finishing the final chapter auto-clears saved progress, and clearSavedProgress dismisses
+    // active playback + persisted progress cleanly.
+    const clearedProjects: string[] = [];
     let latestCtx!: PlayerContextValue;
     const Probe: React.FC = () => {
       latestCtx = usePlayer();
       return null;
     };
-    render(React.createElement(PlayerProvider, null, React.createElement(Probe)));
+    render(
+      React.createElement(PlayerProvider, {
+        onProgressCleared: (projectId: string) => {
+          clearedProjects.push(projectId);
+        },
+        children: React.createElement(Probe),
+      }),
+    );
     await act(async () => {
       await latestCtx.playBook(book1, { resumeSaved: false });
     });
@@ -327,6 +337,30 @@ describe('Tier 1 Formal Proofs: Storage, Player Queue Conformance & Share-Link C
       expect(latestCtx.currentTime).toBeGreaterThanOrEqual(0);
       expect(latestCtx.currentTime).toBeLessThanOrEqual(latestCtx.duration);
     }
+
+    // Finishing the single/final chapter auto-clears Continue Listening progress
+    expect(await getPlaybackProgress(book1.id)).toBeDefined();
+    await act(async () => {
+      lastAudio!.paused = true;
+      lastAudio!.dispatch('ended');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await getPlaybackProgress(book1.id)).toBeUndefined();
+    expect(clearedProjects).toContain(book1.id);
+
+    // Dismissing Continue Listening while playing closes active playback & deletes progress
+    await act(async () => {
+      await latestCtx.playBook(book3, { resumeSaved: false });
+    });
+    expect(await getPlaybackProgress(book3.id)).toBeDefined();
+    expect(latestCtx.project?.id).toBe(book3.id);
+    await act(async () => {
+      await latestCtx.clearSavedProgress(book3.id);
+    });
+    expect(latestCtx.project).toBeNull();
+    expect(await getPlaybackProgress(book3.id)).toBeUndefined();
+    expect(clearedProjects).toContain(book3.id);
   });
 
   it('proves buildJoinShareUrl -> parseJoinInviteInput is an exact round-trip across all canonical invites', () => {

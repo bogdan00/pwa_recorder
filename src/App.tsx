@@ -93,6 +93,7 @@ export interface AppProps {
 
 interface StoryTapeShellProps extends AppProps {
   registerProgressHandler: (fn: (progress: PlaybackProgress) => void) => void;
+  registerProgressClearedHandler: (fn: (projectId: string) => void) => void;
 }
 
 const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
@@ -100,6 +101,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
   pwaUpdateReady,
   engineFactory,
   registerProgressHandler,
+  registerProgressClearedHandler,
 }) => {
   const player = usePlayer();
   const confirm = useConfirm();
@@ -127,6 +129,7 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
     progressByProject,
     reloadData,
     upsertProgress,
+    removeProgress,
   } = useLibraryData();
 
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
@@ -182,6 +185,10 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
   useEffect(() => {
     registerProgressHandler(upsertProgress);
   }, [registerProgressHandler, upsertProgress]);
+
+  useEffect(() => {
+    registerProgressClearedHandler(removeProgress);
+  }, [registerProgressClearedHandler, removeProgress]);
 
   useEffect(() => {
     setPwaInstallState(pwaInstallController.getState());
@@ -881,6 +888,9 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           onContinueListening={(book) =>
             void player.playBook(book, { resumeSaved: true, expand: true })
           }
+          onDismissContinueListening={(projectId) =>
+            void player.clearSavedProgress(projectId)
+          }
         />
       )}
 
@@ -1049,23 +1059,39 @@ export const App: React.FC<AppProps> = (props) => {
   const progressHandlerRef = useRef<((progress: PlaybackProgress) => void) | null>(
     null,
   );
+  const progressClearedHandlerRef = useRef<((projectId: string) => void) | null>(
+    null,
+  );
   const registerProgressHandler = useCallback(
     (fn: (progress: PlaybackProgress) => void) => {
       progressHandlerRef.current = fn;
     },
     [],
   );
+  const registerProgressClearedHandler = useCallback(
+    (fn: (projectId: string) => void) => {
+      progressClearedHandlerRef.current = fn;
+    },
+    [],
+  );
   const handleProgressUpdated = useCallback((progress: PlaybackProgress) => {
     progressHandlerRef.current?.(progress);
+  }, []);
+  const handleProgressCleared = useCallback((projectId: string) => {
+    progressClearedHandlerRef.current?.(projectId);
   }, []);
 
   return (
     <AppNavigationProvider>
       <ConfirmProvider>
-        <PlayerProvider onProgressUpdated={handleProgressUpdated}>
+        <PlayerProvider
+          onProgressUpdated={handleProgressUpdated}
+          onProgressCleared={handleProgressCleared}
+        >
           <StoryTapeShell
             {...props}
             registerProgressHandler={registerProgressHandler}
+            registerProgressClearedHandler={registerProgressClearedHandler}
           />
         </PlayerProvider>
       </ConfirmProvider>
