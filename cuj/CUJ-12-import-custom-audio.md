@@ -38,4 +38,12 @@ A parent or narrator imports previously recorded audio files (such as Voice Memo
 
 5. **Google Drive Sync & Read-Only Listener Protection**
    - When Google Drive is connected, importing audio marks chapters for sync and uploads them to the book's Drive folder with their original extension and MIME type (`01 - <Chapter Name>.<ext>`), updating `project.json`.
-   - On read-only shared books (`accessRole === 'reader'`) and read-only imported copies, **Import Audio** (`#import-audio-btn`) is hidden and cannot mutate the book.
+   - On read-only shared books (`accessRole === 'reader'`) and read-only imported copies, **Import Audio** (`#import-audio-btn`) and **Rescan** (`#rescan-drive-btn`) are hidden and cannot mutate the book.
+
+6. **Rescan Book Directory in Google Drive**
+   - When Google Drive is connected on an editable book, tap **Rescan** (`#rescan-drive-btn`) in the Chapters header (or **Rescan Drive Folder** inside the Import Audio sheet).
+   - **Expected:**
+     - Pulls and merges `project.json` first (ADR-05) before listing all non-trashed files inside the book's Google Drive folder.
+     - Automatically discovers untracked audio files (`.mp3`, `.m4a`/`.m4b`, `.wav`, `.webm`, `.ogg`/`.opus`, `.flac`, `.aac`) dropped directly into the Drive folder, naturally sorts them, ignores non-audio files and already-tracked chapters, and registers them immediately as `cloud_only` chapters without re-uploading or renaming them.
+     - Removes orphaned `cloud_only` entries whose files were manually deleted from the Drive folder (never deleting locally cached chapters), detects a `cover.*` image if the book lacks a cover, updates `project.json` on Drive so other devices see the changes, and reports discovered/removed counts in a toast.
+     - Tapping Play on a Drive-discovered `cloud_only` chapter downloads and caches it locally while automatically hydrating exact duration, sample rate, channels, bitrate/bit depth, and waveform overview peaks.

@@ -19,7 +19,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { Recording } from '../types/models';
-import { formatDurationMs, formatSampleRate } from '../utils/format';
+import { formatBytes, formatDurationMs, formatSampleRate } from '../utils/format';
 import './RecordingCard.css';
 
 interface RecordingCardProps {
@@ -221,10 +221,21 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
                 <span className="rec-card__title">{recording.name}</span>
               </div>
               <div className="rec-card__meta">
-                <span className="font-mono">
-                  {formatDurationMs(recording.durationMs)}
-                </span>
-                <span className="rec-card__dot">·</span>
+                {recording.durationMs > 0 ? (
+                  <>
+                    <span className="font-mono">
+                      {formatDurationMs(recording.durationMs)}
+                    </span>
+                    <span className="rec-card__dot">·</span>
+                  </>
+                ) : recording.fileSizeBytes > 0 ? (
+                  <>
+                    <span className="font-mono">
+                      {formatBytes(recording.fileSizeBytes)}
+                    </span>
+                    <span className="rec-card__dot">·</span>
+                  </>
+                ) : null}
                 <span>{specBadge}</span>
                 {recording.channels === 2 && (
                   <>

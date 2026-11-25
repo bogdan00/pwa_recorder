@@ -319,6 +319,17 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
         if (!blob && rec.syncStatus === 'cloud_only') {
           blob = await downloadCloudRecording(rec.id);
           if (loadTokenRef.current !== loadToken) return;
+          const refreshed = await listProjectRecordings(proj.id);
+          if (loadTokenRef.current !== loadToken) return;
+          const hydratedIdx = refreshed.findIndex((r) => r.id === rec.id);
+          if (hydratedIdx >= 0) {
+            setChapters(refreshed);
+            setCurrentIndex(hydratedIdx);
+            const hydratedRec = refreshed[hydratedIdx];
+            if (hydratedRec.durationMs > 0) {
+              setDuration(hydratedRec.durationMs / 1000);
+            }
+          }
         }
         if (!blob) {
           throw new Error(

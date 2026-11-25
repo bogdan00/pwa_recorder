@@ -859,6 +859,11 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           onImportAudio={() =>
             openOverlay({ kind: 'import-audio', projectId: activeBook.id })
           }
+          onRescanDrive={() =>
+            drive.handleRescanOrReconnectBookDrive(activeBook.id, () =>
+              player.refreshChaptersForProject(activeBook.id),
+            )
+          }
           onSyncProject={() => drive.handleSyncOrReconnectProject(activeBook.id)}
           onReconnectAndPlayChapter={(recordingId) => {
             const book = activeBook;
@@ -1021,6 +1026,20 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
           settings.defaultNarrator.trim() ||
           drive.authState.userName?.trim() ||
           ''
+        }
+        canSyncDrive={
+          drive.authState.status === 'connected' ||
+          drive.authState.status === 'expired'
+        }
+        isSyncing={drive.isSyncing}
+        onRescanDrive={
+          importAudioBook
+            ? () =>
+                drive.handleRescanOrReconnectBookDrive(
+                  importAudioBook.id,
+                  () => player.refreshChaptersForProject(importAudioBook.id),
+                )
+            : undefined
         }
         onClose={() => closeOverlay('import-audio')}
         onImport={(submission) =>

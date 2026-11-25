@@ -12,12 +12,15 @@ import {
   putRecording,
   resetDbConnectionForTests,
 } from '../../storage/db';
+import { encodeWav } from '../../audio/wavEncoder';
+import { blobToArrayBuffer } from '../../utils/blob';
 import { DriveClient } from '../driveClient';
 import {
   downloadCloudRecording,
   importSharedBookIntoLibrary,
   isUnsharedPersonalBook,
   mirrorImportedBookFromSource,
+  rescanBookDriveFolder,
   shareLocalBooksIntoSharedLibrary,
   syncAllWithDrive,
 } from '../syncService';
@@ -1934,5 +1937,291 @@ describe('Google Drive client & two-way syncService', () => {
     expect(updatedSyncedRec?.driveFileId).toBe('copied-personal-audio-1');
     const updatedLocalRec = await getRecording(personalLocalRec.id);
     expect(updatedLocalRec?.driveFileId).toBe('uploaded-bin-1');
+  });
+
+  it('rescans a book Drive folder to discover dropped audio files, remove deleted cloud_only orphans, pick up cover, update project.json, and hydrate metadata on download', async () => {
+    const book: BookProject = {
+      id: 'book-rescan-1',
+      title: 'Rescan Tales',
+      author: 'Storyteller',
+      narrator: '',
+      dedicatedTo: '',
+      description: '',
+      language: '',
+      tags: [],
+      coverColor: '#3D6352',
+      hasCover: false,
+      driveFolderId: 'rescan-folder-1',
+      driveMetadataFileId: 'rescan-meta-1',
+      accessRole: 'owner',
+      syncStatus: 'synced',
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+
+    const existingSynced: Recording = {
+      id: 'rec-existing-1',
+      projectId: book.id,
+      name: 'Intro',
+      notes: '',
+      orderIndex: 0,
+      durationMs: 5000,
+      mimeType: 'audio/mp4',
+      extension: 'm4a',
+      sampleRate: 48000,
+      channels: 1,
+      fileSizeBytes: 500,
+      peaks: [0.3],
+      driveFileId: 'drive-existing-1',
+      driveFileName: '01 - Intro.m4a',
+      syncStatus: 'synced',
+      createdAt: 1000,
+      updatedAt: 1000,
+    };
+
+    const deletedCloudOrphan: Recording = {
+      id: 'rec-orphan-1',
+      projectId: book.id,
+      name: 'Removed In Drive',
+      notes: '',
+      orderIndex: 1,
+      durationMs: 3000,
+      mimeType: 'audio/mpeg',
+      extension: 'mp3',
+      sampleRate: 44100,
+      channels: 1,
+      fileSizeBytes: 300,
+      peaks: [],
+      driveFileId: 'drive-deleted-gone',
+      driveFileName: '02 - Removed In Drive.mp3',
+      syncStatus: 'cloud_only',
+      createdAt: 1100,
+      updatedAt: 1100,
+    };
+
+    await putProject(book);
+    await putRecording(existingSynced, new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/mp4' }));
+    await putRecording(deletedCloudOrphan);
+
+    const existingMeta: DriveProjectMetadataFile = {
+      schemaVersion: 1,
+      id: book.id,
+      title: book.title,
+      author: book.author,
+      narrator: '',
+      dedicatedTo: '',
+      description: '',
+      language: '',
+      tags: [],
+      coverColor: book.coverColor,
+      createdAt: 1000,
+      updatedAt: 2000,
+      recordings: [
+        {
+          id: existingSynced.id,
+          name: existingSynced.name,
+          notes: '',
+          orderIndex: 0,
+          durationMs: 5000,
+          mimeType: 'audio/mp4',
+          extension: 'm4a',
+          sampleRate: 48000,
+          channels: 1,
+          fileSizeBytes: 500,
+          peaks: [0.3],
+          driveFileId: 'drive-existing-1',
+          driveFileName: '01 - Intro.m4a',
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+        {
+          id: deletedCloudOrphan.id,
+          name: deletedCloudOrphan.name,
+          notes: '',
+          orderIndex: 1,
+          durationMs: 3000,
+          mimeType: 'audio/mpeg',
+          extension: 'mp3',
+          sampleRate: 44100,
+          channels: 1,
+          fileSizeBytes: 300,
+          peaks: [],
+          driveFileId: 'drive-deleted-gone',
+          driveFileName: '02 - Removed In Drive.mp3',
+          createdAt: 1100,
+          updatedAt: 1100,
+        },
+      ],
+    };
+
+    const pcm = new Float32Array(8000);
+    for (let i = 0; i < pcm.length; i += 1) {
+      pcm[i] = Math.sin((2 * Math.PI * 220 * i) / 8000) * 0.5;
+    }
+    const droppedWavBlob = encodeWav([pcm], 8000, 16);
+    const droppedWavBytes = new Uint8Array(await blobToArrayBuffer(droppedWavBlob));
+
+    let pushedManifest: DriveProjectMetadataFile | null = null;
+    let resumableUploadCalls = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method || 'GET').toUpperCase();
+
+      if (url.includes('/drive/v3/files/rescan-root?fields=') && method === 'GET') {
+        return jsonResponse({
+          id: 'rescan-root',
+          name: 'StoryTape Audiobooks',
+          mimeType: 'application/vnd.google-apps.folder',
+          ownedByMe: true,
+        });
+      }
+      if (url.includes('/drive/v3/files/rescan-folder-1?fields=') && method === 'GET') {
+        return jsonResponse({
+          id: 'rescan-folder-1',
+          name: 'Rescan Tales',
+          mimeType: 'application/vnd.google-apps.folder',
+          ownedByMe: true,
+        });
+      }
+      if (url.includes('rescan-folder-1') && url.includes('in+parents') && method === 'GET') {
+        return jsonResponse({
+          files: [
+            { id: 'rescan-meta-1', name: 'project.json', mimeType: 'application/json' },
+            { id: 'drive-cover-new', name: 'cover.jpg', mimeType: 'image/jpeg' },
+            { id: 'drive-existing-1', name: '01 - Intro.m4a', mimeType: 'audio/mp4', size: '500' },
+            { id: 'drive-dropped-10', name: 'Chapter 10 - Finale.mp3', mimeType: 'audio/mpeg', size: '48000' },
+            { id: 'drive-dropped-2', name: '02 - Forest_Walk.wav', mimeType: 'audio/wav', size: String(droppedWavBytes.byteLength) },
+            { id: 'drive-ignored-txt', name: 'script.txt', mimeType: 'text/plain', size: '42' },
+          ],
+        });
+      }
+      if (url.includes('/files/rescan-meta-1?alt=media') && method === 'GET') {
+        return jsonResponse(existingMeta);
+      }
+      if (url.includes('/files/drive-cover-new?alt=media') && method === 'GET') {
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/jpeg' },
+        });
+      }
+      if (url.includes('/files/drive-dropped-2?alt=media') && method === 'GET') {
+        return new Response(droppedWavBytes, {
+          status: 200,
+          headers: { 'Content-Type': 'audio/wav' },
+        });
+      }
+      if (url.includes('uploadType=resumable')) {
+        resumableUploadCalls += 1;
+        return jsonResponse({ id: 'unexpected' });
+      }
+      if (url.includes('uploadType=multipart')) {
+        pushedManifest = extractMultipartJsonPayload<DriveProjectMetadataFile>(
+          String(init?.body || ''),
+        );
+        return jsonResponse({
+          id: 'rescan-meta-1',
+          name: 'project.json',
+          mimeType: 'application/json',
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    });
+
+    const client = new DriveClient('test-token');
+    const settings = {
+      ...getDefaultSettings(),
+      driveRootFolderId: 'rescan-root',
+      defaultNarrator: 'Dad',
+    };
+
+    const res = await rescanBookDriveFolder(book.id, settings, undefined, client);
+    expect(res).toEqual({
+      rootFolderId: 'rescan-root',
+      folderFound: true,
+      addedChapters: 2,
+      removedOrphans: 1,
+      updatedCover: true,
+    });
+    expect(resumableUploadCalls).toBe(0);
+
+    // Deleted cloud_only orphan was removed and tombstoned; dropped audio naturally sorted
+    const recs = await listProjectRecordings(book.id);
+    expect(recs.map((r) => r.name)).toEqual([
+      'Intro',
+      'Forest Walk',
+      'Chapter 10 - Finale',
+    ]);
+    expect(recs.map((r) => r.orderIndex)).toEqual([0, 1, 2]);
+    expect(recs[1]).toMatchObject({
+      extension: 'wav',
+      mimeType: 'audio/wav',
+      driveFileId: 'drive-dropped-2',
+      driveFileName: '02 - Forest_Walk.wav',
+      syncStatus: 'cloud_only',
+      recordedBy: 'Dad',
+    });
+    expect(recs[2]).toMatchObject({
+      extension: 'mp3',
+      mimeType: 'audio/mpeg',
+      driveFileId: 'drive-dropped-10',
+      driveFileName: 'Chapter 10 - Finale.mp3',
+      syncStatus: 'cloud_only',
+      fileSizeBytes: 48000,
+    });
+
+    // Cover was discovered and cached locally; project.json updated with all 3 chapters
+    expect(await getProjectCover(book.id)).toBeTruthy();
+    expect(pushedManifest).not.toBeNull();
+    expect(pushedManifest!.recordings.map((r) => r.name)).toEqual([
+      'Intro',
+      'Forest Walk',
+      'Chapter 10 - Finale',
+    ]);
+    expect(pushedManifest!.deletedRecordingIds).toContain('rec-orphan-1');
+
+    // Playing/downloading the Drive-discovered WAV chapter hydrates exact duration, sample rate, bit depth, and peaks
+    const downloadedBlob = await downloadCloudRecording(recs[1].id, client);
+    expect(downloadedBlob.size).toBe(droppedWavBlob.size);
+    const hydratedRec = await getRecording(recs[1].id);
+    expect(hydratedRec?.syncStatus).toBe('synced');
+    expect(hydratedRec?.durationMs).toBe(1000);
+    expect(hydratedRec?.sampleRate).toBe(8000);
+    expect(hydratedRec?.bitDepth).toBe(16);
+    expect((hydratedRec?.peaks.length ?? 0)).toBeGreaterThan(0);
+  });
+
+  it('skips rescanBookDriveFolder on read-only Listener books without issuing Drive writes', async () => {
+    const roBook: BookProject = {
+      id: 'book-rescan-ro',
+      title: 'Listener Book',
+      author: '',
+      narrator: '',
+      dedicatedTo: '',
+      description: '',
+      language: '',
+      tags: [],
+      coverColor: '#3D6352',
+      hasCover: false,
+      driveFolderId: 'ro-rescan-folder',
+      isShared: true,
+      accessRole: 'reader',
+      syncStatus: 'synced',
+      createdAt: 1000,
+      updatedAt: 1000,
+    };
+    await putProject(roBook);
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const client = new DriveClient('test-token');
+    const res = await rescanBookDriveFolder(
+      roBook.id,
+      getDefaultSettings(),
+      undefined,
+      client,
+    );
+    expect(res.skippedReadOnly).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

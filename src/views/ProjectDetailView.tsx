@@ -4,6 +4,7 @@ import {
   Cloud,
   CloudUpload,
   Download,
+  FolderSync,
   Headphones,
   Loader2,
   Mic,
@@ -40,6 +41,7 @@ interface ProjectDetailViewProps {
   onShareBook: () => void;
   onStartRecording: () => void;
   onImportAudio?: () => void;
+  onRescanDrive?: () => void;
   onSyncProject: () => void;
   onReconnectAndPlayChapter?: (recordingId: string) => void;
   onRenameRecording: (recordingId: string, newName: string) => Promise<void>;
@@ -66,6 +68,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   onShareBook,
   onStartRecording,
   onImportAudio,
+  onRescanDrive,
   onSyncProject,
   onReconnectAndPlayChapter,
   onRenameRecording,
@@ -387,16 +390,40 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               </span>
             </div>
 
-            {!isReadOnly && onImportAudio && (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm chapters-section__import-btn"
-                onClick={onImportAudio}
-                id="import-audio-btn"
-              >
-                <Upload size={14} />
-                Import Audio
-              </button>
+            {!isReadOnly && (onImportAudio || (canSyncDrive && onRescanDrive)) && (
+              <div className="chapters-section__actions">
+                {canSyncDrive && onRescanDrive && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm chapters-section__action-btn"
+                    onClick={onRescanDrive}
+                    disabled={isSyncing}
+                    id="rescan-drive-btn"
+                    aria-label="Rescan Google Drive folder for audio files"
+                    title="Rescan this book's Google Drive folder for newly added audio files"
+                  >
+                    {isSyncing ? (
+                      <Loader2 size={14} className="spin" />
+                    ) : (
+                      <FolderSync size={14} />
+                    )}
+                    Rescan
+                  </button>
+                )}
+
+                {onImportAudio && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm chapters-section__action-btn"
+                    onClick={onImportAudio}
+                    id="import-audio-btn"
+                    aria-label="Import audio files"
+                  >
+                    <Upload size={14} />
+                    {canSyncDrive && onRescanDrive ? 'Import' : 'Import Audio'}
+                  </button>
+                )}
+              </div>
             )}
           </div>
 

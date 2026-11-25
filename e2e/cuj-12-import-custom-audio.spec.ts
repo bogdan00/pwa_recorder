@@ -481,5 +481,262 @@ test.describe('CUJ-12: Import Custom Audio Files into a Book', () => {
     );
     await expect(page.locator('#record-chapter-btn')).toBeHidden();
     await expect(page.locator('#import-audio-btn')).toBeHidden();
+    await expect(page.locator('#rescan-drive-btn')).toBeHidden();
+  });
+
+  test('rescans the book Google Drive folder to discover dropped audio files, updates project.json, hydrates metadata on play, and persists across reload', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).google = {
+        accounts: {
+          oauth2: {
+            initTokenClient: (cfg: {
+              callback: (resp: {
+                access_token: string;
+                expires_in: number;
+                scope: string;
+              }) => void;
+            }) => ({
+              requestAccessToken: () => {
+                cfg.callback({
+                  access_token: 'e2e-rescan-drive-token',
+                  expires_in: 3600,
+                  scope: 'https://www.googleapis.com/auth/drive',
+                });
+              },
+            }),
+            revoke: () => {},
+          },
+        },
+      };
+    });
+
+    await page.route('https://accounts.google.com/**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: '// mocked GSI',
+      }),
+    );
+
+    const droppedWav1 = createSilentWavBuffer(3.0);
+    const droppedWav2 = createSilentWavBuffer(3.0);
+    let driveHasDroppedFiles = false;
+    let savedManifestJson: string | null = null;
+    let manifestUpdates = 0;
+    let resumableUploadsAfterRescan = 0;
+
+    await page.route('https://www.googleapis.com/**', async (route) => {
+      const req = route.request();
+      const url = req.url();
+      const method = req.method();
+
+      if (url.includes('/drive/v3/about')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            user: {
+              displayName: 'Drive Parent',
+              emailAddress: 'drive-parent@example.com',
+            },
+          }),
+        });
+      }
+
+      if (url.includes('uploadType=resumable')) {
+        if (driveHasDroppedFiles) resumableUploadsAfterRescan += 1;
+        return route.fulfill({
+          status: 200,
+          headers: {
+            Location: 'https://upload.example.com/session/rescan',
+            'Access-Control-Expose-Headers': 'Location',
+          },
+          body: '',
+        });
+      }
+
+      if (url.includes('uploadType=multipart')) {
+        const raw = req.postData() || '';
+        const boundary = raw.split('\r\n')[0].trim();
+        const parts = raw
+          .split(boundary)
+          .map((p) => p.trim())
+          .filter((p) => p && p !== '--');
+        const payloadPart = parts[1] || '';
+        const splitIdx = payloadPart.indexOf('\r\n\r\n');
+        if (splitIdx >= 0) {
+          savedManifestJson = payloadPart.slice(splitIdx + 4);
+        }
+        manifestUpdates += 1;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'rescan-meta-e2e',
+            name: 'project.json',
+            mimeType: 'application/json',
+          }),
+        });
+      }
+
+      if (url.includes('/drive/v3/files') && method === 'POST') {
+        const body = JSON.parse(req.postData() || '{}') as { name?: string };
+        const id =
+          body.name === 'StoryTape Audiobooks'
+            ? 'rescan-root-e2e'
+            : 'rescan-book-e2e';
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id,
+            name: body.name,
+            mimeType: 'application/vnd.google-apps.folder',
+            ownedByMe: true,
+          }),
+        });
+      }
+
+      if (url.includes('/drive/v3/files/rescan-root-e2e?')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'rescan-root-e2e',
+            name: 'StoryTape Audiobooks',
+            mimeType: 'application/vnd.google-apps.folder',
+            trashed: false,
+            ownedByMe: true,
+            capabilities: { canAddChildren: true, canEdit: true },
+          }),
+        });
+      }
+
+      if (url.includes('/drive/v3/files/rescan-book-e2e?')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'rescan-book-e2e',
+            name: 'Secret Garden',
+            mimeType: 'application/vnd.google-apps.folder',
+            trashed: false,
+            ownedByMe: true,
+            capabilities: { canAddChildren: true, canEdit: true },
+          }),
+        });
+      }
+
+      if (url.includes('rescan-book-e2e') && url.includes('in+parents')) {
+        const baseFiles = savedManifestJson
+          ? [{ id: 'rescan-meta-e2e', name: 'project.json', mimeType: 'application/json' }]
+          : [];
+        const droppedFiles = driveHasDroppedFiles
+          ? [
+              {
+                id: 'dropped-audio-10',
+                name: 'Chapter 10 - Epilogue.wav',
+                mimeType: 'audio/wav',
+                size: String(droppedWav2.byteLength),
+              },
+              {
+                id: 'dropped-audio-2',
+                name: '01 - Behind_the_Ivy.wav',
+                mimeType: 'audio/wav',
+                size: String(droppedWav1.byteLength),
+              },
+              {
+                id: 'dropped-notes-txt',
+                name: 'notes.txt',
+                mimeType: 'text/plain',
+                size: '16',
+              },
+            ]
+          : [];
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ files: [...baseFiles, ...droppedFiles] }),
+        });
+      }
+
+      if (url.includes('/drive/v3/files/rescan-meta-e2e?alt=media')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: savedManifestJson || '{}',
+        });
+      }
+
+      if (url.includes('/drive/v3/files/dropped-audio-2?alt=media')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'audio/wav',
+          body: droppedWav1,
+        });
+      }
+
+      if (url.includes('/drive/v3/files/dropped-audio-10?alt=media')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'audio/wav',
+          body: droppedWav2,
+        });
+      }
+
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ files: [] }),
+      });
+    });
+
+    await page.goto('./');
+
+    // Connect Google Drive
+    await page.locator('#open-settings-btn').click();
+    await page.getByTestId('settings-tab-drive').click();
+    await page.getByRole('button', { name: 'Connect Google Drive' }).click();
+    await expect(page.getByText('drive-parent@example.com')).toBeVisible();
+    await page.getByLabel('Close settings').click();
+
+    // Create book & wait for initial sync to establish its Drive folder
+    await createBook(page, { title: 'Secret Garden' });
+    await expect(page.locator('#sync-book-btn')).toContainText('Synced');
+    const updatesBeforeRescan = manifestUpdates;
+
+    // Simulate user dropping 2 WAV files + 1 non-audio file directly into the book's Drive folder
+    driveHasDroppedFiles = true;
+
+    // Tap Rescan in the Chapters header
+    await page.locator('#rescan-drive-btn').click();
+
+    // Newly discovered chapters appear in natural order (non-audio notes.txt ignored)
+    const titles = page.locator('.rec-card__title');
+    await expect(titles).toHaveText([
+      'Behind the Ivy',
+      'Chapter 10 - Epilogue',
+    ]);
+    expect(resumableUploadsAfterRescan).toBe(0);
+    expect(manifestUpdates).toBeGreaterThan(updatesBeforeRescan);
+
+    // Play the first Drive-discovered chapter -> downloads, hydrates duration (00:03), and plays cleanly
+    await page
+      .getByRole('button', { name: /Play Behind the Ivy/i })
+      .click();
+    const miniPlayer = page.getByTestId('mini-player-bar');
+    await expect(miniPlayer).toBeVisible();
+    await expect(miniPlayer).toContainText('Behind the Ivy');
+    await miniPlayer.getByLabel('Pause audiobook').click();
+
+    // Verify metadata hydrated in IndexedDB and survives reload
+    await page.reload();
+    await expect(page.locator('.rec-card__title')).toHaveText([
+      'Behind the Ivy',
+      'Chapter 10 - Epilogue',
+    ]);
+    await expect(page.locator('.rec-card').first()).toContainText('00:03');
   });
 });

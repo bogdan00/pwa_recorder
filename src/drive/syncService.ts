@@ -21,6 +21,7 @@ import {
   putRecording,
   putRecordingBlob,
 } from '../storage/db';
+import { blobToArrayBuffer } from '../utils/blob';
 import {
   buildChapterDriveFileName,
   createId,
@@ -33,6 +34,11 @@ import {
   type DriveFileSummary,
 } from './driveClient';
 import { googleAuth } from './googleAuth';
+import {
+  deriveChapterNameFromFileName,
+  detectImportedAudioFormat,
+  inspectImportedAudioFile,
+} from '../audio/audioImporter';
 import { normalizeAudioBlobType } from '../player/playbackBlob';
 
 export interface SyncProgressUpdate {
@@ -1853,6 +1859,322 @@ export async function inspectSharedDriveFolder(
   });
 }
 
+export interface RescanBookDriveResult {
+  rootFolderId: string;
+  folderFound: boolean;
+  addedChapters: number;
+  removedOrphans: number;
+  updatedCover: boolean;
+  skippedReadOnly?: boolean;
+}
+
+const RESCAN_COVER_NAMES = new Set([
+  'cover.jpg',
+  'cover.jpeg',
+  'cover.png',
+  'cover.webp',
+]);
+
+/**
+ * Rescans a book's Google Drive directory for audio files dropped directly into Drive
+ * (outside StoryTape), cleans up orphaned `cloud_only` chapters whose Drive files were
+ * deleted, optionally picks up a cover image, and updates `project.json` so all devices
+ * stay in sync without re-uploading any discovered audio files.
+ */
+export async function rescanBookDriveFolder(
+  projectId: string,
+  settings: AppSettings,
+  onProgress?: (update: SyncProgressUpdate) => void,
+  clientOverride?: DriveClient,
+): Promise<RescanBookDriveResult> {
+  const project = await getProject(projectId);
+  if (!project) throw new Error('Book not found.');
+
+  if (project.accessRole === 'reader' || project.importedFrom) {
+    return {
+      rootFolderId: settings.driveRootFolderId || '',
+      folderFound: Boolean(project.driveFolderId),
+      addedChapters: 0,
+      removedOrphans: 0,
+      updatedCover: false,
+      skippedReadOnly: true,
+    };
+  }
+
+  return withAuthorizedClient(clientOverride, async (client) => {
+    const root = await ensureRootFolder(client, settings);
+
+    let folderSummary: DriveFileSummary | null = null;
+    if (project.driveFolderId) {
+      folderSummary = await client.verifyFileExists(project.driveFolderId);
+    }
+    if (!folderSummary) {
+      const safeFolderName = sanitizeFileName(project.title, 'Untitled Book');
+      folderSummary = await client.findFolderByName(safeFolderName, root.id);
+    }
+
+    if (!folderSummary) {
+      onProgress?.({
+        phase: 'done',
+        message: 'No Google Drive folder found for this book yet.',
+      });
+      return {
+        rootFolderId: root.id,
+        folderFound: false,
+        addedChapters: 0,
+        removedOrphans: 0,
+        updatedCover: false,
+      };
+    }
+
+    const latestRole = resolveAccessRole(
+      folderSummary,
+      project.accessRole ?? 'owner',
+    );
+    if (latestRole === 'reader') {
+      await putProject({
+        ...project,
+        driveFolderId: folderSummary.id,
+        accessRole: 'reader',
+        isShared: true,
+        syncStatus: 'synced',
+      });
+      return {
+        rootFolderId: root.id,
+        folderFound: true,
+        addedChapters: 0,
+        removedOrphans: 0,
+        updatedCover: false,
+        skippedReadOnly: true,
+      };
+    }
+
+    onProgress?.({
+      phase: 'pulling',
+      message: `Scanning "${project.title}" in Google Drive…`,
+    });
+
+    // Pull & merge existing project.json first (ADR-05 pull-before-push invariant)
+    await pullSingleBookFolderFromDrive(client, folderSummary, {
+      isShared: project.isShared,
+      defaultRole: latestRole,
+    });
+
+    const files = await client.listFolderChildren(folderSummary.id);
+    const freshProject = (await getProject(projectId)) ?? project;
+    const localRecs = await listProjectRecordings(projectId);
+
+    const now = Date.now();
+    let updatedCover = false;
+    let hasCover = freshProject.hasCover;
+    let coverMimeType = freshProject.coverMimeType;
+    let coverUpdatedAt = freshProject.coverUpdatedAt;
+    let driveCoverFileId = freshProject.driveCoverFileId;
+
+    if (!hasCover) {
+      const coverCandidate = files.find(
+        (f) =>
+          f.mimeType !== FOLDER_MIME &&
+          RESCAN_COVER_NAMES.has(f.name.trim().toLowerCase()),
+      );
+      if (coverCandidate) {
+        try {
+          const coverBlob = await client.downloadFileBlob(coverCandidate.id);
+          await putProjectCover(freshProject.id, coverBlob);
+          hasCover = true;
+          driveCoverFileId = coverCandidate.id;
+          coverMimeType =
+            coverCandidate.mimeType || coverBlob.type || 'image/jpeg';
+          coverUpdatedAt = now;
+          updatedCover = true;
+        } catch {
+          // Non-fatal cover download error
+        }
+      }
+    }
+
+    const presentIds = new Set(files.map((f) => f.id));
+    const presentNamesLower = new Set(files.map((f) => f.name.toLowerCase()));
+    const deletedIdsSet = new Set(freshProject.deletedRecordingIds ?? []);
+
+    const survivingRecs: Recording[] = [];
+    let removedOrphans = 0;
+
+    for (const rec of localRecs) {
+      const hasDriveMatch =
+        (rec.driveFileId && presentIds.has(rec.driveFileId)) ||
+        (rec.driveFileName &&
+          presentNamesLower.has(rec.driveFileName.toLowerCase()));
+
+      if (rec.syncStatus === 'cloud_only' && !hasDriveMatch) {
+        await deleteRecording(rec.id);
+        deletedIdsSet.add(rec.id);
+        removedOrphans += 1;
+      } else {
+        survivingRecs.push(rec);
+      }
+    }
+
+    if (removedOrphans > 0) {
+      for (let i = 0; i < survivingRecs.length; i += 1) {
+        if (survivingRecs[i].orderIndex !== i) {
+          survivingRecs[i] = {
+            ...survivingRecs[i],
+            orderIndex: i,
+            updatedAt: now,
+          };
+          await putRecording(survivingRecs[i]);
+        }
+      }
+    }
+
+    const trackedIds = new Set(
+      survivingRecs.map((r) => r.driveFileId).filter(Boolean),
+    );
+    const trackedNamesLower = new Set(
+      survivingRecs
+        .map((r) => (r.driveFileName || '').toLowerCase())
+        .filter(Boolean),
+    );
+
+    const newAudioCandidates = files
+      .filter((f) => {
+        if (f.mimeType === FOLDER_MIME) return false;
+        if (f.name === PROJECT_METADATA_FILENAME) return false;
+        if (driveCoverFileId && f.id === driveCoverFileId) return false;
+        if (trackedIds.has(f.id)) return false;
+        if (trackedNamesLower.has(f.name.toLowerCase())) return false;
+        return detectImportedAudioFormat(f.name, f.mimeType) !== null;
+      })
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        }),
+      );
+
+    const narratorAttribution =
+      settings.defaultNarrator.trim() ||
+      googleAuth.getState().userName?.trim() ||
+      undefined;
+
+    const finalRecs = survivingRecs.slice();
+    let addedChapters = 0;
+
+    for (const file of newAudioCandidates) {
+      const detected = detectImportedAudioFormat(file.name, file.mimeType);
+      if (!detected) continue;
+
+      const orderIndex = finalRecs.length;
+      const name = deriveChapterNameFromFileName(file.name, orderIndex);
+      const parsedMod = file.modifiedTime ? Date.parse(file.modifiedTime) : NaN;
+      const itemTs = now + addedChapters;
+      const rec: Recording = {
+        id: createId('rec'),
+        projectId: freshProject.id,
+        name,
+        notes: '',
+        recordedBy: narratorAttribution,
+        orderIndex,
+        durationMs: 0,
+        mimeType: detected.mimeType,
+        extension: detected.extension,
+        sampleRate: 0,
+        channels: 1,
+        deviceLabel: 'Google Drive',
+        fileSizeBytes: Number(file.size) || 0,
+        peaks: [],
+        driveFileId: file.id,
+        driveFileName: file.name,
+        syncStatus: 'cloud_only',
+        createdAt: Number.isFinite(parsedMod) ? parsedMod : itemTs,
+        updatedAt: itemTs,
+      };
+      await putRecording(rec);
+      finalRecs.push(rec);
+      addedChapters += 1;
+    }
+
+    const existingMetaFile = files.find(
+      (f) => f.name === PROJECT_METADATA_FILENAME,
+    );
+    const metaFileId =
+      existingMetaFile?.id ?? freshProject.driveMetadataFileId;
+    const needsManifestWrite =
+      addedChapters > 0 ||
+      removedOrphans > 0 ||
+      updatedCover ||
+      !metaFileId;
+
+    const nextDeletedIds = Array.from(deletedIdsSet);
+    const hasPendingLocalUploads = finalRecs.some(
+      (r) =>
+        r.syncStatus === 'local_only' ||
+        r.syncStatus === 'pending_upload' ||
+        r.syncStatus === 'error',
+    );
+
+    let updatedProject: BookProject = {
+      ...freshProject,
+      driveFolderId: folderSummary.id,
+      driveMetadataFileId: metaFileId,
+      driveCoverFileId,
+      hasCover,
+      coverMimeType,
+      coverUpdatedAt,
+      accessRole: latestRole,
+      deletedRecordingIds: nextDeletedIds.length ? nextDeletedIds : undefined,
+      syncStatus: hasPendingLocalUploads ? 'pending_upload' : 'synced',
+      syncError: undefined,
+      updatedAt:
+        addedChapters > 0 || removedOrphans > 0 || updatedCover
+          ? Math.max(freshProject.updatedAt, now + addedChapters)
+          : freshProject.updatedAt,
+    };
+
+    if (needsManifestWrite) {
+      const manifest = buildMetadataPayload(updatedProject, finalRecs);
+      const uploadedMeta = await client.uploadJsonFile(
+        PROJECT_METADATA_FILENAME,
+        folderSummary.id,
+        manifest,
+        metaFileId,
+      );
+      updatedProject = {
+        ...updatedProject,
+        driveMetadataFileId: uploadedMeta.id,
+      };
+    }
+
+    await putProject(updatedProject);
+
+    recordSyncDebugEvent('sync', 'rescan_book_folder_complete', {
+      projectId: updatedProject.id,
+      folderId: folderSummary.id,
+      scannedFiles: files.length,
+      addedChapters,
+      removedOrphans,
+      updatedCover,
+    });
+
+    onProgress?.({
+      phase: 'done',
+      message:
+        addedChapters > 0
+          ? `Found ${addedChapters} new chapter${addedChapters === 1 ? '' : 's'} in Drive.`
+          : 'Google Drive folder is up to date.',
+    });
+
+    return {
+      rootFolderId: root.id,
+      folderFound: true,
+      addedChapters,
+      removedOrphans,
+      updatedCover,
+    };
+  });
+}
+
 export async function downloadCloudRecording(
   recordingId: string,
   clientOverride?: DriveClient,
@@ -1870,8 +2192,35 @@ export async function downloadCloudRecording(
     const rawBlob = await client.downloadFileBlob(rec.driveFileId!);
     const blob = normalizeAudioBlobType(rawBlob, rec);
     await putRecordingBlob(recordingId, blob);
+
+    let hydrated: Partial<Recording> = {};
+    if (rec.durationMs <= 0 || (rec.sampleRate <= 0 && rec.peaks.length === 0)) {
+      try {
+        const bytes = await blobToArrayBuffer(blob);
+        const inspectFile = new File(
+          [bytes],
+          rec.driveFileName || `${rec.name}.${rec.extension}`,
+          { type: blob.type || rec.mimeType },
+        );
+        const analysis = await inspectImportedAudioFile(inspectFile);
+        hydrated = {
+          durationMs: analysis.durationMs,
+          sampleRate: analysis.sampleRate || rec.sampleRate,
+          channels: analysis.channels,
+          bitrateKbps: analysis.bitrateKbps ?? rec.bitrateKbps,
+          bitDepth: analysis.bitDepth ?? rec.bitDepth,
+          fileSizeBytes: blob.size || rec.fileSizeBytes,
+          peaks: analysis.peaks.length > 0 ? analysis.peaks : rec.peaks,
+        };
+      } catch {
+        // Metadata hydration is best-effort; never block cloud playback
+      }
+    }
+
     await putRecording({
       ...rec,
+      ...hydrated,
+      fileSizeBytes: hydrated.fileSizeBytes ?? (blob.size || rec.fileSizeBytes),
       syncStatus: 'synced',
       syncError: undefined,
     });

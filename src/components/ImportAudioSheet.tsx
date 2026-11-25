@@ -5,6 +5,7 @@ import {
   ArrowUp,
   Check,
   FileAudio,
+  FolderSync,
   Loader2,
   Plus,
   Upload,
@@ -48,6 +49,9 @@ interface ImportAudioSheetProps {
   bookTitle: string;
   existingChapterCount: number;
   defaultNarrator: string;
+  canSyncDrive?: boolean;
+  isSyncing?: boolean;
+  onRescanDrive?: () => void;
   onClose: () => void;
   onImport: (submission: ImportAudioSubmission) => Promise<void>;
   inspectFile?: typeof inspectImportedAudioFile;
@@ -78,6 +82,9 @@ export const ImportAudioSheet: React.FC<ImportAudioSheetProps> = ({
   bookTitle,
   existingChapterCount,
   defaultNarrator,
+  canSyncDrive = false,
+  isSyncing = false,
+  onRescanDrive,
   onClose,
   onImport,
   inspectFile = inspectImportedAudioFile,
@@ -315,35 +322,64 @@ export const ImportAudioSheet: React.FC<ImportAudioSheetProps> = ({
           />
 
           {items.length === 0 ? (
-            <div
-              className={`import-dropzone ${isDragging ? 'import-dropzone--active' : ''}`}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-            >
-              <span className="import-dropzone__icon" aria-hidden="true">
-                <Upload size={22} />
-              </span>
-              <div className="import-dropzone__copy">
-                <p className="import-dropzone__title">
-                  Import previously recorded chapters
-                </p>
-                <p className="import-dropzone__hint">
-                  Supports MP3, M4A/M4B, WAV, WebM, OGG, FLAC &amp; AAC. Original
-                  audio is preserved without re-encoding.
-                </p>
-              </div>
-              <button
-                type="button"
-                id="choose-audio-files-btn"
-                className="btn btn-primary btn-sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isSaving}
+            <>
+              <div
+                className={`import-dropzone ${isDragging ? 'import-dropzone--active' : ''}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
               >
-                <FileAudio size={15} />
-                Choose Audio Files
-              </button>
-            </div>
+                <span className="import-dropzone__icon" aria-hidden="true">
+                  <Upload size={22} />
+                </span>
+                <div className="import-dropzone__copy">
+                  <p className="import-dropzone__title">
+                    Import previously recorded chapters
+                  </p>
+                  <p className="import-dropzone__hint">
+                    Supports MP3, M4A/M4B, WAV, WebM, OGG, FLAC &amp; AAC. Original
+                    audio is preserved without re-encoding.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  id="choose-audio-files-btn"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isSaving}
+                >
+                  <FileAudio size={15} />
+                  Choose Audio Files
+                </button>
+              </div>
+
+              {canSyncDrive && onRescanDrive && (
+                <div className="import-drive-rescan">
+                  <div className="import-drive-rescan__copy">
+                    <span className="import-drive-rescan__title">
+                      Added files in Google Drive?
+                    </span>
+                    <span className="import-drive-rescan__hint">
+                      Scan this book&apos;s Drive folder to import dropped audio
+                      files without re-uploading.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    id="import-sheet-rescan-drive-btn"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      onClose();
+                      onRescanDrive();
+                    }}
+                    disabled={isSaving || isSyncing}
+                  >
+                    <FolderSync size={14} />
+                    Rescan Drive
+                  </button>
+                </div>
+              )}
+            </>
           ) : (
             <>
               <div

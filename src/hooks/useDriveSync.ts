@@ -18,6 +18,7 @@ import {
   importSharedBookIntoLibrary,
   inspectSharedDriveFolder,
   isUnsharedPersonalBook,
+  rescanBookDriveFolder,
   shareLocalBooksIntoSharedLibrary,
   syncAllWithDrive,
   syncSingleProjectWithDrive,
@@ -271,6 +272,84 @@ export function useDriveSync({
       void handleSyncProject(projectId);
     },
     [handleConnectDrive, handleSyncProject],
+  );
+
+  const handleRescanBookDrive = useCallback(
+    async (projectId: string, onAfterRescan?: () => Promise<void> | void) => {
+      if (!canAutoSyncDrive()) return;
+      const activeSettings = settingsRef.current;
+      setIsSyncing(true);
+      setSyncStatusMessage('Scanning book folder in Google Drive…');
+      try {
+        const res = await rescanBookDriveFolder(
+          projectId,
+          activeSettings,
+          (u) => setSyncStatusMessage(u.message),
+        );
+        if (
+          res.rootFolderId &&
+          res.rootFolderId !== activeSettings.driveRootFolderId
+        ) {
+          onUpdateSettings({
+            ...activeSettings,
+            driveRootFolderId: res.rootFolderId,
+          });
+        }
+        await reloadData();
+        await onAfterRescan?.();
+
+        if (res.skippedReadOnly) {
+          showToast('This shared book is read-only');
+        } else if (!res.folderFound) {
+          showToast('No Drive folder found for this book yet — tap Sync first');
+        } else {
+          const parts: string[] = [];
+          if (res.addedChapters > 0) {
+            parts.push(
+              `added ${res.addedChapters} ${res.addedChapters === 1 ? 'chapter' : 'chapters'}`,
+            );
+          }
+          if (res.removedOrphans > 0) {
+            parts.push(
+              `removed ${res.removedOrphans} deleted ${res.removedOrphans === 1 ? 'entry' : 'entries'}`,
+            );
+          }
+          if (res.updatedCover) {
+            parts.push('updated cover');
+          }
+          if (parts.length > 0) {
+            const summary = parts.join(', ');
+            showToast(
+              `Drive rescan: ${summary.charAt(0).toUpperCase()}${summary.slice(1)}`,
+            );
+          } else {
+            showToast('Drive folder rescanned — no new audio files found');
+          }
+        }
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : 'Drive folder rescan failed';
+        setSyncStatusMessage(msg);
+        showToast(msg);
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [onUpdateSettings, reloadData, settingsRef, showToast],
+  );
+
+  const handleRescanOrReconnectBookDrive = useCallback(
+    (projectId: string, onAfterRescan?: () => Promise<void> | void) => {
+      if (needsReconnectToDrive()) {
+        handleConnectDrive({
+          skipAutoSync: true,
+          onConnected: () => handleRescanBookDrive(projectId, onAfterRescan),
+        });
+        return;
+      }
+      void handleRescanBookDrive(projectId, onAfterRescan);
+    },
+    [handleConnectDrive, handleRescanBookDrive],
   );
 
   const handleJoinFolder = useCallback(
@@ -607,6 +686,8 @@ export function useDriveSync({
     handleSyncProject,
     handleSyncOrReconnectAll,
     handleSyncOrReconnectProject,
+    handleRescanBookDrive,
+    handleRescanOrReconnectBookDrive,
     handleConnectDrive,
     handleJoinFolder,
     handleJoinSharedFolderFromSettings,
