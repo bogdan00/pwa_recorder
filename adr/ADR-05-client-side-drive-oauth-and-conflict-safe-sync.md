@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (Amended 2026-11-22: upgraded OAuth scope from `drive.file` to `drive`)
 - **Date:** 2026-11-20
-- **Related CUJs:** [CUJ-08](../cuj/CUJ-08-draft-recovery-drive-pwa.md), [CUJ-09](../cuj/CUJ-09-multi-user-sharing.md)
+- **Related CUJs:** [CUJ-08](../cuj/CUJ-08-draft-recovery-drive-pwa.md), [CUJ-09](../cuj/CUJ-09-multi-user-sharing.md), [CUJ-12](../cuj/CUJ-12-import-custom-audio.md)
 
 ## Context
 Families want to back up audiobooks to their own Google Drive and co-narrate or listen across multiple devices without handing audio files to a third-party server. StoryTape originally attempted Google's narrow `drive.file` scope, but production testing proved that Google Drive enforces `drive.file` strictly **per-user and per-file (non-recursive on folders)**: even when Parent A shares a StoryTape folder with Parent B as Editor and Parent B selects the folder via Google Picker, Drive API v3 returns `children: []` for all book subfolders, `project.json` manifests, and audio files created by Parent A's account. In multi-user family books, two parents must be able to read and merge each other's chapters recursively inside shared folders, while read-only Listeners must remain unable to accidentally mutate or break a shared book.

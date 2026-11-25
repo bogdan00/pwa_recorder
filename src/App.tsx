@@ -52,6 +52,10 @@ import {
   useConfirm,
 } from './components/ConfirmDialogContext';
 import { IosInstallGuideModal } from './components/IosInstallGuideModal';
+import {
+  ImportAudioSheet,
+  type ImportAudioSubmission,
+} from './components/ImportAudioSheet';
 import { JoinShareModal } from './components/JoinShareModal';
 import { MiniPlayerBar } from './components/MiniPlayerBar';
 import { ShareSheet } from './components/ShareSheet';
@@ -154,6 +158,18 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
   const editingBook = bookEditorOverlay?.projectId
     ? (projects.find((p) => p.id === bookEditorOverlay.projectId) ?? null)
     : null;
+  const importAudioOverlay =
+    overlays.find(
+      (o): o is { kind: 'import-audio'; projectId: string } =>
+        o.kind === 'import-audio',
+    ) ?? null;
+  const importAudioBook = importAudioOverlay
+    ? (projects.find((p) => p.id === importAudioOverlay.projectId) ?? null)
+    : null;
+  const importAudioOpen =
+    importAudioBook !== null &&
+    importAudioBook.accessRole !== 'reader' &&
+    !importAudioBook.importedFrom;
   const shareOverlay =
     overlays.find(
       (
@@ -455,6 +471,79 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
       saved.localMaster
         ? `Saved "${rec.name}" + local lossless master`
         : `Saved "${rec.name}"`,
+      project.id,
+      canAutoSync,
+    );
+
+    if (canAutoSync) {
+      void drive.handleSyncProject(project.id, true);
+    }
+  };
+
+  // Custom audio files imported from user's device into a book
+  const handleImportAudio = async (
+    project: BookProject,
+    submission: ImportAudioSubmission,
+  ) => {
+    if (project.accessRole === 'reader' || project.importedFrom) {
+      closeOverlay('import-audio');
+      return;
+    }
+    if (submission.items.length === 0) return;
+
+    const existing = recordingsByProject.get(project.id) ?? [];
+    const baseTime = Date.now();
+    const canAutoSync = canAutoSyncDrive();
+    const hasLinkedDrive = canAutoSync || googleAuth.getState().wasConnected;
+    const narratorAttribution = submission.recordedBy?.trim() || undefined;
+
+    for (let idx = 0; idx < submission.items.length; idx += 1) {
+      const item = submission.items[idx];
+      const orderIndex = existing.length + idx;
+      const itemNow = baseTime + idx;
+      const rec: Recording = {
+        id: createId('rec'),
+        projectId: project.id,
+        name: item.name,
+        notes: '',
+        recordedBy: narratorAttribution,
+        orderIndex,
+        durationMs: item.analysis.durationMs,
+        mimeType: item.analysis.mimeType,
+        extension: item.analysis.extension,
+        sampleRate: item.analysis.sampleRate,
+        bitrateKbps: item.analysis.bitrateKbps,
+        bitDepth: item.analysis.bitDepth,
+        channels: item.analysis.channels,
+        deviceLabel: 'Imported file',
+        fileSizeBytes: item.analysis.fileSizeBytes,
+        peaks: item.analysis.peaks,
+        driveFileName: buildChapterDriveFileName(
+          orderIndex,
+          item.name,
+          item.analysis.extension,
+        ),
+        syncStatus: hasLinkedDrive ? 'pending_upload' : 'local_only',
+        createdAt: itemNow,
+        updatedAt: itemNow,
+      };
+      await putRecording(rec, item.analysis.blob);
+    }
+
+    await putProject({
+      ...project,
+      syncStatus: hasLinkedDrive ? 'pending_upload' : project.syncStatus,
+      updatedAt: baseTime + submission.items.length,
+    });
+    await reloadData();
+    await player.refreshChaptersForProject(project.id);
+    closeOverlay('import-audio');
+
+    const count = submission.items.length;
+    notifySavedWithOptionalReconnect(
+      count === 1
+        ? `Imported "${submission.items[0].name}"`
+        : `Imported ${count} chapters`,
       project.id,
       canAutoSync,
     );
@@ -767,6 +856,9 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
             player.pauseForRecording();
             navigate({ view: 'record', projectId: activeBook.id });
           }}
+          onImportAudio={() =>
+            openOverlay({ kind: 'import-audio', projectId: activeBook.id })
+          }
           onSyncProject={() => drive.handleSyncOrReconnectProject(activeBook.id)}
           onReconnectAndPlayChapter={(recordingId) => {
             const book = activeBook;
@@ -914,6 +1006,28 @@ const StoryTapeShell: React.FC<StoryTapeShellProps> = ({
         onClose={() => closeOverlay('book-editor')}
         onSave={handleSaveBook}
         onDelete={editingBook ? handleDeleteBook : undefined}
+      />
+
+      {/* Import Custom Audio Files Sheet */}
+      <ImportAudioSheet
+        open={importAudioOpen}
+        bookTitle={importAudioBook?.title ?? 'Audiobook'}
+        existingChapterCount={
+          importAudioBook
+            ? (recordingsByProject.get(importAudioBook.id) ?? []).length
+            : 0
+        }
+        defaultNarrator={
+          settings.defaultNarrator.trim() ||
+          drive.authState.userName?.trim() ||
+          ''
+        }
+        onClose={() => closeOverlay('import-audio')}
+        onImport={(submission) =>
+          importAudioBook
+            ? handleImportAudio(importAudioBook, submission)
+            : Promise.resolve()
+        }
       />
 
       {/* Multi-User Family Sharing & Invite Sheet */}

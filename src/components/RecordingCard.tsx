@@ -81,10 +81,22 @@ export const RecordingCard: React.FC<RecordingCardProps> = ({
     return () => document.removeEventListener('mousedown', onOutsideClick);
   }, [menuOpen]);
 
-  const specBadge =
-    recording.extension === 'wav'
-      ? `WAV · ${formatSampleRate(recording.sampleRate)}${recording.bitDepth ? ` · ${recording.bitDepth === 32 ? '32f' : `${recording.bitDepth}-bit`}` : ''}`
-      : `${recording.extension.toUpperCase()} · ${formatSampleRate(recording.sampleRate)}${recording.bitrateKbps ? ` · ${recording.bitrateKbps}k` : ''}`;
+  const specBadge = (() => {
+    const parts: string[] = [recording.extension.toUpperCase()];
+    if (recording.sampleRate > 0) {
+      parts.push(formatSampleRate(recording.sampleRate));
+    }
+    if (recording.extension === 'wav') {
+      if (recording.bitDepth) {
+        parts.push(
+          recording.bitDepth === 32 ? '32f' : `${recording.bitDepth}-bit`,
+        );
+      }
+    } else if (recording.bitrateKbps) {
+      parts.push(`${recording.bitrateKbps}k`);
+    }
+    return parts.join(' · ');
+  })();
 
   const renderSyncIndicator = () => {
     switch (recording.syncStatus) {

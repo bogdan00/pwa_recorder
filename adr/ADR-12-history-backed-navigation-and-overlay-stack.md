@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-21
-- **Related CUJs:** [CUJ-01](../cuj/CUJ-01-book-management.md), [CUJ-02](../cuj/CUJ-02-core-recording.md), [CUJ-05](../cuj/CUJ-05-audiobook-player.md), [CUJ-06](../cuj/CUJ-06-library-browsing-themes.md), [CUJ-08](../cuj/CUJ-08-draft-recovery-drive-pwa.md), [CUJ-11](../cuj/CUJ-11-history-back-forward-navigation.md)
+- **Related CUJs:** [CUJ-01](../cuj/CUJ-01-book-management.md), [CUJ-02](../cuj/CUJ-02-core-recording.md), [CUJ-05](../cuj/CUJ-05-audiobook-player.md), [CUJ-06](../cuj/CUJ-06-library-browsing-themes.md), [CUJ-08](../cuj/CUJ-08-draft-recovery-drive-pwa.md), [CUJ-11](../cuj/CUJ-11-history-back-forward-navigation.md), [CUJ-12](../cuj/CUJ-12-import-custom-audio.md)
 
 ## Context
 StoryTape is installed and used primarily as a standalone mobile PWA on Android Chrome and iOS Safari. Previously, StoryTape had four structural navigation issues:
@@ -16,7 +16,7 @@ Replace ad-hoc `window.location.hash` mutations and unbacked modal booleans with
 
 - **Unified `history.state` model (`StoryTapeHistoryState`)**:
   - Every history entry stores `{ __storytape: true, sessionId, index, route, overlays, transientId? }` alongside the canonical hash URL (`#/`, `#/book/:id`, `#/record/:id`, `#/book/:id/compare/:recId`, `#/quality-lab/mic-test`), preserving subpath compatibility on GitHub Pages ([ADR-01](./ADR-01-zero-backend-offline-first-pwa.md)).
-  - Re-openable sheets (`settings`, `theme`, `book-editor`, `share`, `ios-install`, `player`, `player-drawer`) are pushed onto `overlays[]` via `history.pushState` inside user tap handlers (satisfying Chromium's user-activation history requirement so Back gestures are never skipped).
+  - Re-openable sheets (`settings`, `theme`, `book-editor`, `import-audio`, `share`, `ios-install`, `player`, `player-drawer`) are pushed onto `overlays[]` via `history.pushState` inside user tap handlers (satisfying Chromium's user-activation history requirement so Back gestures are never skipped).
   - Ephemeral dialogs (`ConfirmDialog`, `SaveRecordingSheet`) use `pushTransient(kind, onDismiss)`: swiping back dismisses them cleanly without navigating the underlying screen, while swiping forward onto an expired `transientId` never resurrects a stale destructive prompt.
 - **Serialized History Command Queue with Optimistic Synchronous State**:
   - Because `window.history.back()` / `window.history.go(delta)` fire `popstate` asynchronously in browsers and `jsdom`, the controller updates its logical state synchronously for immediate zero-lag UI updates and serializes subsequent `pushState`/`replaceState`/`go` calls behind any in-flight browser `go(delta)` until its matching `popstate` settles. This eliminates race conditions when a user (or test) closes a sheet and immediately opens another screen.
@@ -29,7 +29,7 @@ Replace ad-hoc `window.location.hash` mutations and unbacked modal booleans with
   - `html` and `body` in [`src/styles/global.css`](../src/styles/global.css) set `overscroll-behavior-y: none` (preventing pull-to-refresh) while leaving `overscroll-behavior-x` at default `auto`. Interactive horizontal scrubbers (`.waveform-canvas`, `.player-scrub`) retain `touch-action: none` so waveform/timeline scrubbing never collides with edge-swipe navigation.
 
 ## System Invariants
-1. **Zero unbacked full-screen sheets or modals**: Opening any top-level sheet (`SettingsSheet`, `ThemeSwitcherSheet`, `BookEditorSheet`, `ShareSheet`, `IosInstallGuideModal`, `AudioPlayerSheet`, player sub-drawers, `ConfirmDialog`, `SaveRecordingSheet`) pushes a user-activated browser history entry so a mobile Back gesture dismisses the top-most surface instead of closing the PWA.
+1. **Zero unbacked full-screen sheets or modals**: Opening any top-level sheet (`SettingsSheet`, `ThemeSwitcherSheet`, `BookEditorSheet`, `ImportAudioSheet`, `ShareSheet`, `IosInstallGuideModal`, `AudioPlayerSheet`, player sub-drawers, `ConfirmDialog`, `SaveRecordingSheet`) pushes a user-activated browser history entry so a mobile Back gesture dismisses the top-most surface instead of closing the PWA.
 2. **No history-loop pollution**: In-app Back buttons pop history (`history.back()`/`go`) when a prior StoryTape entry exists (`index > 0`) rather than pushing duplicate forward routes, preserving clean browser Back & Forward symmetry.
 3. **Deep-link safe root fallback**: When launched directly onto a non-Library route at `index === 0`, tapping in-app Back replaces with `#/` rather than invoking `history.back()` out of the PWA.
 4. **No stale destructive dialog resurrection**: Swiping Forward onto a previously dismissed `transientId` never re-opens a `ConfirmDialog` or `SaveRecordingSheet`.

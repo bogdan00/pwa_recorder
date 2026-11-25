@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-19
-- **Related CUJs:** [CUJ-01](../cuj/CUJ-01-book-management.md), [CUJ-02](../cuj/CUJ-02-core-recording.md), [CUJ-04](../cuj/CUJ-04-chapter-management.md), [CUJ-08](../cuj/CUJ-08-draft-recovery-drive-pwa.md), [CUJ-10](../cuj/CUJ-10-local-master-export-compare.md)
+- **Related CUJs:** [CUJ-01](../cuj/CUJ-01-book-management.md), [CUJ-02](../cuj/CUJ-02-core-recording.md), [CUJ-04](../cuj/CUJ-04-chapter-management.md), [CUJ-08](../cuj/CUJ-08-draft-recovery-drive-pwa.md), [CUJ-10](../cuj/CUJ-10-local-master-export-compare.md), [CUJ-12](../cuj/CUJ-12-import-custom-audio.md)
 
 ## Context
 StoryTape stores large binary media assets locally on mobile browsers: encoded audio chapters (tens of MBs), optional uncompressed 32-bit Float WAV local masters, cover photos, and in-progress raw PCM recording chunks for crash recovery. `localStorage` is synchronous and capped at ~5 MB, whereas storing raw `Blob` objects directly in IndexedDB triggers known structured-clone failures and corruption across iOS Safari WebKit versions and `fake-indexeddb` in unit tests.

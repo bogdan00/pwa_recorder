@@ -7,9 +7,9 @@ import {
   Muxer as WebmMuxer,
 } from 'webm-muxer';
 import type {
-  AudioExtension,
   AudioQualitySettings,
   ChannelCountOption,
+  EncodedAudioExtension,
 } from '../types/models';
 import { normalizeAacDecoderDescription } from './aacEsds';
 import { applyPeakCeilingToChannels } from './inputStrip';
@@ -23,7 +23,7 @@ import { encodeWav } from './wavEncoder';
 export interface EncodedAudioResult {
   blob: Blob;
   mimeType: string;
-  extension: AudioExtension;
+  extension: EncodedAudioExtension;
   sampleRate: number;
   bitrateKbps?: number;
   bitDepth?: number;

@@ -22,6 +22,7 @@ import { downloadCloudRecording } from '../drive/syncService';
 import { useOptionalAppNavigation } from '../navigation/AppNavigationContext';
 import {
   formatPlaybackErrorMessage,
+  isAbortPlaybackError,
   isNotAllowedPlaybackError,
   isNotSupportedPlaybackError,
   preparePlayableAudioBlob,
@@ -398,7 +399,10 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
                 } catch (retryErr) {
                   if (loadTokenRef.current !== loadToken) return;
                   setIsPlaying(false);
-                  if (!isNotAllowedPlaybackError(retryErr)) {
+                  if (
+                    !isNotAllowedPlaybackError(retryErr) &&
+                    !isAbortPlaybackError(retryErr)
+                  ) {
                     throw retryErr;
                   }
                 }
@@ -408,7 +412,10 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
               }
             } else {
               setIsPlaying(false);
-              if (!isNotAllowedPlaybackError(playErr)) {
+              if (
+                !isNotAllowedPlaybackError(playErr) &&
+                !isAbortPlaybackError(playErr)
+              ) {
                 throw playErr;
               }
             }
@@ -504,6 +511,10 @@ export const PlayerProvider: React.FC<PlayerProviderProps> = ({
         setError(null);
         setIsPlaying(true);
       } catch (err) {
+        if (isAbortPlaybackError(err)) {
+          setIsPlaying(false);
+          return;
+        }
         const activeRec = chaptersRef.current[currentIndexRef.current];
         setError(
           activeRec

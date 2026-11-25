@@ -211,20 +211,33 @@
 
 .chapters-section__header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.chapters-section__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .chapters-section__title {
   font-family: var(--font-serif);
   font-size: 19px;
   font-weight: 600;
+  line-height: 1.2;
 }
 
 .chapters-section__summary {
   font-size: 12.5px;
   color: var(--ink-muted);
+}
+
+.chapters-section__import-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .chapters-list {

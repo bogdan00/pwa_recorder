@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-19
-- **Related CUJs:** [CUJ-05](../cuj/CUJ-05-audiobook-player.md), [CUJ-08](../cuj/CUJ-08-draft-recovery-drive-pwa.md), [CUJ-09](../cuj/CUJ-09-multi-user-sharing.md)
+- **Related CUJs:** [CUJ-05](../cuj/CUJ-05-audiobook-player.md), [CUJ-08](../cuj/CUJ-08-draft-recovery-drive-pwa.md), [CUJ-09](../cuj/CUJ-09-multi-user-sharing.md), [CUJ-12](../cuj/CUJ-12-import-custom-audio.md)
 
 ## Context
 Listening to a bedtime audiobook requires uninterrupted playback while browsing the Library or Book Detail screens, remembering the exact chapter and timestamp across sessions ("Continue Listening"), gradually fading out audio when a sleep timer expires, seamlessly downloading `cloud_only` chapters on tap, and pausing immediately if the parent opens Recording Studio to record a new chapter.

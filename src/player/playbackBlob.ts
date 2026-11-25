@@ -10,12 +10,35 @@ const EXTENSION_MIME_MAP: Record<Recording['extension'], string> = {
   m4a: 'audio/mp4',
   wav: 'audio/wav',
   webm: 'audio/webm;codecs=opus',
+  mp3: 'audio/mpeg',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
+};
+
+const CANONICAL_MIME_ALIASES: Record<string, string> = {
+  'audio/x-m4a': 'audio/mp4',
+  'audio/m4a': 'audio/mp4',
+  'video/mp4': 'audio/mp4',
+  'audio/x-wav': 'audio/wav',
+  'audio/wave': 'audio/wav',
+  'audio/mp3': 'audio/mpeg',
+  'audio/x-mpeg': 'audio/mpeg',
+  'audio/x-flac': 'audio/flac',
+  'audio/x-aac': 'audio/aac',
+  'video/webm': 'audio/webm',
 };
 
 function isUsableAudioMime(mime?: string | null): mime is string {
   if (!mime) return false;
   const trimmed = mime.trim().toLowerCase();
   return trimmed.length > 0 && trimmed !== 'application/octet-stream';
+}
+
+function canonicalizeAudioMime(mime: string): string {
+  const trimmed = mime.trim();
+  const lower = trimmed.toLowerCase();
+  return CANONICAL_MIME_ALIASES[lower] ?? trimmed;
 }
 
 /**
@@ -27,15 +50,13 @@ export function resolveRecordingMimeType(
   fallbackBlobType?: string,
 ): string {
   if (isUsableAudioMime(rec.mimeType)) {
-    const lower = rec.mimeType.trim().toLowerCase();
-    if (lower === 'audio/x-m4a' || lower === 'audio/m4a') {
-      return 'audio/mp4';
-    }
-    return rec.mimeType.trim();
+    return canonicalizeAudioMime(rec.mimeType);
   }
   const byExt = EXTENSION_MIME_MAP[rec.extension];
   if (byExt) return byExt;
-  if (isUsableAudioMime(fallbackBlobType)) return fallbackBlobType.trim();
+  if (isUsableAudioMime(fallbackBlobType)) {
+    return canonicalizeAudioMime(fallbackBlobType);
+  }
   return 'audio/mp4';
 }
 
@@ -51,10 +72,7 @@ export function normalizeAudioBlobType(
   const current = (blob.type || '').trim().toLowerCase();
   if (
     current === targetMime.toLowerCase() ||
-    (isUsableAudioMime(current) &&
-      current !== 'audio/x-m4a' &&
-      current !== 'audio/m4a' &&
-      current !== 'video/mp4')
+    (isUsableAudioMime(current) && !(current in CANONICAL_MIME_ALIASES))
   ) {
     return blob;
   }
@@ -161,6 +179,17 @@ function extractErrorMeta(err: unknown): { name: string; message: string } | nul
 export function isNotAllowedPlaybackError(err: unknown): boolean {
   const meta = extractErrorMeta(err);
   return meta?.name === 'NotAllowedError';
+}
+
+export function isAbortPlaybackError(err: unknown): boolean {
+  const meta = extractErrorMeta(err);
+  if (!meta) return false;
+  return (
+    meta.name === 'AbortError' ||
+    /interrupted by a call to pause|interrupted by a new load request/i.test(
+      meta.message,
+    )
+  );
 }
 
 export function isNotSupportedPlaybackError(err: unknown): boolean {

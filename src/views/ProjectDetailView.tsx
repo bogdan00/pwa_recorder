@@ -12,6 +12,7 @@ import {
   Share2,
   Trash2,
   Unlock,
+  Upload,
   Users,
 } from 'lucide-react';
 import type {
@@ -38,6 +39,7 @@ interface ProjectDetailViewProps {
   onEditBook: () => void;
   onShareBook: () => void;
   onStartRecording: () => void;
+  onImportAudio?: () => void;
   onSyncProject: () => void;
   onReconnectAndPlayChapter?: (recordingId: string) => void;
   onRenameRecording: (recordingId: string, newName: string) => Promise<void>;
@@ -63,6 +65,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   onEditBook,
   onShareBook,
   onStartRecording,
+  onImportAudio,
   onSyncProject,
   onReconnectAndPlayChapter,
   onRenameRecording,
@@ -375,12 +378,26 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
         {/* Chapters list */}
         <section className="chapters-section" aria-label="Recorded chapters">
           <div className="chapters-section__header">
-            <h2 className="chapters-section__title">Chapters</h2>
-            <span className="chapters-section__summary">
-              {recordings.length}{' '}
-              {recordings.length === 1 ? 'recording' : 'recordings'}
-              {totalMs > 0 ? ` · ${formatHumanDuration(totalMs)}` : ''}
-            </span>
+            <div className="chapters-section__heading">
+              <h2 className="chapters-section__title">Chapters</h2>
+              <span className="chapters-section__summary">
+                {recordings.length}{' '}
+                {recordings.length === 1 ? 'recording' : 'recordings'}
+                {totalMs > 0 ? ` · ${formatHumanDuration(totalMs)}` : ''}
+              </span>
+            </div>
+
+            {!isReadOnly && onImportAudio && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm chapters-section__import-btn"
+                onClick={onImportAudio}
+                id="import-audio-btn"
+              >
+                <Upload size={14} />
+                Import Audio
+              </button>
+            )}
           </div>
 
           {recordings.length === 0 ? (
@@ -389,8 +406,9 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 <>No chapters have been uploaded to this shared book yet.</>
               ) : (
                 <>
-                  No chapters recorded yet. Tap <strong>Record First Chapter</strong>{' '}
-                  above to open the recording studio.
+                  No chapters yet. Tap <strong>Record First Chapter</strong>{' '}
+                  above or <strong>Import Audio</strong> to add existing audio
+                  files.
                 </>
               )}
             </div>

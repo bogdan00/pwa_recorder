@@ -16,6 +16,7 @@ export type NavigationOverlay =
   | { kind: 'settings'; tab: SettingsTab }
   | { kind: 'theme' }
   | { kind: 'book-editor'; projectId: string | null }
+  | { kind: 'import-audio'; projectId: string }
   | { kind: 'share'; scope: 'library' }
   | { kind: 'share'; scope: 'book'; projectId: string }
   | { kind: 'ios-install' }
@@ -155,6 +156,13 @@ export function overlaysEqual(
     if (
       x.kind === 'book-editor' &&
       y.kind === 'book-editor' &&
+      x.projectId !== y.projectId
+    ) {
+      return false;
+    }
+    if (
+      x.kind === 'import-audio' &&
+      y.kind === 'import-audio' &&
       x.projectId !== y.projectId
     ) {
       return false;

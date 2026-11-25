@@ -279,4 +279,23 @@ describe('AppHistoryController (ADR-12)', () => {
     expect(window.location.hash).toBe('#/');
     expect(controller.getSnapshot().index).toBe(0);
   });
+
+  it('pushes and dismisses the import-audio overlay via browser history cleanly', async () => {
+    controller = new AppHistoryController();
+    controller.navigate({ view: 'book', projectId: 'book-42' });
+    controller.openOverlay({ kind: 'import-audio', projectId: 'book-42' });
+    await flushHistoryQueue();
+
+    expect(controller.getSnapshot().overlays).toEqual([
+      { kind: 'import-audio', projectId: 'book-42' },
+    ]);
+
+    controller.closeOverlay('import-audio');
+    await flushHistoryQueue();
+    expect(controller.getSnapshot().overlays).toEqual([]);
+    expect(controller.getSnapshot().route).toEqual({
+      view: 'book',
+      projectId: 'book-42',
+    });
+  });
 });

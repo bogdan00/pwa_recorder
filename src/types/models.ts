@@ -7,7 +7,13 @@ export type SyncStatus =
   | 'error';
 
 export type AudioFormatOption = 'auto' | 'm4a' | 'webm' | 'wav';
-export type AudioExtension = 'm4a' | 'webm' | 'wav';
+export type EncodedAudioExtension = 'm4a' | 'webm' | 'wav';
+export type AudioExtension =
+  | EncodedAudioExtension
+  | 'mp3'
+  | 'ogg'
+  | 'flac'
+  | 'aac';
 export type SampleRateOption = 16000 | 24000 | 44100 | 48000 | 96000;
 export type BitrateKbpsOption =
   | 32
